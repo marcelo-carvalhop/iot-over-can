@@ -1,0 +1,42 @@
+# Build outputs
+build/
+cmake-build-*/
+*.elf
+*.uf2
+*.bin
+*.hex
+*.map
+*.o
+*.a
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Logs and runtime data
+logs/
+*.log
+*.csv
+*.jsonl
+*.binlog
+
+# Editors / OS
+.vscode/
+.idea/
+*~
+.DS_Store
+Thumbs.db
+
+# Local secrets / hardware-specific config
+.env
+*.local
+secrets/
+yubikey_*.txt

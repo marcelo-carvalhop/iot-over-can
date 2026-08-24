@@ -1,0 +1,436 @@
+$bg-root: #4A4036;
+$bg-panel: #5E6650;
+$bg-widget: #3B3930;
+$bg-raised: #514B40;
+$bg-selected: #6A604C;
+$border-soft: #7A7652;
+$border-strong: #938768;
+$text-primary: #E7DCC1;
+$text-secondary: #C8BFA5;
+$text-muted: #A79D89;
+$text-dim: #7C6F64;
+$accent-focus: #B98743;
+$accent-action: #B06D3E;
+$accent-copper: #A86148;
+$state-ok: #9AA77B;
+$state-info: #6E9A92;
+$state-warning: #C69A45;
+$state-critical: #8C4543;
+
+Screen {
+    background: $bg-root;
+    color: $text-primary;
+}
+
+Header {
+    background: $bg-panel;
+    color: $text-primary;
+}
+
+Footer {
+    background: $bg-panel;
+    color: $text-primary;
+}
+
+Footer > .footer--key {
+    color: $accent-focus;
+    text-style: bold;
+}
+
+#status-bar {
+    height: 3;
+    background: $bg-widget;
+    border: round $border-soft;
+    padding: 0 1;
+    color: $text-primary;
+}
+
+#main-row {
+    height: 1fr;
+}
+
+#left-col {
+    width: 31;
+    min-width: 25;
+}
+
+#center-col {
+    width: 1fr;
+}
+
+#right-col {
+    width: 39;
+    min-width: 33;
+}
+
+.panel {
+    background: $bg-panel;
+    border: round $border-soft;
+    padding: 0 1;
+    margin: 0 1 0 0;
+}
+
+.panel-title {
+    color: $accent-focus;
+    text-style: bold;
+    padding: 0 1;
+}
+
+.config-label {
+    color: $text-muted;
+    padding: 0 1;
+}
+
+#network-panel {
+    height: 1fr;
+}
+
+#network-summary {
+    height: 2;
+    color: $text-muted;
+    background: $bg-widget;
+    padding: 0 1;
+}
+
+#node-tree {
+    height: 1fr;
+    background: $bg-panel;
+    color: $text-primary;
+    scrollbar-color: $accent-focus;
+}
+
+#quick-panel {
+    height: 16;
+}
+
+#quick-status {
+    height: 1fr;
+    background: $bg-widget;
+    color: $text-secondary;
+    padding: 1;
+}
+
+#telemetry-panel {
+    height: 2fr;
+}
+
+#telemetry-target {
+    height: 2;
+    background: $bg-widget;
+    color: $text-secondary;
+    padding: 0 1;
+}
+
+#telemetry-table {
+    height: 1fr;
+    background: $bg-panel;
+    color: $text-primary;
+    scrollbar-color: $accent-focus;
+}
+
+#telemetry-table > .datatable--header {
+    background: $accent-copper;
+    color: $bg-root;
+    text-style: bold;
+}
+
+#telemetry-table > .datatable--cursor {
+    background: $bg-selected;
+    color: $text-primary;
+}
+
+#rms-sparkline {
+    height: 3;
+    color: $accent-focus;
+    background: $bg-widget;
+}
+
+#event-log-container {
+    height: 1fr;
+}
+
+#event-log {
+    height: 1fr;
+    background: $bg-widget;
+    color: $text-secondary;
+    scrollbar-color: $accent-focus;
+}
+
+#config-panel {
+    height: 1fr;
+}
+
+#config-target, #config-current, #config-hint {
+    background: $bg-widget;
+    color: $text-secondary;
+    padding: 0 1;
+}
+
+#config-current {
+    height: 9;
+}
+
+#config-hint {
+    height: 2;
+    color: $text-muted;
+}
+
+OptionList {
+    background: $bg-panel;
+    color: $text-primary;
+    border: round $border-soft;
+    height: auto;
+    max-height: 8;
+}
+
+OptionList:focus {
+    border: round $accent-focus;
+}
+
+OptionList > .option-list--option-highlighted {
+    background: $bg-selected;
+    color: $text-primary;
+    text-style: bold;
+}
+
+Input {
+    background: $bg-widget;
+    color: $text-primary;
+    border: round $border-soft;
+}
+
+Input:focus {
+    border: round $accent-focus;
+}
+
+#command-input {
+    dock: bottom;
+    height: 3;
+    margin: 0 1 0 0;
+}
+
+.modal {
+    width: 76;
+    max-width: 94%;
+    height: auto;
+    max-height: 90%;
+    background: $bg-raised;
+    border: thick $accent-focus;
+    padding: 1 2;
+}
+
+.wide-modal {
+    width: 88;
+}
+
+.extra-wide-modal {
+    width: 104;
+}
+
+.modal-title {
+    color: $accent-focus;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.modal-hint {
+    color: $text-muted;
+    margin-top: 1;
+}
+
+.modal-buttons {
+    height: auto;
+    align-horizontal: right;
+    margin-top: 1;
+}
+
+.section-title {
+    color: $accent-focus;
+    text-style: bold;
+    margin-top: 1;
+}
+
+Button {
+    background: $accent-action;
+    color: $bg-root;
+    margin-left: 1;
+}
+
+Button.-primary {
+    background: $accent-focus;
+    color: $bg-root;
+}
+
+Button.-error {
+    background: $state-critical;
+    color: $text-primary;
+}
+
+ConnectScreen, HelpScreen, MainMenuScreen, NodeNavigatorScreen, ConfigScreen, FftRequestScreen,
+FftViewScreen, DtcScreen, NetworkScreen, NodeDetailScreen, ConfirmScreen {
+    align: center middle;
+    background: #00000088;
+}
+
+#port-list {
+    height: 8;
+}
+
+#connection-mode-list {
+    height: 5;
+}
+
+#main-menu-list {
+    height: 24;
+}
+
+#help-dialog {
+    height: 38;
+}
+
+#config-dialog {
+    height: 42;
+}
+
+#fft-view-dialog, #network-dialog {
+    height: 38;
+}
+
+#dtc-dialog {
+    height: 28;
+}
+
+#dtc-table {
+    height: 1fr;
+    background: $bg-widget;
+}
+
+#fft-ascii, #can-frame-list {
+    background: $bg-widget;
+    color: $text-secondary;
+    padding: 1;
+}
+
+.compact #left-col {
+    display: none;
+}
+
+.compact #right-col {
+    width: 34;
+}
+
+/* Tela detalhada de telemetria — F6 */
+TelemetryScreen {
+    align: center middle;
+    background: #00000088;
+}
+
+#telemetry-dialog {
+    width: 116;
+    max-width: 96%;
+    height: 43;
+    max-height: 94%;
+}
+
+#telemetry-live-status {
+    height: 3;
+    background: $bg-widget;
+    color: $text-secondary;
+    padding: 0 1;
+    border: round $border-soft;
+}
+
+#telemetry-live-body {
+    height: 1fr;
+}
+
+#telemetry-live-table {
+    width: 3fr;
+    height: 1fr;
+    background: $bg-widget;
+    color: $text-primary;
+    scrollbar-color: $accent-focus;
+}
+
+#telemetry-live-table > .datatable--header {
+    background: $accent-copper;
+    color: $bg-root;
+    text-style: bold;
+}
+
+#telemetry-live-table > .datatable--cursor {
+    background: $bg-selected;
+    color: $text-primary;
+}
+
+#telemetry-trends {
+    width: 2fr;
+    min-width: 34;
+    background: $bg-widget;
+    border: round $border-soft;
+    padding: 0 1;
+    margin-left: 1;
+}
+
+#telemetry-rms-sparkline, #telemetry-ppv-sparkline {
+    height: 8;
+    color: $accent-focus;
+    background: $bg-widget;
+}
+
+#telemetry-controls, #telemetry-period-controls {
+    height: 3;
+    align-horizontal: right;
+    margin-top: 1;
+}
+
+#telemetry-period-controls Label {
+    width: auto;
+    content-align: left middle;
+    color: $text-muted;
+}
+
+#tel-period-input {
+    width: 14;
+}
+
+#fft-summary, #fft-peaks {
+    background: $bg-widget;
+    color: $text-secondary;
+    padding: 1;
+    border: round $border-soft;
+}
+
+#fft-summary {
+    height: 5;
+}
+
+#fft-peaks {
+    height: 8;
+}
+
+#fft-view-dialog {
+    height: 46;
+}
+
+#quick-config-actions {
+    height: auto;
+    align-horizontal: right;
+    margin-top: 1;
+}
+
+#quick-apply {
+    min-width: 12;
+}
+
+#node-navigator-dialog {
+    height: 34;
+    max-height: 90%;
+}
+
+#node-navigator-list {
+    height: 1fr;
+    background: $bg-widget;
+    color: $text-primary;
+    border: round $border-soft;
+}

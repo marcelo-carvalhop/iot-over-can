@@ -1,0 +1,21 @@
+{
+  "name": "iot-over-can",
+  "display_name": "iot-over-can",
+  "description": "Experimental IoT-over-CAN platform for deterministic and stochastic event compatibility, secure local supervision and embedded diagnostics.",
+  "created_for": "github commit-ready repository tree",
+  "baseline": {
+    "focus": "embedded IoT network over CAN/CAN FD, not the vibration sensor function itself",
+    "sensor_role": "experimental event source",
+    "sensor_acquisition": "POLLING",
+    "drdy": "disabled / experimental future",
+    "wifi": "disabled at boot; enabled only by TUI/operator command",
+    "security": "TUI supports YubiKey presence or OTP modes"
+  },
+  "paths": {
+    "pico_firmware": "firmware/pico-edge-sensor",
+    "esp32_legacy": "firmware/esp32-can-legacy",
+    "tui": "software/tui",
+    "docs": "docs"
+  },
+  "first_commit_message": "chore: initial iot-over-can baseline"
+}
