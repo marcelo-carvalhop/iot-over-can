@@ -11,6 +11,9 @@ if [ ! -d ".venv" ]; then
 fi
 
 source .venv/bin/activate
-python -m pip install -r requirements-dev.txt
-python -m compileall pico_tui
-python -m pytest
+python -m pip install --upgrade pip
+python -m pip install -e .
+
+echo
+echo "TUI instalada no ambiente virtual."
+echo "Executável: $TUI_DIR/.venv/bin/iot-over-can-tui"

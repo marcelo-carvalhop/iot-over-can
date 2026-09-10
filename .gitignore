@@ -40,3 +40,8 @@ Thumbs.db
 *.local
 secrets/
 yubikey_*.txt
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
