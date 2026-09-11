@@ -219,3 +219,9 @@ A base `esp32_can_legacy_base` ainda é a rede CAN clássica/legada. Ela foi pre
 - corrigidos caminhos antigos de build da TUI e do firmware Pico;
 - descrição do modo OTP alinhada ao comportamento atual: fail-closed até validação criptográfica real;
 - manifesto e documentação preparados para o pacote final da etapa de hardening v0.12.0.
+
+## v0.12.2 — DHCP build hotfix
+
+- Corrigido `LWIP_DHCP=0` incompatível com as chamadas `dhcp_start()`/`dhcp_stop()`.
+- Adicionado teste de regressão para a configuração do lwIP.
+- `build_pico.sh` só informa sucesso quando `edge_node_firmware.uf2` existe.

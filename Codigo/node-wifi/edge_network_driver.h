@@ -20,6 +20,7 @@ typedef enum {
 void        edge_net_init(void);
 bool        edge_net_set_enabled(bool enabled);
 bool        edge_net_is_enabled(void);
+bool        edge_ble_beacon_is_active(void);
 bool        edge_net_provision_wifi(const char *ssid, const char *password);
 void        edge_net_clear_wifi_provisioning(void);
 bool        edge_net_is_wifi_provisioned(void);

@@ -15,6 +15,7 @@ from pico_tui.core.models import (
     SensorNode,
     SpectrumSample,
     TelemetrySample,
+    WirelessCandidate,
 )
 
 
@@ -99,6 +100,29 @@ class StateStore:
             for key, value in values.items():
                 if hasattr(node, key):
                     setattr(node, key, value)
+            node.last_seen_monotonic = time.monotonic()
+
+
+    def update_wireless_candidate(
+        self,
+        reporter_node_id: int,
+        wireless_uuid: str,
+        *,
+        profile_id: str,
+        rssi_dbm: int,
+        protocol_version: str = "",
+    ) -> None:
+        with self._lock:
+            node = self.ensure_node(reporter_node_id, "CAN_NODE")
+            node.wireless_candidates[wireless_uuid] = WirelessCandidate(
+                wireless_uuid=wireless_uuid,
+                reporter_node_id=reporter_node_id,
+                profile_id=profile_id,
+                rssi_dbm=rssi_dbm,
+                protocol_version=protocol_version,
+            )
+            node.wireless_candidate_count = len(node.wireless_candidates)
+            node.wireless_discovery_state = "SCANNING"
             node.last_seen_monotonic = time.monotonic()
 
     def ensure_sensor(

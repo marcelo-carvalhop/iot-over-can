@@ -10,6 +10,8 @@ def test_no_hardcoded_legacy_wifi_credentials_or_static_sensor_ip() -> None:
     assert "CAN_EDGE_GATEWAY_01" not in source
     assert "192, 168, 4, 2" not in source
     assert "dhcp_start" in source
+    lwipopts = (FW / "lwipopts.h").read_text()
+    assert "#define LWIP_DHCP                   1" in lwipopts
 
 
 def test_configuration_validation_is_shared() -> None:

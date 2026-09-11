@@ -10,6 +10,7 @@ from pico_tui.core.events import (
     LogEvent,
     LocalNodeTelemetryReceived,
     PhysicalNodeReceived,
+    WirelessCandidateReceived,
 )
 
 
@@ -28,6 +29,23 @@ class LegacyGatewayDecoder:
     NODE_SENSOR = re.compile(
         r"\[NODE\s+(?P<prefix>\d+)\]\s+\[SENSOR TX\]\s+sensor=(?P<node>\d+)\s+"
         r"rodada=(?P<round>\d+)\s+valor=0x(?P<value>[0-9A-Fa-f]+)"
+    )
+    WIRELESS_CANDIDATE = re.compile(
+        r"\[GW\]\s+WIRELESS_CANDIDATE\s+reporter=(?P<reporter>\d+)\s+"
+        r"uuid=(?P<uuid>0x[0-9A-Fa-f]{16})\s+profile=(?P<profile>[A-Z0-9_]+)\s+"
+        r"rssi=(?P<rssi>-?\d+)\s+protocol=(?P<protocol>\d+)"
+    )
+    CONTROL_RX = re.compile(
+        r"\[GW\]\s+CONTROLE RX\s+(?P<b0>[0-9A-Fa-f]{1,2})\s+"
+        r"(?P<b1>[0-9A-Fa-f]{1,2})\s+(?P<b2>[0-9A-Fa-f]{1,2})\s+"
+        r"(?P<b3>[0-9A-Fa-f]{1,2})"
+    )
+    ROUTINE_MAINTENANCE = (
+        re.compile(r"\[STATUS TX\]\s+Requisicao global de status enviada"),
+        re.compile(r"\[STATUS TX\]\s+node=\d+\s+status=\d+"),
+        re.compile(r"\[NODE\s+\d+\]\s+\[STATUS TX\]\s+codigo=\d+"),
+        re.compile(r"\[REPLICA TX\]\s+node=\d+\s+status=\d+"),
+        re.compile(r"\[NODE\s+\d+\]\s+\[HB\]\s+modo=\d+\s+periodo=\d+\s+ms"),
     )
     COMMAND_ACK = re.compile(
         r"\[GW\]\s+CMD_ACK\s+node=(?P<node>\d+)\s+subcmd=0x(?P<subcmd>[0-9A-Fa-f]+)\s+"
@@ -70,6 +88,31 @@ class LegacyGatewayDecoder:
             return True
         if match := self.NODE_SENSOR.search(line):
             await self._sensor(match)
+            return True
+        if match := self.CONTROL_RX.search(line):
+            data = bytes(int(match.group(name), 16) for name in ("b0", "b1", "b2", "b3"))
+            b0, b1, _, _ = data
+            known_control = (
+                (b0 == 0x23 and b1 in {0x21, 0x41, 0x50, 0x51, 0x52})
+                or (b0 == 0x22 and b1 in {0x00, 0x10, 0x20, 0x30, 0x40})
+            )
+            if known_control:
+                await self._decode_legacy_payload(data)
+                await self.bus.publish(LogEvent("DEBUG", line, "CAN_MAINT"))
+                return True
+        if any(pattern.search(line) for pattern in self.ROUTINE_MAINTENANCE):
+            await self.bus.publish(LogEvent("DEBUG", line, "CAN_MAINT"))
+            return True
+        if match := self.WIRELESS_CANDIDATE.search(line):
+            await self.bus.publish(
+                WirelessCandidateReceived(
+                    reporter_node_id=int(match.group("reporter")),
+                    wireless_uuid=match.group("uuid").upper().replace("0X", "0x"),
+                    profile_id=match.group("profile").upper(),
+                    rssi_dbm=int(match.group("rssi")),
+                    protocol_version=match.group("protocol"),
+                )
+            )
             return True
         if match := self.COMMAND_ACK.search(line):
             node = int(match.group("node"))
@@ -180,12 +223,5 @@ class LegacyGatewayDecoder:
                 round_number=round_number,
                 enabled=enabled,
                 profile_id="DEMO_BYTE",
-            )
-        )
-        await self.bus.publish(
-            LogEvent(
-                "DEBUG",
-                f"Node CAN {node}: LOCAL_SENSOR_DEMO_VALUE=0x{value:02X}",
-                "CAN_NODE",
             )
         )

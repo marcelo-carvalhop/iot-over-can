@@ -250,7 +250,7 @@ static void print_status(void) {
     BatteryStatus batt = battery_monitor_get_status();
     printf("STATUS NET=%s MODE=%s ACQ=%s WINDOW=%s WINDOW_SIZE=%u RATE_HZ=%.2f STALTA=%.3f GAIN=%.3f "
            "DTC=0x%04X DTC_COUNT=%u MPU=%s SIM=%s TELEMETRY=%s PERIOD_MS=%u "
-           "BATT_PCT=%u BATT_MV=%u DRDY_IRQ=%u DRDY_MISSED=%u AUTH=%s WIFI_PROVISIONED=%s\n",
+           "BATT_PCT=%u BATT_MV=%u DRDY_IRQ=%u DRDY_MISSED=%u AUTH=%s WIFI_PROVISIONED=%s BLE_BEACON=%s\n",
            net_state_name(edge_net_get_state()),
            fsm_mode_name((uint8_t)main_get_active_fsm_mode()),
            acq_mode_name((uint8_t)main_get_acquisition_mode()),
@@ -270,7 +270,8 @@ static void print_status(void) {
            (unsigned)mpu6050_get_drdy_irq_count(),
            (unsigned)mpu6050_get_drdy_missed_count(),
            serial_auth_is_unlocked() ? "UNLOCKED" : "LOCKED",
-           yes_no(edge_net_is_wifi_provisioned()));
+           yes_no(edge_net_is_wifi_provisioned()),
+           edge_ble_beacon_is_active() ? "ON" : "OFF");
 }
 
 static void print_staged(void) {
@@ -565,10 +566,11 @@ static void process_line(char *line) {
                 return;
             }
             if (ntok >= 3 && str_ieq(tok[2], "STATUS")) {
-                printf("NET WIFI=%s STATE=%s PROVISIONED=%s\n",
+                printf("NET WIFI=%s STATE=%s PROVISIONED=%s BLE_BEACON=%s\n",
                        edge_net_is_enabled() ? "ON" : "OFF",
                        net_state_name(edge_net_get_state()),
-                       yes_no(edge_net_is_wifi_provisioned()));
+                       yes_no(edge_net_is_wifi_provisioned()),
+                       edge_ble_beacon_is_active() ? "ON" : "OFF");
                 return;
             }
             if (ntok >= 5 && str_ieq(tok[2], "PROVISION")) {
@@ -585,8 +587,9 @@ static void process_line(char *line) {
             return;
         }
 
-        printf("NET STATE=%s WIFI=%s PROVISIONED=%s\n", net_state_name(edge_net_get_state()),
-               edge_net_is_enabled() ? "ON" : "OFF", yes_no(edge_net_is_wifi_provisioned()));
+        printf("NET STATE=%s WIFI=%s PROVISIONED=%s BLE_BEACON=%s\n", net_state_name(edge_net_get_state()),
+               edge_net_is_enabled() ? "ON" : "OFF", yes_no(edge_net_is_wifi_provisioned()),
+               edge_ble_beacon_is_active() ? "ON" : "OFF");
         return;
     }
 

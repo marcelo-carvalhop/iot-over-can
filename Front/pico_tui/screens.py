@@ -1025,7 +1025,9 @@ class CanNodeDetailScreen(ModalScreen[str | None]):
             yield Static("SENSOR LOCAL", classes="section-title")
             yield Static("Perfil e valor do sensor local são atualizados na tabela acima.", classes="modal-hint")
             yield Static("WIRELESS", classes="section-title")
-            yield Static("Discovery, AP e associação wireless são mostrados na tabela acima.", classes="modal-hint")
+            yield Static("Discovery e candidatos observados pelo módulo.", classes="modal-hint")
+            yield Static("CANDIDATOS WIRELESS", classes="section-title")
+            yield Static("Nenhum candidato wireless observado", id="can-node-candidates")
             yield Static("SENSORES WIRELESS ASSOCIADOS", classes="section-title")
             yield Static("Nenhum sensor wireless associado", id="can-node-children")
             with Horizontal(classes="modal-buttons"):
@@ -1112,6 +1114,20 @@ class CanNodeDetailScreen(ModalScreen[str | None]):
         self.query_one("#can-node-live-summary", Static).update(
             f"Node [b]{node.parent_node_id:02d}[/b] • {node.status.value} • {node.role} • "
             f"sensor local={node.local_sensor_profile}:{local_value} • atualizado há {age_text}"
+        )
+
+        candidate_lines = []
+        for candidate in sorted(
+            node.wireless_candidates.values(),
+            key=lambda item: item.rssi_dbm,
+            reverse=True,
+        ):
+            candidate_lines.append(
+                f"{candidate.wireless_uuid}  profile={candidate.profile_id}  "
+                f"RSSI={candidate.rssi_dbm} dBm  protocol={candidate.protocol_version or 'N/A'}"
+            )
+        self.query_one("#can-node-candidates", Static).update(
+            "\n".join(candidate_lines) if candidate_lines else "Nenhum candidato wireless observado"
         )
 
         child_lines = []

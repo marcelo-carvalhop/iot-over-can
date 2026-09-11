@@ -7,7 +7,7 @@ cd Codigo/node-wifi
 rm -rf build
 mkdir build
 cd build
-cmake -DPICO_BOARD=pico2_w ..
+cmake -DPICO_BOARD=pico_w ..
 cmake --build . -j$(nproc)
 ```
 
@@ -189,3 +189,44 @@ F3
 ```
 
 Não é necessário executar `pip install -e .` a cada inicialização.
+
+
+## v0.13.0 — validação da descoberta BLE
+
+O hardware atual do sensor é Raspberry Pi Pico W. O build padrão é:
+
+```bash
+./scripts/build_pico.sh
+```
+
+Para uma futura placa Pico 2 W, use explicitamente:
+
+```bash
+./scripts/build_pico.sh pico2_w
+```
+
+Os módulos CAN exigem ID explícito para evitar gravação acidental de vários nós com
+a mesma identidade:
+
+```bash
+./scripts/upload_esp32_can_node.sh 1 /dev/ttyUSB0
+./scripts/upload_esp32_can_node.sh 2 /dev/ttyUSB0
+./scripts/upload_esp32_can_node.sh 3 /dev/ttyUSB0
+./scripts/upload_esp32_can_node.sh 4 /dev/ttyUSB0
+```
+
+Após gravar a v0.13.0, a validação de bancada deve ser feita com o CAN já estável e
+o Pico W inicialmente apenas alimentado. Na serial individual de cada Node funcional
+deve aparecer `BLE_SCAN=ACTIVE`. Com o Pico W ligado, a Probe 00 deve começar a emitir
+linhas no formato:
+
+```text
+[GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-48 protocol=5
+```
+
+O mesmo UUID pode aparecer reportado por vários Nodes, com RSSI diferente. Na TUI, o
+contador `cand=` deve aumentar nos Nodes observadores; ao abrir o detalhe do Node, o
+UUID, perfil e RSSI devem aparecer em `CANDIDATOS WIRELESS`.
+
+Nesta release não deve existir ainda `02.01`, `BOUND` ou telemetria do Pico dentro da
+árvore CAN. Esses estados pertencem à etapa de associação posterior.

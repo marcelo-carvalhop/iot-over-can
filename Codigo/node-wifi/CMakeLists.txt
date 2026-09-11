@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.13)
 
 # Item 17: define a placa ANTES de pico_sdk_init(). Sem isso o SDK não
-# necessariamente configura os pinos/firmware do rádio CYW43439 do Pico 2 W
+# necessariamente configura os pinos/firmware do rádio CYW43439 do Pico W
 # corretamente — pode compilar "silenciosamente" para a placa errada.
 if(NOT DEFINED PICO_BOARD)
     set(PICO_BOARD pico_w CACHE STRING "Board type")
@@ -17,7 +17,7 @@ set(CMAKE_CXX_STANDARD 17)
 # Inicializa o Raspberry Pi Pico SDK
 pico_sdk_init()
 
-# Define o alvo como Raspberry Pi Pico 2W (RP2350 com Rádio CYW43439)
+# Define o alvo como Raspberry Pi Pico W (RP2040 com rádio CYW43439)
 add_executable(edge_node_firmware
     main.c
     dsp_pipeline.c
@@ -27,6 +27,7 @@ add_executable(edge_node_firmware
     battery_monitor.c
     config_validation.c
     device_identity.c
+    edge_ble_beacon.c
 )
 
 # Adiciona diretórios de cabeçalho (inclui também lwipopts.h, que precisa
@@ -45,6 +46,8 @@ target_link_libraries(edge_node_firmware
     hardware_adc
     pico_cyw43_arch_lwip_threadsafe_background
     pico_unique_id
+    pico_btstack_ble
+    pico_btstack_cyw43
 )
 
 # Habilita saída de debug via USB Serial (opcional, pode ser desativado para produção)
@@ -57,7 +60,7 @@ pico_add_extra_outputs(edge_node_firmware)
 
 # Secrets are supplied at configure time and are never committed to source.
 # Example:
-# cmake -DPICO_BOARD=pico2_w -DEDGE_SERIAL_ADMIN_TOKEN=0x1122334455667788 \
+# cmake -DPICO_BOARD=pico_w -DEDGE_SERIAL_ADMIN_TOKEN=0x1122334455667788 \
 #       -DEDGE_NODE_PRESHARED_KEY=0xA1B2C3D4E5F60718 ..
 set(EDGE_SERIAL_ADMIN_TOKEN "0" CACHE STRING "64-bit maintenance token; 0 keeps mutating serial commands locked")
 set(EDGE_NODE_PRESHARED_KEY "0" CACHE STRING "64-bit legacy UDP claim key; 0 disables legacy claim")

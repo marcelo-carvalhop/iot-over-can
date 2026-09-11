@@ -77,6 +77,7 @@ from pico_tui.widgets import (
     ModeSelected,
     QuickApplyRequested,
     NetworkTreePanel,
+    NodeTelemetryPanel,
     QuickStatusPanel,
     TelemetryPanel,
     WindowSelected,
@@ -203,6 +204,7 @@ class PicoTuiApp(App[None]):
                 yield vibration_panel
                 yield EventLog()
             with Vertical(id="right-col"):
+                yield NodeTelemetryPanel()
                 vibration_config = ConfigPanel()
                 vibration_config.display = False
                 yield vibration_config
@@ -336,6 +338,13 @@ class PicoTuiApp(App[None]):
             await self.bus.publish(LogEvent("ERROR", f"Falha ao abrir {port}: {exc}", "SERIAL"))
             self.state_store.set_connection(ConnectionState.DISCONNECTED, port=port)
             return False
+        # Abrir uma porta pode resetar placas ESP32 via DTR/RTS. Aguarda o boot,
+        # descarta bytes residuais e só então inicia o handshake textual.
+        await asyncio.sleep(0.85)
+        try:
+            await asyncio.to_thread(client.discard_input)
+        except Exception as exc:
+            await self.bus.publish(LogEvent("DEBUG", f"Não foi possível limpar entrada serial: {exc}", "SERIAL"))
         self.serial_client = client
         self.connected = True
         self.port_name = port
@@ -361,20 +370,38 @@ class PicoTuiApp(App[None]):
         return True
 
     async def _send_probe(self, mode: str) -> None:
-        if mode.lower() in {"sensor", "sensor_direct"}:
-            for command in ("VERSION", "STATUS", "GET"):
+        normalized = mode.lower()
+        if normalized in {"sensor", "sensor_direct"}:
+            self._send_raw("VERSION")
+            await asyncio.sleep(0.10)
+            for command in ("STATUS", "GET"):
                 self._send_raw(command)
-                await asyncio.sleep(0.04)
-        elif mode.lower() in {"gateway", "gateway_can"}:
-            for command in ("GW_VERSION", "GW_STATUS"):
-                self._send_raw(command)
-                await asyncio.sleep(0.04)
+                await asyncio.sleep(0.05)
+            return
+
+        if normalized in {"gateway", "gateway_can"}:
+            self._send_raw("PROBE_VERSION")
+            await asyncio.sleep(0.12)
+            self._send_raw("PROBE_STATUS")
+            return
+
+        # AUTO: VERSION é deliberadamente o único probe inicial. O Pico responde
+        # VERSION; a Probe 00 responde PROBE_VERSION pelo alias compatível.
+        self._send_raw("VERSION")
+        await asyncio.sleep(0.35)
+        if self.decoder.mode == ConnectionMode.GATEWAY_CAN:
+            self._send_raw("PROBE_STATUS")
+        elif self.decoder.mode == ConnectionMode.SENSOR_DIRECT:
+            self._send_raw("STATUS")
+            await asyncio.sleep(0.05)
+            self._send_raw("GET")
         else:
-            # O firmware direto responde a VERSION/STATUS; gateways devem
-            # ignorá-los ou responder ERR sem efeito. Em seguida sondamos o gateway.
-            for command in ("VERSION", "STATUS", "GW_VERSION", "GW_STATUS"):
-                self._send_raw(command)
-                await asyncio.sleep(0.06)
+            # Um único fallback para versões antigas/boot lento, sem rajada de
+            # quatro comandos consecutivos.
+            self._send_raw("PROBE_VERSION")
+            await asyncio.sleep(0.25)
+            if self.decoder.mode == ConnectionMode.GATEWAY_CAN:
+                self._send_raw("PROBE_STATUS")
 
     def _close_serial(self) -> None:
         client = self.serial_client
@@ -413,11 +440,30 @@ class PicoTuiApp(App[None]):
         self.run_worker(self.bus.publish(ConnectionClosed(self.port_name, "serial disconnected")))
         self.run_worker(self.bus.publish(LogEvent("ERROR", "Conexão serial perdida", "SERIAL")))
 
+    @staticmethod
+    def _event_is_main_log_noise(event: LogEvent) -> bool:
+        if event.level.upper() != "DEBUG":
+            return False
+        message = event.message.strip()
+        if event.source in {"GATEWAY", "SERIAL"} and (
+            message.startswith("GW_UNPARSED:") or message.startswith("AUTO_UNPARSED:")
+        ):
+            return True
+        if event.source == "CAN_MAINT":
+            return True
+        if event.source == "CAN_NODE" and "LOCAL_SENSOR_DEMO_VALUE=" in message:
+            return True
+        return False
+
     async def _on_log_event(self, event: LogEvent) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_messages.append(f"{timestamp} [{event.level}] {event.source}: {event.message}")
         if len(self.log_messages) > 3000:
             del self.log_messages[:1000]
+        # O LogManager continua persistindo DEBUG bruto em JSONL. O painel
+        # central, porém, é um EventLog operacional e não um console serial.
+        if self._event_is_main_log_noise(event):
+            return
         colors = {
             "DEBUG": palette.TEXT_DIM,
             "INFO": palette.STATE_INFO,
@@ -439,10 +485,8 @@ class PicoTuiApp(App[None]):
         if self.serial_client:
             self.serial_client.set_console_echo_filter(event.mode == ConnectionMode.SENSOR_DIRECT)
         await self.bus.publish(LogEvent("INFO", f"Modo detectado: {event.mode.value}", "PROTOCOL"))
-        if event.mode == ConnectionMode.SENSOR_DIRECT and self._last_mode.lower() == "auto":
-            for command in ("VERSION", "STATUS", "GET"):
-                self._send_raw(command)
-                await asyncio.sleep(0.03)
+        # O handshake é serializado exclusivamente por _send_probe(); não envie
+        # uma segunda rajada de VERSION/STATUS/GET durante a detecção automática.
 
     async def _on_command_ack(self, event: CommandAck) -> None:
         command_upper = (event.command or "").upper()
@@ -526,6 +570,7 @@ class PicoTuiApp(App[None]):
         try:
             self.query_one(NetworkTreePanel).refresh_state(state)
             self.query_one(CanNetworkDashboardPanel).refresh_state(state, selected_node, selected)
+            self.query_one(NodeTelemetryPanel).refresh_state(state)
 
             vibration_selected = bool(
                 selected
@@ -988,7 +1033,7 @@ class PicoTuiApp(App[None]):
         elif sensor:
             self._send_raw(commands.gateway_command(sensor.logical_id, "STATUS"))
         else:
-            self._send_raw("GW_STATUS")
+            self._send_raw("PROBE_STATUS")
 
     async def _set_telemetry(self, enabled: bool) -> None:
         sensor = self._selected_sensor()

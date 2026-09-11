@@ -14,7 +14,8 @@ iot-over-can/
 │   │   │   ├── falhas.h
 │   │   │   ├── node_config.h
 │   │   │   ├── node_types.h
-│   │   │   └── protocolo.h
+│   │   │   ├── protocolo.h
+│   │   │   └── wireless_discovery.h
 │   │   ├── legacy/
 │   │   │   ├── can_ids.h
 │   │   │   ├── comandos.cpp
@@ -28,7 +29,8 @@ iot-over-can/
 │   │   ├── src/
 │   │   │   ├── comandos.cpp
 │   │   │   ├── falhas.cpp
-│   │   │   └── main.ino
+│   │   │   ├── main.ino
+│   │   │   └── wireless_discovery.cpp
 │   │   ├── tools/
 │   │   │   └── node_id.py
 │   │   └── platformio.ini
@@ -37,6 +39,7 @@ iot-over-can/
 │       │   └── test_config_validation.c
 │       ├── battery_monitor.c
 │       ├── battery_monitor.h
+│       ├── btstack_config.h
 │       ├── CMakeLists.txt
 │       ├── config_validation.c
 │       ├── config_validation.h
@@ -44,6 +47,8 @@ iot-over-can/
 │       ├── device_identity.h
 │       ├── dsp_pipeline.c
 │       ├── dsp_pipeline.h
+│       ├── edge_ble_beacon.c
+│       ├── edge_ble_beacon.h
 │       ├── edge_network_driver.c
 │       ├── edge_network_driver.h
 │       ├── edge_protocol_definitions.h
@@ -60,7 +65,8 @@ iot-over-can/
 │   │   ├── node-capabilities-and-profile-ui.md
 │   │   ├── security-review-implementation-v012.md
 │   │   ├── tui-integration-notes.md
-│   │   └── tui-network-console.md
+│   │   ├── tui-network-console.md
+│   │   └── wireless-discovery-v013.md
 │   ├── development/
 │   │   └── challenges-and-resolutions.md
 │   ├── Front/
@@ -105,6 +111,8 @@ iot-over-can/
 │   ├── README.md
 │   ├── release-v0.12.0.md
 │   ├── release-v0.12.1.md
+│   ├── release-v0.12.2.md
+│   ├── release-v0.13.0.md
 │   ├── requirements-coverage.md
 │   ├── security-model.md
 │   └── TREE.md
@@ -160,7 +168,8 @@ iot-over-can/
 │   │   ├── test_review_v012_integration_contract.py
 │   │   ├── test_security_hardening_v012.py
 │   │   ├── test_serial_port_markup_regression.py
-│   │   └── test_state.py
+│   │   ├── test_state.py
+│   │   └── test_wireless_discovery_v013.py
 │   ├── .gitignore
 │   ├── pyproject.toml
 │   ├── pytest.ini

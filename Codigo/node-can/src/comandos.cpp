@@ -75,6 +75,37 @@ static void printHexByte(uint8_t value) {
   Serial.print(value, HEX);
 }
 
+static void printProbeVersion() {
+  Serial.println("PROBE_VERSION FIRMWARE=0.13.2 PROTOCOL=CAN_CLASSIC_V1 NODE=0");
+}
+
+static void printProbeStatus() {
+  Serial.print("PROBE_STATUS NODE=0 STATE=ONLINE CAN=CLASSIC ARB=500000 DATA=0 WIFI=OFF BLE_SCAN=OFF UPTIME_MS=");
+  Serial.println(millis());
+}
+
+static bool handleProbeIntrospectionCommand(const char *command) {
+  if (NODE_ID != 0) {
+    return false;
+  }
+
+  if (strcmp(command, "PROBE_VERSION") == 0 ||
+      strcmp(command, "GW_VERSION") == 0 ||
+      strcmp(command, "VERSION") == 0) {
+    printProbeVersion();
+    return true;
+  }
+
+  if (strcmp(command, "PROBE_STATUS") == 0 ||
+      strcmp(command, "GW_STATUS") == 0 ||
+      strcmp(command, "STATUS") == 0) {
+    printProbeStatus();
+    return true;
+  }
+
+  return false;
+}
+
 /* =========================================================
  * ENVIO SERIAL -> CAN
  * ========================================================= */
@@ -224,6 +255,13 @@ void handleSerialCommands() {
       idx = 0;
 
       if (strlen(buffer) == 0) return;
+
+      // A Probe 00 possui um pequeno protocolo textual de introspecção para
+      // que a TUI possa identificá-la sem injetar frames CAN. Os aliases GW_*
+      // são mantidos por compatibilidade com versões anteriores da TUI.
+      if (handleProbeIntrospectionCommand(buffer)) {
+        return;
+      }
 
       uint8_t opcode;
       uint8_t subcmd;

@@ -156,6 +156,25 @@ Footer > .footer--key {
     scrollbar-color: $accent-focus;
 }
 
+#node-telemetry-panel {
+    height: 1fr;
+}
+
+#node-telemetry-hint {
+    height: 3;
+    background: $bg-widget;
+    color: $text-muted;
+    padding: 0 1;
+}
+
+#node-telemetry-live {
+    height: 1fr;
+    background: $bg-widget;
+    color: $text-secondary;
+    padding: 1;
+    overflow-y: auto;
+}
+
 #config-panel {
     height: 1fr;
 }

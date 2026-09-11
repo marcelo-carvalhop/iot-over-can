@@ -1,6 +1,6 @@
 # Edge Node TUI Ready Firmware
 
-Firmware para Raspberry Pi Pico 2 W com MPU6050, console serial ASCII, Wi-Fi/UDP local e protocolo preparado para integração com gateway ESP32/CAN e TUI.
+Firmware para Raspberry Pi Pico W com MPU6050, console serial ASCII, Wi-Fi/UDP local e protocolo preparado para integração com gateway ESP32/CAN e TUI.
 
 Esta versão parte da variante `DRDY sem DMA` e adiciona campos estruturados para a TUI. O sensor é amostrado por `INT/DRDY` no GP2; a ISR apenas sinaliza amostra pendente, e a leitura I2C ocorre fora da interrupção.
 
@@ -29,7 +29,7 @@ Esta versão parte da variante `DRDY sem DMA` e adiciona campos estruturados par
 ## Pinagem
 
 ```text
-MPU6050        Pico 2 W
+MPU6050        Pico W
 ------------------------------
 VCC        -> 3V3
 GND        -> GND
@@ -42,7 +42,7 @@ AD0        -> GND, endereço 0x68
 Fuel gauge MAX17048/MAX17043:
 
 ```text
-MAX17048       Pico 2 W
+MAX17048       Pico W
 ------------------------------
 VCC        -> 3V3
 GND        -> GND
@@ -159,7 +159,7 @@ A TUI deve confiar no ACK aplicado, não apenas no ACK enfileirado.
 
 ## Recomendações para o gateway ESP32/CAN
 
-O ESP32 deve atuar como ponte determinística entre UDP local do Pico 2 W e a rede CAN do projeto distribuído. Recomendação de funções mínimas:
+O ESP32 deve atuar como ponte determinística entre UDP local do Pico W e a rede CAN do projeto distribuído. Recomendação de funções mínimas:
 
 1. Criar Soft-AP local com SSID compatível com o firmware do Pico.
 2. Receber `CMD_BEACON_BROADCAST` e manter uma tabela de sensores descobertos.
@@ -190,7 +190,7 @@ Se o projeto continuar com CAN clássico, não envie vetor FFT completo no barra
 rm -rf build
 mkdir build
 cd build
-cmake -DPICO_BOARD=pico2_w ..
+cmake -DPICO_BOARD=pico_w ..
 cmake --build . -j$(nproc)
 ```
 

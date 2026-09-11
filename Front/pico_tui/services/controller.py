@@ -27,6 +27,7 @@ from pico_tui.core.events import (
     TelemetryReceived,
     TransferCompleted,
     TransferFailed,
+    WirelessCandidateReceived,
 )
 from pico_tui.core.models import (
     AcquisitionMode,
@@ -66,6 +67,7 @@ class DomainController:
             (GatewayDetected, self._gateway_detected),
             (GatewayStatusReceived, self._gateway_status),
             (PhysicalNodeReceived, self._physical_node),
+            (WirelessCandidateReceived, self._wireless_candidate),
             (SensorStatusReceived, self._sensor_status),
             (DirectSensorVersionReceived, self._direct_version),
             (DirectSensorStatusReceived, self._direct_status),
@@ -127,8 +129,13 @@ class DomainController:
             )
             return
 
+        caps = str(payload.get("CAPS", payload.get("CAPABILITIES", ""))).replace(";", ",")
+        cap_set = {cap.strip().upper() for cap in caps.split(",") if cap.strip()}
         raw_state = str(payload.get("STATE", payload.get("STATUS", "ONLINE"))).upper()
         role = str(payload.get("ROLE", raw_state if raw_state in {"LEADER", "FOLLOWER"} else "FOLLOWER")).upper()
+        discovery_state = payload.get("DISCOVERY", payload.get("BLE_SCAN"))
+        if discovery_state is None:
+            discovery_state = "SCANNING" if "BLE_SCAN" in cap_set else "NOT_IMPLEMENTED"
         self.state.update_node(
             event.parent_node_id,
             node_type=payload.get("TYPE", "CAN_NODE"),
@@ -139,20 +146,40 @@ class DomainController:
             wifi_state=payload.get("WIFI", "UNKNOWN"),
             uptime_ms=parse_int(payload.get("UPTIME_MS")),
             status=_node_status(raw_state),
-            wireless_discovery_state=str(payload.get("DISCOVERY", payload.get("BLE_SCAN", "NOT_IMPLEMENTED"))),
+            wireless_discovery_state=str(discovery_state).upper(),
             wireless_ap_state=str(payload.get("WIFI_AP", payload.get("AP", "NOT_IMPLEMENTED"))),
             wireless_candidate_count=parse_int(payload.get("WIRELESS_CANDIDATES"), 0) or 0,
         )
-        caps = str(payload.get("CAPS", payload.get("CAPABILITIES", ""))).replace(";", ",")
-        if caps:
-            self.state.add_node_capabilities(
-                event.parent_node_id,
-                *(cap.strip().upper() for cap in caps.split(",") if cap.strip()),
-            )
+        if cap_set:
+            self.state.add_node_capabilities(event.parent_node_id, *cap_set)
         if "LOCAL_PROFILE" in payload:
             self.state.update_node(
                 event.parent_node_id,
                 local_sensor_profile=str(payload["LOCAL_PROFILE"]).upper(),
+            )
+
+
+    async def _wireless_candidate(self, event: WirelessCandidateReceived) -> None:
+        node_before = self.state.find_node(event.reporter_node_id)
+        first_observation = (
+            node_before is None or event.wireless_uuid not in node_before.wireless_candidates
+        )
+        self.state.update_wireless_candidate(
+            event.reporter_node_id,
+            event.wireless_uuid,
+            profile_id=event.profile_id,
+            rssi_dbm=event.rssi_dbm,
+            protocol_version=event.protocol_version,
+        )
+        self.state.add_node_capabilities(event.reporter_node_id, "BLE_SCAN")
+        if first_observation:
+            await self.bus.publish(
+                LogEvent(
+                    "INFO",
+                    f"Node {event.reporter_node_id:02d} detectou {event.wireless_uuid} "
+                    f"({event.profile_id}, RSSI={event.rssi_dbm} dBm, protocolo={event.protocol_version})",
+                    "BLE",
+                )
             )
 
     async def _sensor_status(self, event: SensorStatusReceived) -> None:

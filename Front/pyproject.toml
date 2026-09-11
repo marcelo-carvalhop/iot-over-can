@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "iot-over-can-tui"
-version = "0.12.1"
+version = "0.13.0"
 description = "Console TUI de engenharia para supervisão, diagnóstico e configuração de redes IoT sobre CAN/CAN FD"
 readme = "README.md"
 requires-python = ">=3.11"

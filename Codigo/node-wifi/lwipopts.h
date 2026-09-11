@@ -18,10 +18,10 @@
 #define LWIP_SOCKET                 0
 #define LWIP_NETCONN                0
 
-// Este projeto só usa UDP (discovery broadcast + telemetria unicast).
+// O projeto usa UDP e cliente DHCP para o endereço da interface Wi-Fi.
 #define LWIP_UDP                    1
 #define LWIP_TCP                    0
-#define LWIP_DHCP                   1 // IP estático (ver edge_net_init)
+#define LWIP_DHCP                   1 // cliente DHCP necessário ao node-wifi
 #define LWIP_DNS                    0
 #define LWIP_IGMP                   0
 

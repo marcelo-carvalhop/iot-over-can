@@ -45,15 +45,17 @@ class GatewayTextDecoder:
 
         token = line.split(maxsplit=1)[0].upper()
         payload = parse_key_values(line)
-        if token == "GW_VERSION":
+        if token in {"PROBE_VERSION", "GW_VERSION"}:
             await self.bus.publish(
                 GatewayDetected(
                     firmware_version=payload.get("FIRMWARE", ""),
                     protocol_version=payload.get("PROTOCOL", ""),
                 )
             )
-        elif token == "GW_STATUS":
+            await self.bus.publish(LogEvent("INFO", line, "PROBE"))
+        elif token in {"PROBE_STATUS", "GW_STATUS"}:
             await self.bus.publish(GatewayStatusReceived(payload))
+            await self.bus.publish(LogEvent("INFO", line, "PROBE"))
         elif token == "NODE":
             parent = parse_int(first(payload, "NODE", "PARENT", "PARENT_NODE"), 0) or 0
             await self.bus.publish(PhysicalNodeReceived(parent, payload))

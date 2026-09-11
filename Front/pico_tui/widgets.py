@@ -70,8 +70,8 @@ class NetworkTreePanel(Vertical):
         for parent_id, node in sorted(state.nodes.items()):
             marker = palette.STATUS_MARKERS.get(node.status.value, "[N/A]")
             selected = "▶" if state.selected_node_id == parent_id and not state.selected_logical_id else " "
-            local = f" local={node.local_sensor_profile}:0x{node.local_sensor_value:02X}" if node.local_sensor_value is not None else ""
-            label = f"{selected} {marker} Node {parent_id:02d} — {node.role} — CAN={node.can_state}{local}"
+            local = f" local={node.local_sensor_profile}" if node.local_sensor_profile not in {"", "NONE"} else ""
+            label = f"{selected} {marker} Node {parent_id:02d} — {node.role} — CAN={node.can_state}{local} — BLE={node.wireless_discovery_state} cand={node.wireless_candidate_count}"
             parent = tree.root.add(label, data=("node", parent_id), expand=True)
             for child_id, sensor in sorted(node.sensors.items()):
                 quality = palette.QUALITY_MARKERS.get(sensor.quality.value, "[N/A]")
@@ -95,8 +95,8 @@ class NetworkTreePanel(Vertical):
                 if physical:
                     marker = palette.STATUS_MARKERS.get(physical.status.value, "[N/A]")
                     selected = "▶" if state.selected_node_id == physical.parent_node_id and not state.selected_logical_id else " "
-                    local = f" local={physical.local_sensor_profile}:0x{physical.local_sensor_value:02X}" if physical.local_sensor_value is not None else ""
-                    node.set_label(f"{selected} {marker} Node {physical.parent_node_id:02d} — {physical.role} — CAN={physical.can_state}{local}")
+                    local = f" local={physical.local_sensor_profile}" if physical.local_sensor_profile not in {"", "NONE"} else ""
+                    node.set_label(f"{selected} {marker} Node {physical.parent_node_id:02d} — {physical.role} — CAN={physical.can_state}{local} — BLE={physical.wireless_discovery_state} cand={physical.wireless_candidate_count}")
                 for child_node in node.children:
                     child_data = child_node.data
                     if isinstance(child_data, tuple) and child_data[0] == "sensor":
@@ -146,6 +146,12 @@ class CanNetworkDashboardPanel(Vertical):
 
     def refresh_state(self, state: AppState, selected_node: PhysicalNode | None, selected_sensor: SensorNode | None) -> None:
         sensor_count = sum(len(node.sensors) for node in state.nodes.values())
+        candidate_observations = sum(len(node.wireless_candidates) for node in state.nodes.values())
+        unique_candidate_uuids = {
+            candidate.wireless_uuid
+            for node in state.nodes.values()
+            for candidate in node.wireless_candidates.values()
+        }
         online_nodes = sum(1 for node in state.nodes.values() if node.status.value == "ONLINE")
         stale_nodes = sum(1 for node in state.nodes.values() if node.status.value in {"AGING", "STALE", "LOST"})
         if selected_sensor:
@@ -184,7 +190,8 @@ class CanNetworkDashboardPanel(Vertical):
                 f"transferências={state.network.active_transfers}"
             ),
             "modules": f"{len(state.nodes)} módulos conhecidos; online={online_nodes}; atenção={stale_nodes}",
-            "wifi_sensors": f"{sensor_count} sensores lógicos/wireless detectados",
+            "wifi_sensors": (f"candidatos únicos={len(unique_candidate_uuids)}; "
+                             f"observações={candidate_observations}; associados={sensor_count}"),
             "selected": selected,
             "selected_status": selected_status,
             "last_action": state.last_action or "N/A",
@@ -305,6 +312,47 @@ class TelemetryPanel(Vertical):
         self._set_values({})
         self._rms_history.clear()
         self.query_one("#rms-sparkline", Sparkline).data = []
+
+
+class NodeTelemetryPanel(Vertical):
+    """Estado contínuo dos módulos CAN; evita transformar telemetria em EventLog."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(id="node-telemetry-panel", classes="panel", **kwargs)
+
+    def compose(self) -> ComposeResult:
+        yield Label("TELEMETRIA DOS NÓS", classes="panel-title")
+        yield Static(
+            "Valores contínuos e qualidade do enlace BLE. Eventos permanecem no painel central.",
+            id="node-telemetry-hint",
+        )
+        yield Static("Aguardando módulos CAN...", id="node-telemetry-live")
+
+    def refresh_state(self, state: AppState) -> None:
+        now = time.monotonic()
+        if not state.nodes:
+            text = "Aguardando módulos CAN..."
+        else:
+            blocks: list[str] = []
+            for node_id, node in sorted(state.nodes.items()):
+                selected = "▶" if state.selected_node_id == node_id and not state.selected_logical_id else " "
+                value = f"0x{node.local_sensor_value:02X}" if node.local_sensor_value is not None else "N/A"
+                round_text = str(node.local_sensor_last_round) if node.local_sensor_last_round is not None else "N/A"
+                if node.local_sensor_last_seen_monotonic:
+                    local_age = max(0.0, now - node.local_sensor_last_seen_monotonic)
+                    age_text = f"{local_age:.1f}s"
+                else:
+                    age_text = "N/A"
+                candidates = list(node.wireless_candidates.values())
+                best_rssi = max((candidate.rssi_dbm for candidate in candidates), default=None)
+                rssi_text = f"{best_rssi} dBm" if best_rssi is not None else "N/A"
+                blocks.append(
+                    f"[b]{selected} Node {node_id:02d}[/b]  {node.role}\n"
+                    f"  local {node.local_sensor_profile or 'NONE'}  valor={value}  rodada={round_text}  há={age_text}\n"
+                    f"  BLE={node.wireless_discovery_state}  cand={len(candidates)}  melhor={rssi_text}"
+                )
+            text = "\n\n".join(blocks)
+        self.query_one("#node-telemetry-live", Static).update(text)
 
 
 class ConfigPanel(Vertical):

@@ -6,6 +6,7 @@
 #include "battery_monitor.h"
 #include "config_validation.h"
 #include "device_identity.h"
+#include "edge_ble_beacon.h"
 #include <string.h>
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
@@ -439,6 +440,14 @@ void edge_net_init(void) {
     g_last_parent_activity_ms = to_ms_since_boot(get_absolute_time());
     g_beacon_prng_state ^= (uint32_t)edge_device_uuid64();
     g_beacon_prng_state ^= (uint32_t)(edge_device_uuid64() >> 32);
+
+    /* BLE discovery is autonomous at boot. Wi-Fi remains disabled until a
+       future association step provisions and enables it. pico_btstack_cyw43
+       makes cyw43_arch_init() initialize the shared Bluetooth/Wi-Fi radio. */
+    if (cyw43_arch_init() == 0) {
+        g_cyw43_initialized = true;
+        (void)edge_ble_beacon_init();
+    }
 }
 
 bool edge_net_provision_wifi(const char *ssid, const char *password) {

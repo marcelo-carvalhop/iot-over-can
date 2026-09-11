@@ -8,6 +8,7 @@
 #include "node_config.h"
 #include "comandos.h"
 #include "falhas.h"
+#include "wireless_discovery.h"
 
 /* =========================================================
  * CONFIGURACAO LOCAL DO NO
@@ -1479,6 +1480,10 @@ void handleControlCanMessage(const CANMessage& rx) {
 }
 
 void handleReceivedCanMessage(const CANMessage& rx) {
+  if (wirelessDiscoveryHandleCanMessage(rx)) {
+    return;
+  }
+
   if (rx.id == CAN_ID_ELECTION) {
     handleElectionMessage(rx);
   }
@@ -1522,9 +1527,13 @@ void setup() {
   Serial.println(NODE_ID);
   Serial.println("========================================");
   Serial.println("[LEDS] IDLE: todos acesos. Logica invertida: LOW=ligado, HIGH=desligado");
-  Serial.print("[NODE ");
-  Serial.print(NODE_ID);
-  Serial.println("] CAPS=CAN,LOCAL_SENSOR,LOCAL_SENSOR_DEMO LOCAL_PROFILE=DEMO_BYTE");
+  if (NODE_ID == 0) {
+    Serial.println("[PROBE 00] CAPS=CAN_MONITOR,SERIAL_INSTRUMENTATION LOCAL_PROFILE=NONE");
+  } else {
+    Serial.print("[NODE ");
+    Serial.print(NODE_ID);
+    Serial.println("] CAPS=CAN,LOCAL_SENSOR,LOCAL_SENSOR_DEMO,BLE_SCAN LOCAL_PROFILE=DEMO_BYTE");
+  }
 
   initNetworkStatusTable();
   initFaultModule();
@@ -1552,6 +1561,8 @@ void setup() {
     }
   }
 
+  wirelessDiscoveryInit();
+
   if (isGateway()) {
     state = STATE_GATEWAY;
 
@@ -1563,9 +1574,9 @@ void setup() {
 
     forceNetworkStatusLocal(NODE_ID, STATUS_GATEWAY);
 
-    Serial.println("[GW] Modo gateway ativado");
-    Serial.println("[GW] Este no nao participa da eleicao, TDMA ou sensoriamento");
-    Serial.println("[GW] Saida serial centralizada neste no");
+    Serial.println("[GW] Probe 00 ativada");
+    Serial.println("[GW] Instrumentacao externa: nao participa da eleicao, TDMA ou sensoriamento");
+    Serial.println("[GW] Interface serial da Probe 00 pronta");
     Serial.println("[GW] Iniciar eleicao: 22 00 FF 01");
     Serial.println("[GW] Solicitar status: 22 20 FF 00");
     Serial.println("[GW] Velocidade heartbeat: 22 30 FF 01..05");
@@ -1603,6 +1614,8 @@ void loop() {
     lastHeartbeatTime = millis();
     sendHeartbeat();
   }
+
+  wirelessDiscoveryPoll();
 
   CANMessage rx;
 

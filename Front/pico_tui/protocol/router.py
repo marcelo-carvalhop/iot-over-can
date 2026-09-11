@@ -11,6 +11,7 @@ class DecoderRouter:
     """Detecta o protocolo e encaminha as linhas em ordem ao decoder adequado."""
 
     GATEWAY_PREFIXES = (
+        "PROBE_",
         "GW_",
         "NODE ",
         "SENSOR ",
@@ -21,6 +22,7 @@ class DecoderRouter:
         "ACK ",
         "DTC_CLEAR ",
         "[GW]",
+        "[PROBE ",
         "[NODE ",
         "[STATUS",
         "[DESCOBERTA]",

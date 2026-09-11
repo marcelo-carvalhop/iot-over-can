@@ -29,13 +29,13 @@ A coluna **Estado** usa três classificações: `RESOLVIDO`, quando a correção
 | CH-019 | DTC de segurança agrupava causas distintas | Autenticação, versão, replay e configuração inválida eram pouco distinguíveis | Catálogo e emissão separados para rejeição de autenticação, incompatibilidade, replay e configuração | RESOLVIDO | 0.12 |
 | CH-020 | Comandos CAN administrativos eram `fire-and-forget` | Não havia confirmação de que a ação foi realmente aplicada no alvo | ACK explícito `APPLIED`/`REJECTED` para comandos direcionados ao módulo | RESOLVIDO | 0.12 |
 | CH-021 | Modelo anterior pressupunha gateway wireless central | Não atendia ao requisito de nós CAN fisicamente distribuídos e sensor remoto sem acesso direto do operador | Arquitetura redefinida: todos os nós CAN elegíveis podem descobrir sensores; operador escolhe o melhor nó; Probe 00 permanece invisível | RESOLVIDO | 0.12 |
+| CH-022 | Build do `node-wifi` falhava no linker em `dhcp_start`/`dhcp_stop` | `edge_network_driver.c` passou a usar DHCP, mas `lwipopts.h` ainda definia `LWIP_DHCP 0`, removendo a implementação DHCP do lwIP | `LWIP_DHCP` habilitado, teste de regressão adicionado e `build_pico.sh` passou a validar a existência do `.uf2` | RESOLVIDO | 0.12.2 |
 
 ## Desafios em aberto
 
 | ID | Desafio pendente | Motivo de permanecer aberto | Próxima direção |
 |---|---|---|---|
-| OP-001 | Descoberta BLE distribuída | A baseline atual prepara o ciclo de vida do rádio, mas ainda não implementa advertising no Pico nem scanning nos ESP32 | Beacon BLE com UUID/perfil; cada nó reporta RSSI via CAN |
-| OP-002 | Seleção e associação do sensor pela TUI | Depende do OP-001 e de mensagens CAN de candidatos | Tela de candidatos → escolha do nó → comando de associação → criação `parent.child` |
+| OP-002 | Seleção e associação do sensor pela TUI | A descoberta BLE e o transporte de candidatos já foram validados; ainda falta o protocolo de vínculo | Tela de candidatos → escolha do nó → comando de associação → criação `parent.child` |
 | OP-003 | Autenticação criptográfica do vínculo wireless | O caminho UDP legado está restrito/compatível, mas não há MAC/HMAC final do payload | Desafio-resposta com chave por dispositivo, contador monotônico e MAC |
 | OP-004 | Autenticação de origem dos comandos CAN | ACK confirma execução, mas não prova identidade do emissor | Evoluir formato de controle com origem, contador e MAC compatível com o domínio CAN/CAN FD |
 | OP-005 | FIDO2/Yubico OTP real | A validação antiga foi corretamente desativada, mas não substituída por verificador criptográfico | Implementar FIDO2 ou validação Yubico OTP real antes de reativar `otp` |
@@ -55,3 +55,14 @@ Todo problema que alterar arquitetura, protocolo, segurança, comportamento obse
 | ORG-002 | Documentação espalhada entre código e interface | READMEs e changelogs existiam junto aos firmwares e à TUI | Toda documentação histórica foi copiada ou movida para `Documentacao/`, preservando apenas os arquivos locais necessários ao empacotamento/operação | Resolvido | v0.12.1 |
 
 | ORG-003 | Testes ainda construíam caminhos com `firmware/...` e `software/tui/...` após a migração | A reorganização física alterou a profundidade e os caminhos absolutos calculados pelos testes | Testes atualizados para `Codigo/node-wifi`, `Codigo/node-can` e `Front`, mantendo a validação da baseline após a nova estrutura | Resolvido | v0.12.1 |
+
+| CH-023 | UUID, perfil e RSSI não cabem em um frame CAN clássico | MCP2515 limita o payload a 8 bytes | Protocolo de descoberta dividido em duas mensagens com IDs derivados do Node reportador | RESOLVIDO | 0.13.0 |
+| CH-024 | Probe 00 não deve virar gateway wireless | A descoberta poderia ser centralizada incorretamente no ponto USB | Scan BLE habilitado somente em `NODE_ID > 0`; Probe apenas observa/reagrupa | RESOLVIDO | 0.13.0 |
+| CH-025 | Hardware real é Pico W/RP2040 | Scripts ainda usavam `pico2_w` | `pico_w` passou a ser padrão; `pico2_w` permanece opcional | RESOLVIDO | 0.13.0 |
+| CH-026 | Build de Node CAN aceitava ID 4 implicitamente | O default silencioso podia gerar múltiplos módulos com a mesma identidade | Scripts de build/upload passaram a exigir e validar `NODE_ID` entre 0 e 31 | RESOLVIDO | 0.13.0 |
+
+| CH-027 | Handshake serial da TUI gerava rajadas e resíduos após abertura da porta | Abertura USB podia resetar o ESP32 e a TUI enviava múltiplas sondagens antes da estabilização da serial | Adicionada janela de estabilização, descarte de entrada residual, remoção de NULs e handshake AUTO serializado a partir de um único `VERSION` inicial | RESOLVIDO | 0.13.4 |
+| CH-028 | Mensagens normais de manutenção apareciam continuamente como `GW_UNPARSED` | Linhas como `[STATUS TX]` e `[GW] CONTROLE RX 23 50 ...` não eram classificadas pelo decoder textual | O decoder passou a consumir manutenção conhecida silenciosamente e a interpretar atualizações `CONTROLE RX`; `UNPARSED` DEBUG permanece persistido em arquivo, mas não polui o EventLog operacional | RESOLVIDO | 0.13.4 |
+| CH-029 | Telemetria local `0xAA` e atualizações repetidas de RSSI poluíam o EventLog | Valores contínuos eram tratados como eventos discretos | Telemetria contínua foi movida para o painel direito `TELEMETRIA DOS NÓS`; o EventLog registra apenas a primeira descoberta BLE por nó/UUID e mudanças relevantes | RESOLVIDO | 0.13.4 |
+| CH-030 | Estado BLE dos nós funcionais aparecia como `OFF/NOT_IMPLEMENTED` antes do primeiro candidato | A capacidade `BLE_SCAN` era conhecida, mas não era convertida em estado operacional na TUI | Nós que anunciam `BLE_SCAN` passam a `SCANNING`; Probe 00 permanece explicitamente com BLE desativado | RESOLVIDO | 0.13.4 |
+| CH-031 | Descoberta BLE distribuída precisava ser validada no caminho completo | Era necessário comprovar `Pico W → ESP32 → CAN clássico → Probe 00 → TUI` com múltiplos observadores | Teste de bancada confirmou o mesmo UUID/perfil/protocolo reportado pelos Nodes 1–4 com RSSI independente e decodificação pela TUI | RESOLVIDO | 0.13.4 |

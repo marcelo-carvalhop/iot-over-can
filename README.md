@@ -22,7 +22,7 @@ Assim, o sensor de vibração não define o projeto. Ele é o primeiro gerador d
 
 ```text
 firmware/
-  pico-edge-sensor/       Firmware do Raspberry Pi Pico 2 W + MPU6050
+  Codigo/node-wifi/       Firmware do Raspberry Pi Pico W + MPU6050
   esp32-can-legacy/       Base CAN/ESP32 legada preservada como referência histórica
 
 software/
@@ -294,3 +294,11 @@ Para compilar o nó wireless:
 ```bash
 ./scripts/build_pico.sh
 ```
+
+
+### Descoberta BLE — v0.13.0
+
+A baseline atual implementa descoberta distribuída: o Pico W anuncia UUID/perfil por
+BLE; cada módulo CAN funcional mede RSSI e reporta o candidato pelo CAN clássico; a
+Probe 00 apenas observa e entrega a informação à TUI. Associação Wi-Fi e criação de
+subnó lógico ainda não fazem parte desta versão.

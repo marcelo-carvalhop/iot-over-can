@@ -66,6 +66,16 @@ class LocalNodeTelemetryReceived(Event):
     profile_id: str = "DEMO_BYTE"
 
 
+
+@dataclass(slots=True)
+class WirelessCandidateReceived(Event):
+    reporter_node_id: int
+    wireless_uuid: str
+    profile_id: str
+    rssi_dbm: int
+    protocol_version: str = ""
+
+
 @dataclass(slots=True)
 class SensorStatusReceived(Event):
     parent_node_id: int

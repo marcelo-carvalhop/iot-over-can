@@ -53,6 +53,7 @@ class _Backend(Protocol):
     def read(self, size: int) -> bytes: ...
     def write(self, data: bytes) -> int: ...
     def flush(self) -> None: ...
+    def discard_input(self) -> None: ...
     def close(self) -> None: ...
 
 
@@ -72,6 +73,9 @@ class _PySerialBackend:
 
     def flush(self) -> None:
         self.instance.flush()
+
+    def discard_input(self) -> None:
+        self.instance.reset_input_buffer()
 
     def close(self) -> None:
         self.instance.close()
@@ -117,6 +121,18 @@ class _PosixFdBackend:
 
     def flush(self) -> None:
         return
+
+    def discard_input(self) -> None:
+        if not self._open:
+            return
+        while True:
+            try:
+                if not os.read(self.fd, 4096):
+                    break
+            except BlockingIOError:
+                break
+            except OSError:
+                break
 
     def close(self) -> None:
         if self._open:
@@ -214,7 +230,9 @@ class SerialClient:
                 if not chunk:
                     time.sleep(0.005)
                     continue
-                buffer += chunk
+                # Alguns bridges/boots podem deixar NULs residuais no fluxo.
+                # Eles não fazem parte de nenhum protocolo textual válido.
+                buffer += chunk.replace(b"\x00", b"")
                 if self._filter_console_echo and PROMPT in buffer:
                     buffer = buffer.replace(PROMPT, b"")
                 # Normaliza CRLF, CR isolado e LF.
@@ -251,6 +269,12 @@ class SerialClient:
                 self._pending_echoes.popleft()
                 return True
         return False
+
+    def discard_input(self) -> None:
+        backend = self._backend
+        if backend is None or not backend.is_open:
+            return
+        backend.discard_input()
 
     def write_line(self, text: str) -> None:
         if not self.is_open or self._backend is None:

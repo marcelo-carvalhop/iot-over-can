@@ -153,8 +153,7 @@ class FakeFirmware:
                 self.fft_armed = True
                 self._write("OK FFT=ARMED\n")
         elif cmd in ("SIMULATE", "SIM"):
-            self._write("ERR SIMULATE removed from lean baseline
-")
+            self._write("ERR SIMULATE removed from lean baseline\n")
         elif cmd == "ACQ" and len(tokens) >= 2 and tokens[1].upper() == "POLLING":
             self.acquisition = "POLLING"
             self._write("OK ACQ=POLLING_RESTARTED\n")

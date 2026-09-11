@@ -22,14 +22,14 @@
     "tui_startup": "offline-first; hardware/serial connection optional",
     "tui_bootstrap": "setup once; run script does not reinstall on every start",
     "can_global_commands": "always available; election independent of node selection",
-    "tui_version": "0.12.1",
+    "tui_version": "0.13.0",
     "node_capabilities": "role-independent physical node capabilities",
     "local_sensor_demo": "0xAA represented as DEMO_BYTE local sensor on CAN node",
     "profile_ui": "vibration UI visible only for PROFILE=VIBRATION",
     "probe_zero": "instrumentation only; excluded from functional topology",
     "can_node_click": "opens live CAN node detail",
     "can_node_dtc": "separate module DTC view",
-    "release": "v0.12.1-academic-structure",
+    "release": "v0.13.0-ble-discovery",
     "wireless_protocol_version": "0x05",
     "node_roles": "role independent from physical capabilities",
     "sensor_identity": "64-bit UUID derived from unique board ID",
@@ -51,7 +51,13 @@
         ".github",
         "scripts"
       ]
-    }
+    },
+    "lwip_dhcp": "enabled",
+    "wireless_discovery": "BLE advertisement on Pico W; distributed scan on functional CAN nodes",
+    "wireless_candidate_transport": "two 8-byte classical CAN frames, IDs 0x280..0x2BF",
+    "wireless_association": "not implemented in this release",
+    "pico_default_board": "pico_w",
+    "can_node_id_build": "explicit 0..31; no silent default"
   },
   "paths": {
     "pico_firmware": "Codigo/node-wifi",
@@ -63,7 +69,7 @@
     "challenges_log": "Documentacao/development/challenges-and-resolutions.md"
   },
   "first_commit_message": "chore: initial iot-over-can baseline",
-  "generated_package": "iot-over-can-v0.12.1-academic-structure",
+  "generated_package": "iot-over-can-v0.13.0-ble-discovery",
   "validation": {
     "tui_compileall": "passed",
     "platformio_build": "not executed: pio unavailable in assistant environment",
@@ -81,8 +87,8 @@
     "esp32_command_cpp_stub_syntax": "passed",
     "ci_yaml": "parsed successfully",
     "full_textual_runtime": "not executed in assistant environment",
-    "pico_sdk_real_build": "not executed locally; CI configured",
-    "platformio_real_build": "not executed locally; CI configured",
+    "pico_sdk_real_build": "pending on user Pico SDK environment",
+    "platformio_real_build": "pending on user PlatformIO environment",
     "documentation_consistency": "updated for distributed wireless admission architecture",
     "python_tests_without_textual_runtime": "50 passed, 1 deselected",
     "documentation_challenge_log": "Documentacao/development/challenges-and-resolutions.md",
@@ -102,6 +108,12 @@
     "active_obsolete_path_references": 0,
     "historical_old_path_references": "retained only in migration/challenges history",
     "workflow_yaml": "passed",
-    "test_old_structure_refs": []
+    "test_old_structure_refs": [],
+    "python_tests": "\u001b[32m\u001b[32m\u001b[1m50 passed\u001b[0m, \u001b[33m1 deselected\u001b[0m\u001b[32m in 0.21s\u001b[0m\u001b[0m",
+    "build_pico_bash_syntax": "passed",
+    "dhcp_static_consistency": "passed",
+    "python_tests_wireless_discovery": "54 passed, 1 deselected in 0.11s",
+    "wireless_static_contracts": "passed",
+    "hardware_ble_discovery": "pending bench validation"
   }
 }

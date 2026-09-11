@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from pico_tui.core.event_bus import EventBus
-from pico_tui.core.events import LogEvent, TelemetryReceived
+from pico_tui.core.events import (
+    LocalNodeTelemetryReceived,
+    LogEvent,
+    TelemetryReceived,
+    WirelessCandidateReceived,
+)
 
 
 @dataclass(slots=True)
@@ -45,6 +50,8 @@ class LogManager:
             self._file = (self.directory / f"session_{session_id}.jsonl").open("a", encoding="utf-8")
         bus.subscribe(LogEvent, self._on_log)
         bus.subscribe(TelemetryReceived, self._on_telemetry)
+        bus.subscribe(LocalNodeTelemetryReceived, self._on_local_node_telemetry)
+        bus.subscribe(WirelessCandidateReceived, self._on_wireless_candidate)
 
     async def _on_log(self, event: LogEvent) -> None:
         entry = LogEntry(
@@ -81,6 +88,32 @@ class LogManager:
         }
         self.telemetry_rows.append(row)
         self._write_jsonl({"type": "telemetry", **row})
+
+    async def _on_local_node_telemetry(self, event: LocalNodeTelemetryReceived) -> None:
+        self._write_jsonl(
+            {
+                "type": "local_node_telemetry",
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                "node": event.parent_node_id,
+                "profile": event.profile_id,
+                "value": event.value,
+                "round": event.round_number,
+                "enabled": event.enabled,
+            }
+        )
+
+    async def _on_wireless_candidate(self, event: WirelessCandidateReceived) -> None:
+        self._write_jsonl(
+            {
+                "type": "wireless_candidate",
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                "reporter": event.reporter_node_id,
+                "uuid": event.wireless_uuid,
+                "profile": event.profile_id,
+                "rssi_dbm": event.rssi_dbm,
+                "protocol": event.protocol_version,
+            }
+        )
 
     def _write_jsonl(self, data: dict[str, Any]) -> None:
         if self._file is None:

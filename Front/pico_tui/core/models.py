@@ -237,6 +237,17 @@ class SensorNode:
         return sum(1 for record in self.active_dtcs.values() if record.active)
 
 
+
+@dataclass(slots=True)
+class WirelessCandidate:
+    wireless_uuid: str
+    reporter_node_id: int
+    profile_id: str = "UNKNOWN"
+    rssi_dbm: int = -127
+    protocol_version: str = ""
+    last_seen_monotonic: float = field(default_factory=time.monotonic)
+
+
 @dataclass(slots=True)
 class PhysicalNode:
     parent_node_id: int
@@ -266,6 +277,7 @@ class PhysicalNode:
     wireless_discovery_state: str = "NOT_IMPLEMENTED"
     wireless_ap_state: str = "NOT_IMPLEMENTED"
     wireless_candidate_count: int = 0
+    wireless_candidates: dict[str, WirelessCandidate] = field(default_factory=dict)
 
     # Sensores wireless associados ao nó.
     sensors: dict[int, SensorNode] = field(default_factory=dict)
