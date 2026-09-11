@@ -1,54 +1,92 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
+    paths-ignore:
+      - "Documentacao/**"
+      - "**/*.md"
   pull_request:
+    paths-ignore:
+      - "Documentacao/**"
+      - "**/*.md"
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   tui-tests:
+    name: TUI and native tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: Front/pyproject.toml
+
+      - name: Validate operational scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for script in Codigo/scripts/*.sh; do
+            bash -n "$script"
+            if [[ ! -x "$script" ]]; then
+              echo "::error file=$script::Script must be committed as executable (100755)."
+              exit 1
+            fi
+          done
+
       - name: Install TUI
-        run: python -m pip install -e 'Front[dev]'
+        working-directory: Front
+        run: python -m pip install -e '.[dev]'
+
       - name: Run tests
-        run: pytest Front/tests
+        working-directory: Front
+        run: python -m pytest
+
       - name: Run native validation tests
-        run: ./scripts/test_native_firmware.sh
+        run: bash Codigo/scripts/test_native_firmware.sh
 
   pico-firmware:
+    name: Build Pico W
     runs-on: ubuntu-latest
     env:
       PICO_SDK_PATH: /home/runner/pico-sdk
     steps:
       - uses: actions/checkout@v6
+
       - name: Install toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake build-essential gcc-arm-none-eabi libnewlib-arm-none-eabi python3
+
       - name: Fetch Pico SDK 2.3.1
         run: |
           git clone --depth 1 --branch 2.3.1 https://github.com/raspberrypi/pico-sdk.git "$PICO_SDK_PATH"
           git -C "$PICO_SDK_PATH" submodule update --init --recursive
-      - name: Build Pico 2 W firmware (secure defaults)
-        run: ./scripts/build_pico.sh
+
+      - name: Build Pico W firmware
+        run: bash Codigo/scripts/build_pico.sh pico_w
 
   esp32-platformio:
+    name: Build ESP32 CAN node
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+
       - name: Install PlatformIO
         run: python -m pip install platformio
+
       - name: Build CAN node
-        run: ./scripts/build_esp32_can_node.sh 1
+        run: bash Codigo/scripts/build_esp32_can_node.sh 1
