@@ -49,3 +49,6 @@ yubikey_*.txt
 # Conteúdo mantido apenas na estação local de desenvolvimento
 Codigo/node-can/legacy/
 Documentacao/release-v*.md
+
+# Patches de trabalho não pertencem ao repositório
+*.patch
