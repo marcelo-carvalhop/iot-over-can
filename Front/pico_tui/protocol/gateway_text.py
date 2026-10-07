@@ -127,7 +127,9 @@ class GatewayTextDecoder:
             axis=first(payload, "AXIS"),
             fft_valid=fft_valid,
             rms=_scaled(payload, "RMS_MG", 1000.0, "RMS"),
-            rms_unit=payload.get("RMS_UNIT", "g"),
+            rms_unit={"M/S2": "m/s²", "M/S^2": "m/s²"}.get(
+                str(payload.get("RMS_UNIT", "g")).upper(), payload.get("RMS_UNIT", "g")
+            ),
             kurtosis=_scaled(payload, "KURT_X100", 100.0, "KURT"),
             crest_factor=_scaled(payload, "CREST_X100", 100.0, "CREST"),
             peak_frequency_hz=peak_frequency,
@@ -208,6 +210,7 @@ class GatewayTextDecoder:
                     "FFT_SIZE": parse_int(payload.get("FFT_SIZE")),
                     "WINDOW": payload.get("WINDOW"),
                     "FORMAT": payload.get("FORMAT", "U16_LE"),
+                    "SCALE": parse_float(payload.get("SCALE")),
                 },
             )
         )

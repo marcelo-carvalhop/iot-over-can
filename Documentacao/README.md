@@ -11,6 +11,7 @@ A documentação oficial é organizada por assunto, sem cópias paralelas ou rel
 | [`modelo_de_seguranca.md`](modelo_de_seguranca.md) | autorização, arquivos locais, provisionamento e renovação |
 | [`desafios_e_resolucoes.md`](desafios_e_resolucoes.md) | problemas técnicos com impacto arquitetural e soluções |
 | [`arquitetura/arquitetura.md`](arquitetura/arquitetura.md) | elementos físicos, domínios, associação e camadas de software |
+| [`arquitetura/plano-de-dados-wireless.md`](arquitetura/plano-de-dados-wireless.md) | enlace autenticado sensor ↔ Node, transporte no CAN, modelo de ameaças e roteiro de bancada |
 | [`protocolo/protocolo.md`](protocolo/protocolo.md) | CAN, Probe 00, BLE, associação, sensor, DTC e fragmentação |
 | [`interface/tui.md`](interface/tui.md) | especificação completa da TUI, telas, comandos, wireless, layout e cores |
 | [`modulo-can/modulo-can.md`](modulo-can/modulo-can.md) | firmware e comportamento dos Nodes CAN |

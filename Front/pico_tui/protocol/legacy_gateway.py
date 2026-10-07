@@ -12,6 +12,8 @@ from pico_tui.core.events import (
     PhysicalNodeReceived,
     WirelessCandidateReceived,
     WirelessAssociationReceived,
+    WirelessConfigReceived,
+    WirelessLinkReceived,
 )
 
 
@@ -40,6 +42,18 @@ class LegacyGatewayDecoder:
         r"\[GW\]\s+WIRELESS_ASSOC\s+node=(?P<node>\d+)\s+child=(?P<child>\d+)\s+"
         r"uuid=(?P<uuid>0x[0-9A-Fa-f]{16})\s+profile=(?P<profile>[A-Z0-9_]+)\s+"
         r"state=(?P<state>[A-Z_]+)\s+rssi=(?P<rssi>-?\d+)\s+protocol=(?P<protocol>\d+)"
+    )
+    WIRELESS_LINK = re.compile(
+        r"\[GW\]\s+WIRELESS_LINK\s+node=(?P<node>\d+)\s+child=(?P<child>\d+)\s+"
+        r"state=(?P<state>[A-Z_]+)\s+rssi=(?P<rssi>-?\d+)\s+age_s=(?P<age>\d+)\s+rx=(?P<rx>\d+)\s+"
+        r"auth_fail=(?P<auth>\d+)\s+replay=(?P<replay>\d+)\s+lost=(?P<lost>\d+)\s+"
+        r"stream=(?P<stream>ON|OFF)\s+period_ms=(?P<period>\d+)"
+    )
+    WIRELESS_CONFIG = re.compile(
+        r"\[GW\]\s+WIRELESS_CONFIG\s+node=(?P<node>\d+)\s+child=(?P<child>\d+)\s+"
+        r"status=(?P<status>[A-Z]+)\s+mode=(?P<mode>[A-Z]+)\s+rate_req_hz=(?P<rate_req>[-0-9.]+)\s+"
+        r"rate_eff_hz=(?P<rate_eff>[-0-9.]+)\s+window=(?P<window>[A-Z]+)\s+"
+        r"window_size=(?P<window_size>\d+)\s+stalta=(?P<stalta>[-0-9.]+)\s+gain=(?P<gain>[-0-9.]+)"
     )
     CONTROL_RX = re.compile(
         r"\[GW\]\s+CONTROLE RX\s+(?P<b0>[0-9A-Fa-f]{1,2})\s+"
@@ -130,6 +144,42 @@ class LegacyGatewayDecoder:
                     state=match.group("state").upper(),
                     rssi_dbm=int(match.group("rssi")),
                     protocol_version=match.group("protocol"),
+                )
+            )
+            return True
+        if match := self.WIRELESS_LINK.search(line):
+            rssi = int(match.group("rssi"))
+            await self.bus.publish(
+                WirelessLinkReceived(
+                    parent_node_id=int(match.group("node")),
+                    child_id=int(match.group("child")),
+                    state=match.group("state").upper(),
+                    rssi_dbm=rssi if rssi != 0 else None,  # 0 = não medido pelo Node
+                    session_age_s=int(match.group("age")),
+                    rx_datagrams=int(match.group("rx")),
+                    auth_failures=int(match.group("auth")),
+                    replay_drops=int(match.group("replay")),
+                    lost_datagrams=int(match.group("lost")),
+                    stream_enabled=match.group("stream") == "ON",
+                    stream_period_ms=int(match.group("period")) or None,
+                )
+            )
+            return True
+        if match := self.WIRELESS_CONFIG.search(line):
+            await self.bus.publish(
+                WirelessConfigReceived(
+                    parent_node_id=int(match.group("node")),
+                    child_id=int(match.group("child")),
+                    status=match.group("status").upper(),
+                    payload={
+                        "MODE": match.group("mode").upper(),
+                        "RATE_REQ_HZ": match.group("rate_req"),
+                        "RATE_EFF_HZ": match.group("rate_eff"),
+                        "WINDOW": match.group("window").upper(),
+                        "WINDOW_SIZE": match.group("window_size"),
+                        "STALTA": match.group("stalta"),
+                        "GAIN": match.group("gain"),
+                    },
                 )
             )
             return True

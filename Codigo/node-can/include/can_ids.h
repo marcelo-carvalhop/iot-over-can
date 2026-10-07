@@ -44,6 +44,22 @@
 #define CAN_ID_WIRELESS_ASSOC_STATUS_LAST 0x35F
 
 /* =========================================================
+ * PLANO DE DADOS WIRELESS
+ *
+ * Comando (Probe 00 -> Node): um quadro
+ *   seq | node | filho | opcode | arg0..arg3
+ *
+ * Dados (Node -> barramento): transferencias segmentadas em um
+ * identificador exclusivo por Node, BASE + NODE_ID (0x381..0x39F).
+ * Sao os identificadores de menor prioridade do projeto: trafego
+ * de sensores nunca vence a arbitragem contra eleicao, controle,
+ * liveness ou associacao. Formato em Codigo/common/ioc_link/ioc_wdata.h.
+ * ========================================================= */
+#define CAN_ID_WIRELESS_DATA_CMD          0x304
+#define CAN_ID_WIRELESS_DATA_BASE         0x380
+#define CAN_ID_WIRELESS_DATA_LAST         0x39F
+
+/* =========================================================
  * DADOS DOS SENSORES
  * ========================================================= */
 

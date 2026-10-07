@@ -25,9 +25,13 @@ iot-over-can/
 │   ├── pyproject.toml
 │   └── README.md
 ├── Codigo/
+│   ├── common/
+│   │   ├── ioc_link/
+│   │   └── tests/
 │   ├── node-can/
 │   │   ├── include/
 │   │   ├── src/
+│   │   ├── test/host/
 │   │   ├── tools/
 │   │   └── platformio.ini
 │   ├── node-wifi/
@@ -36,7 +40,9 @@ iot-over-can/
 │   │   └── fontes do firmware
 │   └── scripts/
 ├── Documentacao/
-│   ├── arquitetura/arquitetura.md
+│   ├── arquitetura/
+│   │   ├── arquitetura.md
+│   │   └── plano-de-dados-wireless.md
 │   ├── protocolo/protocolo.md
 │   ├── interface/
 │   │   ├── tui.md
@@ -72,13 +78,24 @@ Responsabilidades principais:
 | `services/` | domínio, demonstração e persistência de log |
 | `tests/` | testes automatizados e contratos |
 
+## `Codigo/common/`
+
+Código C portátil compartilhado pelos dois firmwares e testado no computador.
+
+| Arquivo | Responsabilidade |
+|---|---|
+| `ioc_link/ioc_sha256.*` | SHA-256 e HMAC-SHA256 |
+| `ioc_link/ioc_link.*` | derivação de chaves, oferta de vínculo, envelope autenticado e handshake |
+| `ioc_link/ioc_wdata.*` | segmentação no CAN e formatos de telemetria, espectro, confirmação, DTC, enlace e configuração |
+| `tests/test_ioc_link.c` | testes nativos e vetores para conferência com Python |
+
 ## `Codigo/node-can/`
 
-Firmware dos ESP32 + MCP2515. Inclui eleição, liveness CAN, função local, descoberta BLE, associação wireless e publicação dos estados do vínculo. O diretório local `legacy/`, quando existir, é ignorado e não integra build/repositório público.
+Firmware dos ESP32 + MCP2515. Inclui eleição, liveness CAN, função local, descoberta BLE, associação wireless, publicação dos estados do vínculo e o plano de dados dos sensores associados (`wireless_link.cpp`). `test/host/` contém a simulação que executa `wireless_link.cpp` no computador com rádio, UDP e CAN substituídos. O diretório local `legacy/`, quando existir, é ignorado e não integra build/repositório público.
 
 ## `Codigo/node-wifi/`
 
-Firmware do Raspberry Pi Pico W: MPU6050, aquisição, DSP, DTC, BLE advertising, console serial, rede e segurança.
+Firmware do Raspberry Pi Pico W: MPU6050, aquisição, DSP, DTC, BLE advertising e varredura de ofertas, console serial, sessão autenticada com o Node (`edge_network_driver.c`, `edge_link.c`) e segurança. `edge_protocol_definitions.h` é a definição única dos payloads do sensor e também é incluído pelo firmware dos Nodes.
 
 ## `Codigo/scripts/`
 

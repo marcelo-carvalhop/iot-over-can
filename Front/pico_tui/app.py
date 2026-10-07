@@ -1615,18 +1615,21 @@ class PicoTuiApp(App[None]):
             await self._send_network_command(f"{action.title} (módulo {node_id:02d})", can_command(action_key, node_id, value))
             return
 
-        # O vínculo wireless atual ainda é plano de controle. Enquanto o plano de
-        # dados Pico ↔ módulo CAN não estiver implementado, não enviamos comandos
-        # de telemetria/configuração a um filho wireless como se esse canal existisse.
+        # Telemetria e configuração de um filho wireless só existem enquanto o
+        # Node responsável mantém uma sessão autenticada com o sensor. Sem ela
+        # o comando não é enviado: o Node o recusaria e a tela sugeriria um
+        # canal que não está disponível.
         sensor = self.state_store.find_sensor(ident)
         mode = self.state_store.snapshot(history=0, frames=0).connection_mode
         if (
             sensor is not None
-            and sensor.association_state.upper() != "UNBOUND"
+            and sensor.wireless_associated
+            and not sensor.has_data_plane
             and mode == ConnectionMode.GATEWAY_CAN
         ):
+            reason = pres.data_link_label(sensor.data_link_state)
             self.notify(
-                "Este sensor está associado, mas o plano de dados via módulo CAN ainda não está disponível. "
+                f"Este sensor está associado, mas o plano de dados não está ativo ({reason}). "
                 "Use F7/w para gerenciar o vínculo.",
                 severity="warning",
                 timeout=7,

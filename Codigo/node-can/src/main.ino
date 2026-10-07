@@ -9,6 +9,7 @@
 #include "comandos.h"
 #include "falhas.h"
 #include "wireless_discovery.h"
+#include "wireless_link.h"
 
 /* =========================================================
  * CONFIGURACAO LOCAL DO NO
@@ -1484,6 +1485,10 @@ void handleReceivedCanMessage(const CANMessage& rx) {
     return;
   }
 
+  if (wirelessLinkHandleCanMessage(rx)) {
+    return;
+  }
+
   if (rx.id == CAN_ID_ELECTION) {
     handleElectionMessage(rx);
   }
@@ -1518,6 +1523,9 @@ void setup() {
 
   turnAllLedsOff();
 
+  // A Probe 00 escreve linhas longas (espectro) enquanto o barramento continua
+  // ativo; o buffer de transmissão evita que a escrita bloqueie o laço.
+  Serial.setTxBufferSize(2048);
   Serial.begin(115200);
   delay(300);
 
@@ -1543,6 +1551,9 @@ void setup() {
   SPI.begin(13, 19, 23, MCP_CS);
 
   ACAN2515Settings settings(MCP_QUARTZ_HZ, CAN_BITRATE);
+  // Um espectro de sensor wireless chega em rajadas de até 30 quadros por
+  // bloco; o padrão de 32 quadros não deixa folga para o restante do tráfego.
+  settings.mReceiveBufferSize = 128;
   const uint16_t errorCode = can.begin(settings, [] { can.isr(); });
 
   if (errorCode != 0) {
@@ -1562,6 +1573,7 @@ void setup() {
   }
 
   wirelessDiscoveryInit();
+  wirelessLinkInit();
 
   if (isGateway()) {
     state = STATE_GATEWAY;
@@ -1616,6 +1628,7 @@ void loop() {
   }
 
   wirelessDiscoveryPoll();
+  wirelessLinkPoll();
 
   CANMessage rx;
 

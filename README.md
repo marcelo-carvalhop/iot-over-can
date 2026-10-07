@@ -7,10 +7,11 @@ O sistema é composto por três classes de elemento. A **Probe 00** é uma sonda
 ```text
 Raspberry Pi Pico W
        │ BLE: identidade, perfil e presença
+       │ Wi-Fi/UDP autenticado: telemetria, espectro e configuração
        ▼
 Nodes CAN funcionais ───────── CAN clássico ───────── Probe 00 ── USB ── TUI
  sensores/atuadores locais                              instrumentação
- associação wireless
+ associação e plano de dados wireless
 ```
 
 A Probe 00 não é um gateway funcional da aplicação distribuída. Nomes internos antigos como `GATEWAY_CAN` permanecem apenas como identificadores de compatibilidade do protocolo e da linha de comando.
@@ -23,7 +24,9 @@ A descoberta BLE e a associação lógica estão implementadas. O Pico W anuncia
 
 O Node associado é a autoridade sobre o liveness wireless. A continuidade dos advertisements BLE mantém o vínculo `ONLINE`; 15 s sem advertisement levam a `STALE` e 45 s levam a `LOST`. O retorno do sensor recupera `ONLINE` sem recriar o filho lógico. `WIRELESS UNBIND` remove o vínculo somente depois da confirmação `UNBOUND` publicada pelo Node.
 
-A associação atual é um **plano de controle**. O plano de dados Pico W ↔ Node CAN para transportar telemetria, FFT, configuração e comandos ainda não foi implementado. A TUI deixa essa limitação explícita e não oferece ações que aparentariam funcionar sobre um canal inexistente.
+A associação é o **plano de controle**. O **plano de dados** é estabelecido a partir dela: o Node responsável anuncia por BLE uma oferta assinada, o sensor entra no ponto de acesso desse Node e os dois se autenticam por desafio-resposta com HMAC-SHA256 e chave por dispositivo. Telemetria, espectro, diagnósticos e configuração passam então pelo Node e chegam à TUI pelo CAN, em identificadores de menor prioridade que os de coordenação da rede. A TUI só oferece essas ações enquanto o Node informa sessão autenticada.
+
+Essa camada está implementada e coberta por testes automatizados no computador, incluindo uma simulação que executa o código do Node e da Probe. **Ainda não foi validada em hardware.** O desenho, o modelo de ameaças e o roteiro de bancada estão em [`Documentacao/arquitetura/plano-de-dados-wireless.md`](Documentacao/arquitetura/plano-de-dados-wireless.md).
 
 ## TUI
 
@@ -33,7 +36,7 @@ A interface é uma aplicação Textual em tela cheia organizada por assunto, sem
 Início
 ├── Módulo CAN NN
 │   └── Sensor NN.CC
-│       └── Espectro FFT        # quando existe plano de dados
+│       └── Espectro FFT        # com sessão autenticada no plano de dados
 ├── Comandos
 ├── Rede CAN
 ├── Mensagens
@@ -69,6 +72,7 @@ A especificação completa da interface está em [`Documentacao/interface/tui.md
 iot-over-can/
 ├── Front/                       TUI Python/Textual e testes
 ├── Codigo/
+│   ├── common/                  código C compartilhado: autenticação do enlace e dados no CAN
 │   ├── node-can/                firmware ESP32 + MCP2515
 │   ├── node-wifi/               firmware Raspberry Pi Pico W
 │   └── scripts/                 build, upload, testes e segurança
@@ -112,10 +116,11 @@ Upload de um Node CAN com ID 2:
 
 O ID é fornecido ao build pelo script por meio de `IOT_NODE_ID`; não é necessário editar o código-fonte. O ID 0 é reservado à Probe 00.
 
-Build do Pico W:
+Build do Pico W, de bancada ou com as chaves derivadas para um sensor:
 
 ```bash
 ./Codigo/scripts/build_pico.sh
+./Codigo/scripts/build_pico.sh --sensor E6616408432B6F39
 ```
 
 Testes nativos:
@@ -128,23 +133,26 @@ Os procedimentos completos estão em [`Documentacao/build_e_teste.md`](Documenta
 
 ## Segurança operacional
 
-A TUI e o firmware aplicam controles em fronteiras diferentes. Leitura permanece disponível conforme o modo operacional; comandos mutáveis passam pelo `SecurityManager`, e comandos mutáveis do sensor direto também precisam ser autorizados pelo firmware. Eleição, administração de Node, ajuste de liveness, associação/desassociação wireless e comandos `CMD ...` são classificados como ações mutáveis na TUI.
+A TUI, o firmware do sensor e o enlace entre sensor e Node aplicam controles em fronteiras diferentes. Leitura permanece disponível conforme o modo operacional; comandos mutáveis passam pelo `SecurityManager`, e comandos mutáveis do sensor direto também precisam ser autorizados pelo firmware. Eleição, administração de Node, ajuste de liveness, associação/desassociação wireless e comandos `CMD ...` são classificados como ações mutáveis na TUI.
 
 Arquivos locais:
 
 ```text
-<raiz>/.env.local
+<raiz>/.env.local                         # token de manutenção e chave mestra do enlace
+<raiz>/.env.sensor-<UUID>.local           # chaves derivadas para um sensor
 ~/.config/iot-over-can/security.json
 ~/.config/iot-over-can/tui.json          # preferências não sensíveis
 ```
 
-Os dois primeiros contêm material de segurança e devem permanecer fora do Git; em POSIX, os arquivos sensíveis usam permissão `0600`. `tui.json` contém apenas preferências visuais.
+Os três primeiros contêm material de segurança e devem permanecer fora do Git; em POSIX, os arquivos sensíveis usam permissão `0600`. `tui.json` contém apenas preferências visuais.
 
 Provisionamento e verificação:
 
 ```bash
 ./Codigo/scripts/provision_sensor_security.sh
 ./Codigo/scripts/provision_sensor_security.sh --check
+./Codigo/scripts/provision_sensor_security.sh --add-link-key       # instalação anterior à v0.17
+./Codigo/scripts/provision_sensor_security.sh --sensor <UUID64>
 ```
 
 Detalhes em [`Documentacao/modelo_de_seguranca.md`](Documentacao/modelo_de_seguranca.md).
@@ -155,8 +163,9 @@ O índice oficial está em [`Documentacao/README.md`](Documentacao/README.md). A
 
 ## Itens ainda a implementar
 
-- plano de dados bidirecional entre o Node CAN associado e o Pico W;
-- telemetria, FFT, configuração e comandos do sensor wireless através do Node responsável;
+- validação em bancada do plano de dados wireless e da autenticação do enlace;
 - persistência e recuperação dos vínculos após reinicialização dos Nodes;
-- autenticação criptográfica de origem no vínculo wireless e em comandos CAN;
+- autenticação de origem dos comandos e dados no barramento CAN;
+- entrega da chave do sensor pela estação no momento da associação, retirando a chave mestra dos Nodes;
+- verificação FIDO2/OTP real da chave física do operador;
 - migração experimental para CAN FD com MCP2518FD após estabilização do protocolo funcional.

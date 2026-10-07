@@ -39,14 +39,17 @@ def test_v016_does_not_offer_nonfunctional_wireless_data_plane_actions() -> None
     screens = read("screens.py")
     assert "plano de dados wireless indisponível" in app
     assert "wireless_without_data_plane" in screens
-    assert "Telemetria, FFT, configuração e comandos do sensor não são oferecidos" in screens
+    # v0.17: as ações voltam quando o módulo informa sessão autenticada.
+    assert "not sensor.has_data_plane" in screens
+    assert "Telemetria, FFT e configuração voltam a ser oferecidas" in screens
 
 
 def test_v016_sensor_screen_describes_logical_link_without_calling_it_telemetry() -> None:
     screens = read("screens.py")
     assert '"Vínculo wireless"' in screens
     assert '"RSSI do vínculo"' in screens
-    assert '"Sem canal de dados via módulo nesta versão"' in screens
+    assert '"Plano de dados"' in screens
+    assert '"Aguardando sessão autenticada com o módulo"' in screens
     assert 'Binding("d", "unbind"' in screens
 
 
@@ -69,5 +72,5 @@ def test_v016_uses_single_full_screen_subject_architecture() -> None:
 def test_v016_version_is_consistent() -> None:
     pyproject = (ROOT / "Front" / "pyproject.toml").read_text(encoding="utf-8")
     init = (FRONT / "__init__.py").read_text(encoding="utf-8")
-    assert 'version = "0.16.0"' in pyproject
-    assert '__version__ = "0.16.0"' in init
+    assert 'version = "0.17.0"' in pyproject
+    assert '__version__ = "0.17.0"' in init

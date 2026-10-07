@@ -7,6 +7,7 @@
 #include "can_ids.h"
 #include "node_config.h"
 #include "protocolo.h"
+#include "wireless_link.h"
 
 extern ACAN2515 can;
 
@@ -27,6 +28,9 @@ constexpr uint32_t ASSOCIATING_MIN_MS = 250;
 constexpr uint32_t ONLINE_STALE_MS = 15000;
 constexpr uint32_t STALE_LOST_MS = 45000;
 constexpr uint32_t SCAN_WATCHDOG_MS = 2000;
+// O estado do vínculo é republicado periodicamente para que uma TUI aberta
+// depois da associação reconstrua a topologia sem depender de uma transição.
+constexpr uint32_t ASSOC_REFRESH_MS = 10000;
 
 struct Candidate {
   bool used = false;
@@ -72,6 +76,7 @@ struct Binding {
   uint8_t assocState = WIRELESS_ASSOC_DISCOVERED;
   uint32_t lastSeenMs = 0;
   uint32_t stateSinceMs = 0;
+  uint32_t lastPublishMs = 0;
 };
 
 Candidate candidates[MAX_CANDIDATES];
@@ -244,10 +249,14 @@ void processBindRequest(uint64_t uuid) {
   binding.assocState = WIRELESS_ASSOC_ASSOCIATING;
   binding.lastSeenMs = c.lastSeenMs;
   binding.stateSinceMs = now;
+  binding.lastPublishMs = now;
   Binding snapshot = binding;
   portEXIT_CRITICAL(&candidateMux);
 
   sendAssociationStatus(snapshot);
+  // O vínculo lógico passa a ter plano de dados: o Node anuncia a oferta
+  // autenticada e abre o ponto de acesso para este sensor.
+  wirelessLinkOnBound(uuid, childId);
 }
 
 void processUnbindRequest(uint64_t uuid) {
@@ -266,6 +275,7 @@ void processUnbindRequest(uint64_t uuid) {
   bindings[bindingIndex] = Binding{};
   portEXIT_CRITICAL(&candidateMux);
 
+  wirelessLinkOnUnbound(uuid, snapshot.childId);
   sendAssociationStatus(snapshot, WIRELESS_ASSOC_UNBOUND);
 }
 
@@ -491,6 +501,11 @@ void pollBindings() {
       snapshot = binding;
       publish = true;
     }
+    if (!publish && now - binding.lastPublishMs >= ASSOC_REFRESH_MS) {
+      snapshot = binding;
+      publish = true;
+    }
+    if (publish) binding.lastPublishMs = now;
     portEXIT_CRITICAL(&candidateMux);
 
     if (publish) sendAssociationStatus(snapshot);

@@ -30,15 +30,30 @@ def test_uuid64_and_secure_build_defaults() -> None:
     cmake = (FW / "CMakeLists.txt").read_text()
     identity = (FW / "device_identity.c").read_text()
     assert "uint64_t         node_uuid" in protocol
-    assert "NET_PROTOCOL_VERSION    0x05" in protocol
+    # v0x06: envelope autenticado por HMAC-SHA256 substitui o CLAIM da v0x05.
+    assert "NET_PROTOCOL_VERSION    0x06" in protocol
     assert 'set(EDGE_SERIAL_ADMIN_TOKEN "0"' in cmake
-    assert 'set(EDGE_NODE_PRESHARED_KEY "0"' in cmake
+    # Sem chave fornecida no build o enlace fica desabilitado (fail-closed).
+    assert 'set(EDGE_LINK_DEVICE_KEY ""' in cmake
+    assert 'set(EDGE_LINK_MASTER_KEY ""' in cmake
     assert "pico_get_unique_board_id" in identity
 
 
-def test_legacy_udp_mutation_is_disabled_by_default() -> None:
+def test_unauthenticated_udp_control_path_was_removed() -> None:
     cmake = (FW / "CMakeLists.txt").read_text()
     network = (FW / "edge_network_driver.c").read_text()
-    assert 'set(EDGE_ALLOW_LEGACY_INSECURE_UDP_CONTROL "0"' in cmake
-    assert "legacy_udp_control_enabled" in network
+    protocol = (FW / "edge_protocol_definitions.h").read_text()
+    # O caminho legado (chave compartilhada de 64 bits e mutação UDP sem MAC)
+    # não existe mais, nem como opção de build.
+    for text in (cmake, network, protocol):
+        assert "EDGE_NODE_PRESHARED_KEY" not in text
+        assert "EDGE_ALLOW_LEGACY_INSECURE_UDP_CONTROL" not in text
+    assert "legacy_udp_control_enabled" not in network
+    # Todo datagrama é autenticado e passa pelo contador anti-replay antes de
+    # chegar ao tratamento de comandos.
+    assert "ioc_env_verify(g_session_key" in network
+    assert "ioc_counter_accept(&g_rx_last_counter" in network
+    assert network.index("ioc_counter_accept(&g_rx_last_counter") < network.index(
+        "handle_session_command(pcb, view.payload"
+    )
     assert "request_counter" in network

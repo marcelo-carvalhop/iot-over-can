@@ -11,6 +11,7 @@ O **sensor wireless** é um Raspberry Pi Pico W com MPU6050. Ele executa aquisi�
 ```text
                  BLE advertising
 Pico W  ─────────────────────────────► Nodes CAN
+        ◄═════ Wi-Fi/UDP autenticado ═► Node responsável
                                            │
                                            │ CAN clássico 500 kbit/s
                                            ▼
@@ -22,9 +23,9 @@ Pico W  ────────────────────────
 
 ## Domínios de comunicação
 
-O CAN coordena os módulos funcionais. BLE transporta identidade, perfil, versão de protocolo e presença do sensor wireless. A associação atribui um UUID a um Node responsável; não cria, por si só, canal de telemetria.
+O CAN coordena os módulos funcionais. BLE transporta identidade, perfil, versão de protocolo e presença do sensor wireless, além da oferta de vínculo que o Node responsável dirige ao sensor. A associação atribui um UUID a um Node responsável; não cria, por si só, canal de telemetria.
 
-O plano de dados Pico W ↔ Node CAN é uma camada separada e permanece pendente. A TUI não representa associação como se fosse esse plano de dados.
+O plano de dados Pico W ↔ Node CAN é uma camada separada, sobre Wi-Fi/UDP, com sessão autenticada por HMAC-SHA256. Ele só existe enquanto o Node informa o estado `SECURE` para o filho; a TUI distingue os dois e não representa associação como se fosse plano de dados. O desenho completo está em [`plano-de-dados-wireless.md`](plano-de-dados-wireless.md).
 
 ## Liderança e liveness CAN
 
@@ -126,7 +127,9 @@ Essa distinção é obrigatória para interpretar o estado atual:
 | escolher Node responsável | implementado |
 | criar/remover filho lógico | implementado |
 | liveness do vínculo | implementado |
-| telemetria Pico → Node → CAN → TUI | pendente |
-| comando TUI → CAN → Node → Pico | pendente |
+| oferta de vínculo e sessão autenticada Pico ↔ Node | implementado; validação em bancada pendente |
+| telemetria Pico → Node → CAN → TUI | implementado; validação em bancada pendente |
+| comando TUI → CAN → Node → Pico | implementado; validação em bancada pendente |
+| persistência do vínculo após reinício do Node | pendente |
 
-A interface filtra ações conforme essa matriz. Um filho associado aparece e pode ser desassociado, mas não oferece telemetria/FFT/configuração via Node enquanto o plano de dados não existir.
+A interface filtra ações conforme o estado informado pelo Node. Um filho associado aparece e pode ser desassociado; telemetria, FFT e configuração via Node só são oferecidas enquanto o plano de dados está em `SECURE`.

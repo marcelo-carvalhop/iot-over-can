@@ -217,6 +217,15 @@ class SensorNode:
     status: NodeStatus = NodeStatus.UNKNOWN
     association_state: str = "UNBOUND"
     association_rssi_dbm: int | None = None
+    # Plano de dados via Node CAN: NONE (nunca informado), DOWN, OFFERING,
+    # HANDSHAKE, SECURE ou NO_KEY. Só SECURE transporta telemetria e comandos.
+    data_link_state: str = "NONE"
+    data_link_rssi_dbm: int | None = None
+    data_link_session_age_s: int = 0
+    data_link_rx_datagrams: int = 0
+    data_link_auth_failures: int = 0
+    data_link_replay_drops: int = 0
+    data_link_lost_datagrams: int = 0
     acquisition_mode: AcquisitionMode = AcquisitionMode.UNKNOWN
     sensor_mode: SensorMode = SensorMode.UNKNOWN
     quality: DataQuality = DataQuality.UNKNOWN
@@ -240,6 +249,16 @@ class SensorNode:
     @property
     def logical_id(self) -> str:
         return f"{self.parent_node_id:02d}.{self.child_id:02d}"
+
+    @property
+    def wireless_associated(self) -> bool:
+        return self.association_state.upper() != "UNBOUND"
+
+    @property
+    def has_data_plane(self) -> bool:
+        """Sessão autenticada ativa entre o sensor e o Node responsável."""
+
+        return self.data_link_state.upper() == "SECURE"
 
     @property
     def loss_percent(self) -> float:

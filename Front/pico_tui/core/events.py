@@ -88,6 +88,33 @@ class WirelessAssociationReceived(Event):
 
 
 @dataclass(slots=True)
+class WirelessLinkReceived(Event):
+    """Estado do plano de dados Pico W <-> Node CAN publicado pelo Node responsável."""
+
+    parent_node_id: int
+    child_id: int
+    state: str
+    rssi_dbm: int | None = None
+    session_age_s: int = 0
+    rx_datagrams: int = 0
+    auth_failures: int = 0
+    replay_drops: int = 0
+    lost_datagrams: int = 0
+    stream_enabled: bool = False
+    stream_period_ms: int | None = None
+
+
+@dataclass(slots=True)
+class WirelessConfigReceived(Event):
+    """Configuração do sensor informada pelo Node (CURRENT, APPLIED ou REJECTED)."""
+
+    parent_node_id: int
+    child_id: int
+    status: str
+    payload: dict[str, Any]
+
+
+@dataclass(slots=True)
 class SensorStatusReceived(Event):
     parent_node_id: int
     child_id: int

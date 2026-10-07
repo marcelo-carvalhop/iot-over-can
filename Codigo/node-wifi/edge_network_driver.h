@@ -1,6 +1,6 @@
 /**
  * @file edge_network_driver.h
- * @brief Camada Wi-Fi/UDP de sessão com o nó CAN pai; compatibilidade transitória até o vínculo BLE.
+ * @brief Camada Wi-Fi/UDP de sessão autenticada com o Node CAN responsável (protocolo v0x06).
  * Atende ao Item 12: Arquitetura de Rede Híbrida.
  */
 #ifndef EDGE_NETWORK_DRIVER_H
@@ -26,6 +26,10 @@ void        edge_net_clear_wifi_provisioning(void);
 bool        edge_net_is_wifi_provisioned(void);
 uint32_t    edge_net_next_discovery_delay_ms(void);
 NetworkMode edge_net_get_state(void);
+uint8_t     edge_net_parent_node_id(void);   // 0 quando não há Node responsável conhecido
+uint8_t     edge_net_child_id(void);         // filho lógico atribuído na sessão atual
+uint16_t    edge_net_auth_reject_count(void);
+uint16_t    edge_net_replay_reject_count(void);
 void        edge_net_poll_timeout(void);
 void        edge_net_send_discovery_beacon(uint8_t bite_status);
 void        edge_net_send_telemetry(const DSP_AnalysisResult *dsp_res, OperationModeFSM mode, 

@@ -6,6 +6,7 @@
 #include "protocolo.h"
 #include "falhas.h"
 #include "wireless_discovery.h"
+#include "wireless_link.h"
 
 /* =========================================================
  * VARIAVEIS EXTERNAS DO .ino
@@ -245,7 +246,8 @@ static void sendHeartbeatRateCommand(uint8_t targetId, uint8_t mode) {
  * ========================================================= */
 
 void handleSerialCommands() {
-  static char buffer[64];
+  // Linhas "CMD TARGET=... ACTION=CONFIG ..." da TUI passam de 100 caracteres.
+  static char buffer[192];
   static uint8_t idx = 0;
 
   while (Serial.available()) {
@@ -265,6 +267,10 @@ void handleSerialCommands() {
       }
 
       if (wirelessAssociationHandleSerialCommand(buffer)) {
+        return;
+      }
+
+      if (wirelessLinkHandleSerialCommand(buffer)) {
         return;
       }
 

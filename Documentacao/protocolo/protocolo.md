@@ -46,7 +46,7 @@ Manufacturer Data do Pico W:
 company-id(2) | "IC"(2) | adv-version(1) | profile(1) | protocol(1) | UUID64(8)
 ```
 
-O perfil `0x01` representa `VIBRATION`. O protocolo atual é `5`.
+O perfil `0x01` representa `VIBRATION`. O protocolo atual é `6`.
 
 Cada Node CAN envia a observação em dois frames clássicos consecutivos. Para o Node `N`:
 
@@ -58,7 +58,7 @@ Cada Node CAN envia a observação em dois frames clássicos consecutivos. Para 
 A Probe recompõe as duas partes quando a sequência coincide e emite:
 
 ```text
-WIRELESS_CANDIDATE reporter=N uuid=0x... profile=VIBRATION rssi=-55 protocol=5
+WIRELESS_CANDIDATE reporter=N uuid=0x... profile=VIBRATION rssi=-55 protocol=6
 ```
 
 
@@ -98,12 +98,60 @@ DISCOVERED → ASSOCIATING → BOUND → ONLINE → STALE → LOST
 A Probe recompõe o estado e emite uma linha textual para a TUI:
 
 ```text
-[GW] WIRELESS_ASSOC node=1 child=1 uuid=0xE6616408432B6F39 profile=VIBRATION state=ONLINE rssi=-48 protocol=5
+[GW] WIRELESS_ASSOC node=1 child=1 uuid=0xE6616408432B6F39 profile=VIBRATION state=ONLINE rssi=-48 protocol=6
 ```
 
 Na operação normal da TUI, `F7`/`w` abre a tela Sensores sem fio. O operador seleciona o UUID, escolhe explicitamente o Node entre as observações recentes e confirma o `BIND`. Para remoção, a TUI envia `UNBIND` e mantém o filho visível até receber `UNBOUND`. Os comandos internos `:bind` e `:unbind` são recursos avançados, não o fluxo principal.
 
-A associação atual é um vínculo lógico de identidade e responsabilidade. A continuidade dos advertisements BLE funciona como lease de presença. O Node CAN associado é a fonte autoritativa dos estados `ONLINE`, `STALE` e `LOST`; a TUI não deriva esses estados pela idade local da última mensagem. O lease considera o vínculo `STALE` após 15 s sem advertisement e `LOST` após 45 s. O scanner BLE desabilita explicitamente o filtro de duplicatas e possui watchdog para reinício caso a varredura seja interrompida. O fluxo de telemetria do sensor associado ainda não usa esse vínculo como plano de dados.
+A associação atual é um vínculo lógico de identidade e responsabilidade. A continuidade dos advertisements BLE funciona como lease de presença. O Node CAN associado é a fonte autoritativa dos estados `ONLINE`, `STALE` e `LOST`; a TUI não deriva esses estados pela idade local da última mensagem. O lease considera o vínculo `STALE` após 15 s sem advertisement e `LOST` após 45 s. O scanner BLE desabilita explicitamente o filtro de duplicatas e possui watchdog para reinício caso a varredura seja interrompida. O Node republica o estado de cada vínculo a cada 10 s, além das transições, para que uma TUI aberta depois da associação reconstrua a topologia.
+
+## Plano de dados wireless
+
+O vínculo aceito dispara o plano de dados entre o sensor e o Node responsável. O resumo abaixo lista os contratos; a justificativa e o modelo de ameaças estão em [`../arquitetura/plano-de-dados-wireless.md`](../arquitetura/plano-de-dados-wireless.md).
+
+Oferta de vínculo anunciada por BLE pelo Node (Manufacturer Data, 27 bytes):
+
+```text
+company(2)=0xFFFF | "IO" | versão | node | UUID64(8) | canal | nonce(4) | tag(8)
+```
+
+Datagrama UDP autenticado, porta 4242:
+
+```text
+"IL" | versão=6 | tipo | contador(4, LE) | payload | tag(8)
+
+0x01 HELLO      sensor -> Node   chave do dispositivo
+0x02 CHALLENGE  Node -> sensor   chave do dispositivo
+0x03 CONFIRM    sensor -> Node   chave de sessão
+0x10 DATA_UP    sensor -> Node   chave de sessão
+0x11 DATA_DOWN  Node -> sensor   chave de sessão
+```
+
+Quadros CAN:
+
+```text
+0x304        comando: seq | node | filho | opcode | arg0..arg3
+0x380 + N    dados do Node N, segmentados:
+             filho(3)|tipo(5) , transferência(3)|índice(5) , dados
+             índice 0: tamanho total, CRC-8, 4 bytes de dados
+```
+
+Tipos de transferência: `1` telemetria, `2` espectro, `3` confirmação de comando, `4` DTC, `5` estado do enlace, `6` configuração. Opcodes: `0x01` encaminhamento, `0x02` espectro, `0x03` estado, `0x10`–`0x14` preparação de configuração, `0x1F` aplicar, `0x20` limpar DTC.
+
+Linhas trocadas entre a TUI e a Probe 00:
+
+```text
+CMD TARGET=NN.CC ACTION=<ação> TX=<id> [CAMPO=valor ...]
+
+TEL NODE=N CHILD=C SEQ=... MODE=... RMS=... RMS_UNIT=m/s2 ...
+FRAG NODE=N CHILD=C TYPE=FFT TRANSFER=... INDEX=... COUNT=... FORMAT=U16_SCALED SCALE=... DATA=<hex>
+DTC NODE=N CHILD=C CODE=0x.... SYMPTOM=0x.. SEVERITY=. TS_MS=...
+ACK COMMAND=<ação> STATE=ACCEPTED|APPLIED|REJECTED TX=<id> NODE=N CHILD=C DETAIL=... [REASON=...]
+[GW] WIRELESS_LINK node=N child=C state=DOWN|OFFERING|HANDSHAKE|SECURE|NO_KEY rssi=... age_s=... rx=... auth_fail=... replay=... lost=... stream=ON|OFF period_ms=...
+[GW] WIRELESS_CONFIG node=N child=C status=CURRENT|APPLIED|REJECTED mode=... rate_req_hz=... rate_eff_hz=... window=... window_size=... stalta=... gain=...
+```
+
+No formato `U16_SCALED`, cada valor de 16 bits é a fração do pico; a magnitude é `valor × SCALE / 65535`.
 
 ## Sensor wireless — console serial
 
@@ -139,6 +187,10 @@ Bateria `255%` e `65535 mV` representam informação indisponível quando não e
 | `0x3001` | overrun do DSP |
 | `0x4001` | baixa tensão |
 | `0x4002` | falha de rede Wi-Fi |
+| `0x4003` | datagrama com autenticação inválida |
+| `0x4004` | versão de protocolo incompatível |
+| `0x4005` | datagrama repetido (contador antigo) |
+| `0x4006` | configuração inválida recusada |
 
 A TUI deve exibir o código bruto quando receber um DTC ainda não catalogado.
 

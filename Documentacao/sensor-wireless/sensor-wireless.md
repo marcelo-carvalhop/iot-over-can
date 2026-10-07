@@ -23,15 +23,30 @@ O UUID64 é derivado da identidade única da placa e permanece estável após re
 
 ## Rede
 
-Wi-Fi permanece desabilitado até existir provisionamento válido e uma ação explícita para habilitá-lo. Credenciais não ficam compiladas de forma fixa no repositório. DHCP é utilizado quando a interface Wi-Fi é ativada.
+Wi-Fi permanece desabilitado até o sensor receber, por BLE, uma oferta autêntica do Node que assumiu o vínculo. O SSID e a senha do ponto de acesso desse Node são derivados da chave de rede gravada no build; não ficam no repositório nem trafegam pelo ar. DHCP é utilizado quando a interface Wi-Fi é ativada.
+
+Máquina de estados do enlace (`NET` no console USB):
+
+```text
+DISABLED ── oferta autêntica ──► DISCOVERY ── CHALLENGE válido ──► BOUND
+    ▲                                │  ▲                            │
+    │   60 s sem autenticar          │  └── 10 s sem tráfego do Node ┘
+    └────────────────────────────────┘
+    ▲
+    └──────────── CMD_RELEASE (desassociação) ─────────────── BOUND
+```
+
+Em `DISCOVERY` o sensor envia um `HELLO` autenticado a cada 1,5–3,5 s. Em `BOUND`, cada janela processada gera um datagrama de telemetria com o espectro completo; o Node decide o que segue para o CAN. Comandos do Node (`SET_CONFIG`, `CLEAR_DTC`, `PING`, consulta do menu de configuração) só são aceitos com código de autenticação válido e contador crescente.
+
+`NET` informa também `LINK_KEYS` (`DEVICE`, `MASTER`, `NONE` ou `UUID_MISMATCH`), o Node pai, o filho lógico e os contadores de rejeição.
 
 ## Segurança
 
-Comandos mutáveis exigem uma sessão `AUTH UNLOCK`. O token de administração é fornecido no build a partir de `.env.local`. O procedimento de geração e renovação está em `../modelo_de_seguranca.md`.
+Comandos mutáveis pelo console USB exigem uma sessão `AUTH UNLOCK`. O token de administração e as chaves do enlace são fornecidos no build a partir de `.env.local` ou, de preferência, de `.env.sensor-<UUID>.local`, que contém apenas as chaves derivadas para aquele sensor. O procedimento de geração e renovação está em `../modelo_de_seguranca.md`.
 
 ## Relação com a associação
 
-O sensor continua anunciando seu UUID64 e perfil por BLE. A associação atual é feita no lado dos Nodes CAN: o Pico W não precisa receber um comando BLE de bind para que a infraestrutura atribua sua identidade a um Node. Por isso, esta etapa não exige alteração ou nova gravação do firmware do Pico W. O canal de dados posterior ao vínculo será implementado separadamente.
+O sensor continua anunciando seu UUID64 e perfil por BLE, inclusive com sessão ativa, o que mantém o liveness do vínculo no Node. A associação é decidida no lado dos Nodes CAN; o sensor toma conhecimento dela pela oferta autenticada e então estabelece o plano de dados. O firmware do protocolo `0x06` é necessário: sensores com o firmware anterior continuam sendo descobertos e associados, mas não abrem sessão.
 
 ## Operação na TUI
 
@@ -39,4 +54,4 @@ A operação normal do vínculo não depende de comandos internos. `F7` ou `w` a
 
 Depois da confirmação `BOUND`/`ONLINE` publicada pelo Node responsável, o sensor passa a aparecer pelo identificador lógico `NN.CC`. A ação **Desassociar** envia `WIRELESS UNBIND` e mantém o filho visível até a confirmação `UNBOUND`; somente então a TUI remove `NN.CC`. Se o Pico W continuar anunciando BLE, o mesmo UUID volta imediatamente à lista de dispositivos disponíveis.
 
-A tela do sensor associado distingue deliberadamente **vínculo de controle** de **plano de dados**. Enquanto o canal Pico W ↔ Node CAN para telemetria e comandos não estiver implementado, a TUI mostra essa limitação de forma explícita e não oferece controles de telemetria, FFT ou configuração como se fossem funcionais através do Node.
+A tela do sensor associado distingue deliberadamente **vínculo de controle** de **plano de dados**. Enquanto o Node não informa sessão autenticada, a TUI mostra o estado do plano de dados e não oferece telemetria, FFT ou configuração. Com a sessão ativa, a tela passa a mostrar métricas, configuração e as estatísticas do enlace (sinal Wi-Fi, perdas, datagramas rejeitados).

@@ -53,7 +53,7 @@ WIRELESS UNBIND <node> <uuid>
 
 O sensor lógico só aparece após o estado publicado pelo Node. Na desassociação, a TUI não remove localmente `NN.CC` ao pressionar o comando; ela espera `UNBOUND` do Node e então o domínio remove o filho.
 
-Um sensor wireless associado ainda não possui plano de dados Pico W ↔ Node CAN. Por isso, a tela do sensor mostra explicitamente vínculo, Node responsável e RSSI, enquanto telemetria, FFT, configuração e comandos via Node não são oferecidos. Isso evita ações que não teriam efeito real.
+O plano de dados de um sensor associado depende de uma sessão autenticada entre o Pico W e o Node responsável, informada pelo Node em `WIRELESS_LINK`. Sem ela, a tela do sensor mostra vínculo, Node responsável, RSSI e o estado do plano de dados, e não oferece telemetria, FFT ou configuração. Com a sessão ativa, essas ações são enviadas à Probe como `CMD TARGET=NN.CC ACTION=...` e as respostas chegam em `TEL`, `FRAG`, `ACK` e `WIRELESS_CONFIG`.
 
 ## Arquitetura do pacote
 

@@ -11,7 +11,7 @@ A TUI segue seis regras principais:
 1. **uma tela por assunto**: visão geral, módulo, sensor, comandos, rede, mensagens, sensores sem fio, espectro e ajuda são telas distintas;
 2. **operações importantes ficam visíveis**: a barra de teclas mostra as ações disponíveis; associação wireless não depende de um `Ctrl` oculto;
 3. **estado antes de detalhe**: a tela inicial responde primeiro se há algo que exige atenção;
-4. **nenhuma ação deve fingir suporte inexistente**: sensores wireless associados não recebem telemetria/configuração via Node até existir o plano de dados;
+4. **nenhuma ação deve fingir suporte inexistente**: sensores wireless associados só recebem telemetria/configuração via Node enquanto o plano de dados tem sessão autenticada;
 5. **sem truncamento horizontal**: conteúdo quebra em linhas e o layout responde à largura/altura do terminal;
 6. **cor tem significado operacional**: fundos neutros em repouso; cor saturada reservada a atenção, crítico e interação.
 
@@ -134,29 +134,48 @@ A tela é orientada pelo tipo de sensor e, principalmente, pelo canal realmente 
 
 ### Sensor com plano de dados
 
-No acesso USB direto ao Pico W, a tela pode apresentar situação, modo, aquisição, telemetria, bateria, métricas de vibração, tendências, diagnósticos, estatísticas de sequência e configuração aplicada. Para perfil `VIBRATION`, FFT e métricas especializadas ficam disponíveis.
+No acesso USB direto ao Pico W, ou pelo módulo CAN com sessão autenticada, a tela pode apresentar situação, modo, aquisição, telemetria, bateria, métricas de vibração, tendências, diagnósticos, estatísticas de sequência e configuração aplicada. Para perfil `VIBRATION`, FFT e métricas especializadas ficam disponíveis.
 
 ### Sensor wireless associado via Node CAN
 
-O vínculo atual é somente plano de controle. Portanto a tela mostra explicitamente:
+A tela acompanha o estado do plano de dados informado pelo Node responsável (`WIRELESS_LINK`).
+
+Sem sessão autenticada, mostra o vínculo e o motivo:
 
 ```text
 Vínculo wireless     ONLINE via Módulo 04
 RSSI do vínculo      -52 dBm
-Telemetria            Sem canal de dados via módulo nesta versão
-Configuração          Sem canal de comandos via módulo nesta versão
-Perfil                Vibração
-Identificador         0xE6616408432B6F39
+Plano de dados       Módulo anunciando a oferta ao sensor
+Telemetria           Aguardando sessão autenticada com o módulo
+Perfil               Vibração
+Identificador        0xE6616408432B6F39
 ```
 
-O estado `ONLINE/STALE/LOST` vem do Node responsável. A TUI não usa a idade local da última mensagem de associação para sobrescrever esse estado.
+Os estados possíveis são: sem informação do módulo, sem canal de dados, módulo anunciando a oferta ao sensor, autenticação em andamento, sessão autenticada ativa e módulo sem chave de enlace. Este último também aparece na condição do sensor, porque exige ação de manutenção.
 
-Enquanto não houver plano de dados Pico W ↔ Node CAN:
+Nesse estado:
 
 - `c`, `f` e `s` não são oferecidos como operações normais para o filho wireless;
 - telemetria, FFT e configuração não aparecem na tela de comandos para esse alvo;
 - a tela oferece `d Desassociar` e `w Sensores sem fio`;
 - se uma chamada avançada tentar executar uma ação de dados, o app bloqueia e registra que o plano de dados está indisponível.
+
+Com sessão autenticada, a tela é a mesma do acesso direto (situação, métricas, tendências, configuração) e a seção de comunicação passa a mostrar o enlace:
+
+```text
+Plano de dados              Sessão autenticada via Módulo 04
+Sinal Wi-Fi                 -47 dBm
+Sessão ativa há             312 s
+Leituras no CAN             310
+Perdidas no CAN             0 (0,00 %)
+Perdidas no Wi-Fi           2
+Rejeitadas (autenticação)   0
+Rejeitadas (repetição)      0
+```
+
+`c`, `f`, `s` e `w` ficam disponíveis. Ações que só existem no console USB do sensor (reiniciar aquisição, ligar/desligar Wi-Fi, reler a lista de DTC) não são oferecidas pelo módulo. A queda da sessão e o aumento dos contadores de rejeição geram intercorrências.
+
+O estado `ONLINE/STALE/LOST` do vínculo vem do Node responsável. A TUI não usa a idade local da última mensagem de associação para sobrescrever esse estado.
 
 Essa decisão impede uma interface que aceite uma ação e não possua caminho físico/protocolar para entregá-la.
 
@@ -266,7 +285,7 @@ A tela mostra:
 
 `t` troca o alvo. `Enter` executa a ação realçada. `a` abre o campo **Comando manual (avançado)**.
 
-Para um sensor wireless associado no modo Probe/CAN, a lista de ações de dados fica vazia e a explicação informa que o plano de dados ainda não existe, indicando `F7/w` para gerenciar o vínculo.
+Para um sensor wireless associado no modo Probe/CAN sem sessão autenticada, a lista de ações de dados fica vazia e a explicação informa o estado do plano de dados, indicando `F7/w` para gerenciar o vínculo. Com a sessão ativa, as ações são enviadas à Probe como `CMD TARGET=NN.CC ACTION=...` e o resultado chega em `ACK`.
 
 ### Comando manual
 
@@ -326,7 +345,7 @@ Mensagens repetitivas de manutenção, dados locais `0xAA` e linhas não interpr
 
 Disponível quando o alvo realmente possui canal de dados e perfil compatível. O gráfico textual calcula sua largura a partir da área disponível. A tela apresenta espectro, picos e parâmetros. `n` pede novo espectro.
 
-Para filhos wireless sem plano de dados, a ação FFT não é oferecida.
+Para filhos wireless sem sessão autenticada, a ação FFT não é oferecida. Pelo módulo, o espectro chega reduzido ao número de faixas pedido e com as magnitudes reescaladas a partir do pico.
 
 ## Ajuda — `HelpScreen`
 

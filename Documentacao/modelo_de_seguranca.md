@@ -1,13 +1,14 @@
 # Modelo de segurança
 
-A segurança atua em duas fronteiras. A TUI autoriza o operador antes do envio e o firmware do sensor direto valida ações mutáveis. A TUI não é considerada a única barreira de segurança.
+A segurança atua em três fronteiras. A TUI autoriza o operador antes do envio; o firmware do sensor valida ações mutáveis recebidas pelo console USB; e o enlace entre o sensor e o Node CAN responsável é autenticado por HMAC-SHA256 com chave por dispositivo. A TUI não é considerada a única barreira de segurança.
 
 ## Arquivos locais
 
-Build do sensor:
+Build dos firmwares:
 
 ```text
-<raiz-do-repositorio>/.env.local
+<raiz-do-repositorio>/.env.local                    token de manutenção + chave mestra do enlace
+<raiz-do-repositorio>/.env.sensor-<UUID>.local      token de manutenção + chaves derivadas de um sensor
 ```
 
 TUI:
@@ -22,7 +23,7 @@ Preferências visuais ficam separadas e não contêm segredos:
 ~/.config/iot-over-can/tui.json
 ```
 
-Em POSIX, `.env.local` e `security.json` devem usar permissão `0600`. Nenhum deles deve ser versionado.
+Em POSIX, `.env.local`, `.env.sensor-*.local` e `security.json` devem usar permissão `0600`. Nenhum deles deve ser versionado; o `.gitignore` cobre `*.local`.
 
 ## Provisionamento
 
@@ -33,6 +34,21 @@ Em POSIX, `.env.local` e `security.json` devem usar permissão `0600`. Nenhum de
 
 O primeiro comando cria os arquivos quando não existem; o segundo valida sem imprimir os segredos.
 
+Instalações anteriores à chave de enlace a acrescentam sem trocar o token de manutenção já gravado nos sensores:
+
+```bash
+./Codigo/scripts/provision_sensor_security.sh --add-link-key
+```
+
+Chaves de um sensor (o UUID aparece em `VERSION` no console do sensor e na tela Sensores sem fio):
+
+```bash
+./Codigo/scripts/provision_sensor_security.sh --sensor E6616408432B6F39
+./Codigo/scripts/build_pico.sh --sensor E6616408432B6F39
+```
+
+Os Nodes CAN recebem a chave mestra no build; os scripts `build_esp32_can_node.sh` e `upload_esp32_can_node.sh` a leem de `.env.local`. A Probe 00 não recebe chave.
+
 Renovação:
 
 ```bash
@@ -40,7 +56,7 @@ Renovação:
 ./Codigo/scripts/build_pico.sh
 ```
 
-Depois da renovação, o Pico deve ser recompilado e gravado porque o token de administração do firmware faz parte da configuração de build.
+A renovação troca também a chave mestra do enlace e apaga os arquivos `.env.sensor-*.local`. Depois dela, os Nodes CAN e todos os sensores devem ser recompilados e gravados, gerando antes as chaves de cada sensor com `--sensor`.
 
 ## Classificação de comandos na TUI
 
@@ -89,8 +105,39 @@ A sessão expira. A TUI obtém `device_admin_token` somente quando necessário e
 
 `WIRELESS BIND` e `WIRELESS UNBIND` alteram responsabilidade distribuída e, por isso, são tratados como mutáveis pela TUI. A interface apresenta confirmação antes da ação e só atualiza a topologia depois da confirmação do Node (`ASSOCIATING/BOUND/...` ou `UNBOUND`).
 
-A segurança atual da associação é operacional; autenticação criptográfica de origem do UUID, do Node responsável e dos comandos CAN ainda é item pendente. O futuro plano de dados não deve reutilizar apenas RSSI ou conhecimento do UUID como prova de identidade.
+O UUID anunciado por BLE é apenas um identificador: qualquer dispositivo pode anunciá-lo e ser associado pelo operador. A prova de identidade acontece no plano de dados.
+
+## Enlace sensor ↔ Node CAN
+
+Hierarquia de chaves (32 bytes, HMAC-SHA256):
+
+```text
+K_master                                   Nodes CAN e máquina de provisionamento
+  ├── K_dev = HMAC(K_master, "ioc-dev-v1" || UUID64)     uma por sensor
+  └── K_net = HMAC(K_master, "ioc-net-v1")               senha do ponto de acesso de cada Node
+K_sess = HMAC(K_dev, "ioc-sess-v1" || UUID64 || node || nonce_sensor || nonce_node)
+```
+
+Garantias:
+
+- o sensor só entra no ponto de acesso de um Node cuja oferta BLE esteja assinada com `K_dev`;
+- sensor e Node se autenticam mutuamente por desafio-resposta antes de qualquer dado;
+- todo datagrama carrega contador e código de autenticação; adulteração e repetição são descartadas e contadas (`auth_fail`, `replay`), e a TUI as registra como intercorrência de segurança;
+- um sensor compilado com `--sensor` não contém a chave mestra;
+- sem chave, sensor e Node mantêm o plano de dados desligado; não há modo de compatibilidade sem autenticação.
+
+Limites:
+
+- os dados são autenticados, não cifrados na camada de aplicação; a confidencialidade é a do WPA2 do ponto de acesso;
+- comandos e dados no barramento CAN não têm autenticação de origem: o enlace autenticado termina no Node;
+- a chave mestra está presente em todos os Nodes funcionais;
+- as chaves ficam na memória flash dos microcontroladores, sem elemento seguro;
+- a tag de autenticação tem 64 bits.
+
+O modelo de ameaças completo está em [`arquitetura/plano-de-dados-wireless.md`](arquitetura/plano-de-dados-wireless.md).
 
 ## Rede
 
-SSID, senha e chaves não ficam fixos no código-fonte público. O firmware recebe credenciais conforme o fluxo de provisionamento e usa DHCP. Controle UDP mutável permanece desabilitado por padrão enquanto o mecanismo de autenticação de rede não estiver fechado.
+SSID, senha e chaves não ficam fixos no código-fonte público. O SSID (`IOC-NN`) e a senha do ponto de acesso de cada Node são derivados de `K_net` nos dois lados e não trafegam pelo ar. O sensor usa DHCP. O Wi-Fi do sensor permanece desligado até uma oferta autêntica, e é desligado novamente na desassociação.
+
+O CLAIM por chave compartilhada de 64 bits e a opção de build `EDGE_ALLOW_LEGACY_INSECURE_UDP_CONTROL` do protocolo `0x05` foram removidos. `NET WIFI PROVISION` continua no console USB para diagnóstico de rádio em bancada; sem a chave de enlace, a associação a um ponto de acesso qualquer não abre sessão.

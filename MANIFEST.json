@@ -1,7 +1,7 @@
 {
   "name": "iot-over-can",
-  "version": "0.16.0",
-  "description": "Plataforma experimental de IoT embarcada sobre CAN/CAN FD com descoberta e associação wireless distribuídas, diagnóstico e supervisão local.",
+  "version": "0.17.0",
+  "description": "Plataforma experimental de IoT embarcada sobre CAN/CAN FD com descoberta, associação e plano de dados wireless autenticado, diagnóstico e supervisão local.",
   "paths": {
     "tui": "Front",
     "can_firmware": "Codigo/node-can",
@@ -11,7 +11,9 @@
     "architecture": "Documentacao/arquitetura/arquitetura.md",
     "protocol": "Documentacao/protocolo/protocolo.md",
     "security": "Documentacao/modelo_de_seguranca.md",
-    "build_and_test": "Documentacao/build_e_teste.md"
+    "build_and_test": "Documentacao/build_e_teste.md",
+    "shared_firmware": "Codigo/common",
+    "wireless_data_plane": "Documentacao/arquitetura/plano-de-dados-wireless.md"
   },
   "hardware": {
     "probe": "ESP32 + MCP2515, Node ID 0, instrumentação externa",
@@ -23,7 +25,9 @@
     "wireless_discovery": "BLE advertisement no Pico W e scan distribuído nos Nodes CAN",
     "candidate_transport": "dois frames CAN clássicos por observação",
     "probe_role": "observação e injeção de bancada; fora da lógica distribuída",
-    "wireless_association": "vínculo lógico explícito via Probe 00 e CAN; presença acompanhada por advertisements BLE"
+    "wireless_association": "vínculo lógico explícito via Probe 00 e CAN; presença acompanhada por advertisements BLE",
+    "wireless_data_plane": "Wi-Fi/UDP entre sensor e Node responsável, sessão HMAC-SHA256 com chave por dispositivo; dados no CAN em 0x380+N, comandos em 0x304",
+    "sensor_protocol": "0x06"
   },
   "implemented": [
     "eleição e liveness lease dos Nodes CAN",
@@ -37,13 +41,22 @@
     "identificador lógico parent.child com estados ASSOCIATING, BOUND, ONLINE, STALE e LOST",
     "desassociação explícita de sensores wireless com confirmação UNBOUND",
     "TUI em telas cheias por contexto, layout responsivo e barra de ações visível",
-    "gerenciamento wireless visível por F7/w com escolha explícita do Node responsável"
+    "gerenciamento wireless visível por F7/w com escolha explícita do Node responsável",
+    "oferta de vínculo BLE autenticada e ponto de acesso por Node",
+    "autenticação mútua sensor-Node por desafio-resposta, sessão com contador anti-replay",
+    "telemetria, espectro, DTC e configuração do sensor associado através do Node CAN",
+    "simulação no computador do caminho sensor-Node-Probe-TUI"
   ],
   "pending": [
-    "telemetria do sensor associado através do Node CAN",
-    "comandos e configuração do sensor associado através do Node CAN",
+    "validação em bancada do plano de dados wireless",
     "persistência da associação",
-    "autenticação criptográfica de origem no CAN e no vínculo wireless",
+    "autenticação de origem no barramento CAN",
+    "entrega da chave do sensor pela estação, sem chave mestra nos Nodes",
+    "verificação FIDO2/OTP real da chave física",
     "migração experimental para CAN FD"
-  ]
+  ],
+  "validation": {
+    "automated": "testes nativos, simulação e suíte da TUI",
+    "hardware": "plano de dados wireless e autenticação do enlace ainda não validados em bancada"
+  }
 }

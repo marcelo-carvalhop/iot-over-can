@@ -6,6 +6,7 @@
 #endif
 
 #define ENABLE_LE_PERIPHERAL
+#define ENABLE_LE_CENTRAL       // varredura passiva da oferta de vínculo anunciada pelo Node CAN
 #define ENABLE_LOG_ERROR
 #define ENABLE_PRINTF_HEXDUMP  // required by Pico SDK HCI stdout dump backend
 

@@ -20,8 +20,9 @@
 | Criação do filho lógico `parent.child` após confirmação do Node | Implementado |
 | Desassociação explícita com confirmação `UNBOUND` | Implementado |
 | Liveness do vínculo autoritativo no Node CAN | Implementado |
-| Telemetria wireless através do Node CAN associado | Pendente |
-| Comandos/configuração do Pico W através do Node associado | Pendente |
+| Oferta de vínculo e sessão autenticada entre sensor e Node | Implementado; validação em bancada pendente |
+| Telemetria e espectro wireless através do Node CAN associado | Implementado; validação em bancada pendente |
+| Comandos/configuração do Pico W através do Node associado | Implementado; validação em bancada pendente |
 | Persistência e recuperação da associação | Pendente |
 | CAN FD no hardware final | Pendente |
 
@@ -37,7 +38,7 @@ Eventos e estado contínuo devem permanecer separados. RSSI, função local `0xA
 
 Cores devem representar significado operacional: superfícies neutras no estado normal, azul para foco/interação, âmbar para atenção e vermelho para crítico. Nenhum estado pode depender somente de cor; símbolo e palavra devem acompanhá-lo.
 
-Um sensor wireless associado sem plano de dados não deve expor botões de telemetria, FFT, configuração ou comandos que não possam ser entregues ao Pico W. A tela deve distinguir **vínculo lógico/liveness** de **plano de dados**.
+Um sensor wireless associado sem sessão autenticada com o módulo não deve expor botões de telemetria, FFT, configuração ou comandos que não possam ser entregues ao Pico W. A tela deve distinguir **vínculo lógico/liveness** de **plano de dados** e informar o estado deste último.
 
 Uma função local implementada em um Node CAN deve possuir interface própria de leitura e configuração quando necessário e nunca deve ser representada como sensor wireless associado.
 
@@ -56,7 +57,7 @@ ruff == 0.16.7           # desenvolvimento
 
 Não existem `requirements.txt` paralelos.
 
-O firmware ESP32 usa PlatformIO com framework Arduino, ACAN2515 e NimBLE-Arduino. O firmware do Pico W usa Pico SDK, BTstack/CYW43, lwIP e toolchain ARM compatível com o SDK configurado.
+O firmware ESP32 usa PlatformIO com framework Arduino, ACAN2515, NimBLE-Arduino e a biblioteca local `Codigo/common/ioc_link`. O firmware do Pico W usa Pico SDK, BTstack/CYW43, lwIP e toolchain ARM compatível com o SDK configurado.
 
 ## Requisitos de segurança
 
@@ -65,3 +66,5 @@ Segredos não podem ser versionados. `security.json` e `.env.local` devem usar p
 A TUI deve tratar como mutáveis, entre outros, os comandos administrativos CAN `22 00`, `22 10`, `22 30`, comandos `CMD ...` e `WIRELESS BIND/UNBIND`. A ausência de autorização deve bloquear o envio, não apenas ocultar a ação.
 
 O firmware do sensor direto mantém sua própria autorização. A TUI não é a única barreira de segurança.
+
+O enlace entre sensor e Node deve autenticar os dois lados antes de transportar dados, rejeitar datagramas adulterados ou repetidos e permanecer desligado quando não houver chave provisionada. Não pode existir modo de compatibilidade sem autenticação.
