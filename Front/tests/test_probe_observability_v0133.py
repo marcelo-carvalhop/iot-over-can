@@ -18,14 +18,14 @@ def test_probe_version_and_status_are_visible_in_event_log():
         bus.subscribe(GatewayStatusReceived, lambda event: statuses.append(event))
 
         await decoder.decode(
-            "PROBE_VERSION FIRMWARE=0.13.2 PROTOCOL=CAN_CLASSIC_V1 NODE=0"
+            "PROBE_VERSION FIRMWARE=0.15.0 PROTOCOL=CAN_CLASSIC_V1 NODE=0"
         )
         await decoder.decode(
             "PROBE_STATUS NODE=0 STATE=ONLINE CAN=CLASSIC ARB=500000 DATA=0 "
             "WIFI=OFF BLE_SCAN=OFF UPTIME_MS=1234"
         )
 
-        assert detected and detected[0].firmware_version == "0.13.2"
+        assert detected and detected[0].firmware_version == "0.15.0"
         assert statuses and statuses[0].payload["CAN"] == "CLASSIC"
         probe_logs = [event for event in logs if event.source == "PROBE"]
         assert len(probe_logs) == 2

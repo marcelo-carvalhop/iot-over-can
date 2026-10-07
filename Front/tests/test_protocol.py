@@ -127,6 +127,9 @@ def test_spectrum_chart_uses_frequency_axis_and_magnitude_unit() -> None:
     metadata = _spectrum_metadata(spectrum)
     peaks = _spectrum_peaks(spectrum)
     assert "Magnitude [raw]" in chart
-    assert "123.05 Hz" in chart
-    assert "Δf: 1.9531 Hz" in metadata
-    assert "17.578 Hz" in peaks
+    assert "123,05 Hz" in chart
+    assert "Resolução (Δf): 1,9531 Hz" in metadata
+    assert "17,578 Hz" in peaks
+    # O gráfico nunca passa da largura pedida (telas pequenas).
+    narrow = _spectrum_chart(spectrum, width=40)
+    assert max(len(line) for line in narrow.splitlines()) <= 40

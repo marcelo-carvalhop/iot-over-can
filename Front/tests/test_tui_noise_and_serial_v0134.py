@@ -109,18 +109,20 @@ def test_ble_capability_marks_functional_node_as_scanning_before_first_candidate
     asyncio.run(scenario())
 
 
-def test_right_panel_and_main_log_filter_are_wired():
-    widgets = (ROOT / "Front" / "pico_tui" / "widgets.py").read_text()
+def test_main_log_filter_and_structured_telemetry_logs_are_wired():
     app = (ROOT / "Front" / "pico_tui" / "app.py").read_text()
-    css = (ROOT / "Front" / "pico_tui" / "app.tcss").read_text()
-    assert "class NodeTelemetryPanel" in widgets
-    assert "yield NodeTelemetryPanel()" in app
-    assert "self.query_one(NodeTelemetryPanel).refresh_state(state)" in app
     assert "_event_is_main_log_noise" in app
     log_manager = (ROOT / "Front" / "pico_tui" / "services" / "log_manager.py").read_text()
-    assert "#node-telemetry-panel" in css
     assert '"type": "local_node_telemetry"' in log_manager
     assert '"type": "wireless_candidate"' in log_manager
+
+
+def test_noise_filter_hides_local_demo_values_but_keeps_errors():
+    from pico_tui.app import PicoTuiApp
+
+    assert PicoTuiApp._event_is_main_log_noise(LogEvent("DEBUG", "x LOCAL_SENSOR_DEMO_VALUE=0xAA", "CAN_NODE"))
+    assert PicoTuiApp._event_is_main_log_noise(LogEvent("DEBUG", "anything", "CAN_MAINT"))
+    assert not PicoTuiApp._event_is_main_log_noise(LogEvent("ERROR", "CAN_MAINT failure", "CAN_MAINT"))
 
 
 def test_serial_boot_sanitization_and_serialized_probe_contract():

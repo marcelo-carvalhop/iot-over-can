@@ -4,26 +4,25 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "iot-over-can-tui"
-version = "0.13.0"
+version = "0.16.0"
 description = "Console TUI de engenharia para supervisão, diagnóstico e configuração de redes IoT sobre CAN/CAN FD"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "textual>=1.0,<9.0",
-  "rich>=13,<16",
-  "pyserial>=3.5,<4",
+  "textual==8.2.8",
+  "rich==15.0.0",
+  "pyserial==3.5",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8,<10",
-  "pytest-asyncio>=0.23,<2",
-  "ruff>=0.9,<1",
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "ruff==0.16.7",
 ]
 
 [project.scripts]
 iot-over-can-tui = "pico_tui.__main__:main"
-pico-tui = "pico_tui.__main__:main"  # alias legado temporário
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -29,7 +29,7 @@ def test_can_nodes_use_compact_two_frame_wireless_report():
 
 
 def test_build_pico_defaults_to_actual_pico_w():
-    script = (ROOT / "scripts/build_pico.sh").read_text()
+    script = (ROOT / "Codigo/scripts/build_pico.sh").read_text()
     cmake = (ROOT / "Codigo/node-wifi/CMakeLists.txt").read_text()
     assert 'PICO_BOARD_TARGET:-pico_w' in script
     assert 'set(PICO_BOARD pico_w' in cmake

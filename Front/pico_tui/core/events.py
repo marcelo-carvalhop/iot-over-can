@@ -77,6 +77,17 @@ class WirelessCandidateReceived(Event):
 
 
 @dataclass(slots=True)
+class WirelessAssociationReceived(Event):
+    parent_node_id: int
+    child_id: int
+    wireless_uuid: str
+    profile_id: str
+    state: str
+    rssi_dbm: int
+    protocol_version: str = ""
+
+
+@dataclass(slots=True)
 class SensorStatusReceived(Event):
     parent_node_id: int
     child_id: int

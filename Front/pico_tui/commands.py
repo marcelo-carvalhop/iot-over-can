@@ -107,3 +107,10 @@ def gateway_command(target: str, action: str, *, tx: str | None = None, **fields
             continue
         items.append(f"{key.upper()}={value}")
     return " ".join(items)
+
+
+def wireless_association(action: str, node_id: int, wireless_uuid: str) -> str:
+    action = action.upper()
+    if action not in {"BIND", "UNBIND"}:
+        raise ValueError(f"Ação wireless inválida: {action}")
+    return f"WIRELESS {action} {node_id} {wireless_uuid}"

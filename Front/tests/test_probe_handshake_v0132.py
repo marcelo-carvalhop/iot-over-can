@@ -8,7 +8,7 @@ def test_probe_firmware_accepts_textual_introspection_without_can_injection():
     assert 'strcmp(command, "PROBE_VERSION") == 0' in source
     assert 'strcmp(command, "PROBE_STATUS") == 0' in source
     assert 'strcmp(command, "GW_VERSION") == 0' in source
-    assert 'PROBE_VERSION FIRMWARE=0.13.2' in source
+    assert 'PROBE_VERSION FIRMWARE=' in source
     assert 'PROBE_STATUS NODE=0 STATE=ONLINE CAN=CLASSIC' in source
     assert source.index("handleProbeIntrospectionCommand(buffer)") < source.index("sscanf(")
 

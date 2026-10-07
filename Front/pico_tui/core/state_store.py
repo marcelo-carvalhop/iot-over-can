@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import deque
 from copy import deepcopy
 
 from pico_tui.core.models import (
@@ -10,13 +11,61 @@ from pico_tui.core.models import (
     ConnectionMode,
     ConnectionState,
     DtcRecord,
+    Incident,
     NodeStatus,
     PhysicalNode,
     SensorNode,
+    Severity,
     SpectrumSample,
     TelemetrySample,
     WirelessCandidate,
 )
+
+
+INCIDENT_COALESCE_SECONDS = 30.0
+INCIDENT_COALESCE_LOOKBACK = 5
+
+
+def _push_incident(
+    incidents,
+    severity: Severity,
+    kind: str,
+    message: str,
+    key: str,
+    now: float,
+) -> None:
+    """Acrescenta uma intercorrência, agrupando repetições recentes da mesma chave."""
+
+    if key:
+        recent = list(incidents)[-INCIDENT_COALESCE_LOOKBACK:]
+        for incident in reversed(recent):
+            if incident.key == key and now - incident.last_wall_time <= INCIDENT_COALESCE_SECONDS:
+                incident.count += 1
+                incident.last_wall_time = now
+                incident.message = message
+                if _severity_rank(severity) > _severity_rank(incident.severity):
+                    incident.severity = severity
+                return
+    incidents.append(
+        Incident(
+            severity=severity,
+            kind=kind,
+            message=message,
+            key=key,
+            first_wall_time=now,
+            last_wall_time=now,
+        )
+    )
+
+
+def _severity_rank(severity: Severity) -> int:
+    return {Severity.INFO: 0, Severity.WARNING: 1, Severity.CRITICAL: 2}.get(severity, 0)
+
+
+_FRESHNESS_INCIDENTS = {
+    NodeStatus.STALE: (Severity.WARNING, "Sem dados recentes (mais de {stale:g} s)"),
+    NodeStatus.LOST: (Severity.CRITICAL, "Comunicação perdida (mais de {lost:g} s sem dados)"),
+}
 
 
 class StateStore:
@@ -26,9 +75,32 @@ class StateStore:
         self._lock = threading.RLock()
         self._state = AppState()
 
-    def snapshot(self) -> AppState:
+    def snapshot(self, *, history: int | None = None, frames: int | None = None) -> AppState:
+        """Cópia profunda e isolada do estado.
+
+        ``history`` e ``frames`` limitam, apenas na cópia, o histórico de
+        telemetria por sensor e a lista de quadros CAN recentes. A interface
+        usa essa forma enxuta a cada ciclo de atualização: copiar 2000 amostras
+        por sensor várias vezes por segundo não acrescenta nada à tela e custa
+        CPU em dispositivos pequenos. ``snapshot()`` sem argumentos preserva o
+        comportamento original (cópia integral), usado por exportações.
+        """
+
         with self._lock:
-            return deepcopy(self._state)
+            if history is None and frames is None:
+                return deepcopy(self._state)
+            memo: dict[int, object] = {}
+            if history is not None:
+                for node in self._state.nodes.values():
+                    for sensor in node.sensors.values():
+                        source = sensor.telemetry_history
+                        tail = list(source)[-history:] if history > 0 else []
+                        memo[id(source)] = deque(deepcopy(tail), maxlen=source.maxlen)
+            if frames is not None:
+                source_frames = self._state.network.recent_frames
+                tail_frames = list(source_frames)[-frames:] if frames > 0 else []
+                memo[id(source_frames)] = deque(deepcopy(tail_frames), maxlen=source_frames.maxlen)
+            return deepcopy(self._state, memo)
 
     def set_connection(
         self,
@@ -142,6 +214,14 @@ class StateStore:
                     wireless_uuid=wireless_uuid,
                 )
                 node.sensors[child_id] = sensor
+                # Se ainda não existe qualquer seleção explícita, o primeiro
+                # sensor funcional passa a ser o contexto operacional da TUI.
+                # Isso vale para conexão direta, demonstração e para o primeiro
+                # filho associado futuramente a um Node CAN. Uma seleção manual
+                # de módulo/sensor nunca é sobrescrita por este fallback.
+                if self._state.selected_logical_id is None and self._state.selected_node_id is None:
+                    self._state.selected_logical_id = sensor.logical_id
+                    self._state.selected_node_id = parent_node_id
             elif wireless_uuid:
                 sensor.wireless_uuid = wireless_uuid
             return sensor
@@ -153,6 +233,18 @@ class StateStore:
                 if hasattr(sensor, key):
                     setattr(sensor, key, value)
             sensor.last_seen_monotonic = time.monotonic()
+
+    def remove_sensor(self, parent_node_id: int, child_id: int) -> None:
+        with self._lock:
+            node = self._state.nodes.get(parent_node_id)
+            if node is None:
+                return
+            sensor = node.sensors.pop(child_id, None)
+            if sensor is None:
+                return
+            if self._state.selected_logical_id == sensor.logical_id:
+                self._state.selected_logical_id = None
+                self._state.selected_node_id = parent_node_id
 
     def update_sensor_configuration(
         self,
@@ -302,31 +394,91 @@ class StateStore:
         lost_after: float = 30.0,
     ) -> None:
         now = time.monotonic()
+        wall = time.time()
         with self._lock:
             for node in self._state.nodes.values():
                 if node.last_seen_monotonic:
-                    node_age = now - node.last_seen_monotonic
-                    if node_age >= lost_after:
-                        node.status = NodeStatus.LOST
-                    elif node_age >= stale_after:
-                        node.status = NodeStatus.STALE
-                    elif node_age >= aging_after:
-                        node.status = NodeStatus.AGING
-                    else:
-                        node.status = NodeStatus.ONLINE
+                    previous = node.status
+                    node.status = _age_status(now - node.last_seen_monotonic, aging_after, stale_after, lost_after)
+                    self._record_freshness(node.incidents, previous, node.status, wall, stale_after, lost_after)
                 for sensor in node.sensors.values():
+                    # Filhos wireless associados recebem liveness do Node CAN
+                    # responsável. A TUI não deve recalcular STALE/LOST a
+                    # partir da idade da última mensagem WIRELESS_ASSOC, pois
+                    # esse evento é publicado principalmente em transições de
+                    # estado e não a cada advertisement BLE.
+                    if sensor.association_state in {
+                        "ASSOCIATING",
+                        "BOUND",
+                        "ONLINE",
+                        "STALE",
+                        "LOST",
+                    }:
+                        continue
                     if not sensor.last_seen_monotonic:
                         sensor.status = NodeStatus.UNKNOWN
                         continue
-                    age = now - sensor.last_seen_monotonic
-                    if age >= lost_after:
-                        sensor.status = NodeStatus.LOST
-                    elif age >= stale_after:
-                        sensor.status = NodeStatus.STALE
-                    elif age >= aging_after:
-                        sensor.status = NodeStatus.AGING
-                    else:
-                        sensor.status = NodeStatus.ONLINE
+                    previous = sensor.status
+                    sensor.status = _age_status(now - sensor.last_seen_monotonic, aging_after, stale_after, lost_after)
+                    self._record_freshness(sensor.incidents, previous, sensor.status, wall, stale_after, lost_after)
+
+    @staticmethod
+    def _record_freshness(
+        incidents,
+        previous: NodeStatus,
+        current: NodeStatus,
+        wall: float,
+        stale_after: float,
+        lost_after: float,
+    ) -> None:
+        if previous == current:
+            return
+        if current in _FRESHNESS_INCIDENTS:
+            severity, template = _FRESHNESS_INCIDENTS[current]
+            _push_incident(
+                incidents,
+                severity,
+                "COMUNICACAO",
+                template.format(stale=stale_after, lost=lost_after),
+                f"freshness:{current.value}",
+                wall,
+            )
+        elif previous in _FRESHNESS_INCIDENTS and current in {NodeStatus.ONLINE, NodeStatus.AGING}:
+            _push_incident(incidents, Severity.INFO, "COMUNICACAO", "Comunicação restabelecida", "freshness:recovered", wall)
+
+    def add_sensor_incident(
+        self,
+        parent_node_id: int,
+        child_id: int,
+        severity: Severity,
+        kind: str,
+        message: str,
+        *,
+        key: str = "",
+    ) -> None:
+        with self._lock:
+            sensor = self.ensure_sensor(parent_node_id, child_id)
+            _push_incident(sensor.incidents, severity, kind, message, key, time.time())
+
+    def add_node_incident(
+        self,
+        parent_node_id: int,
+        severity: Severity,
+        kind: str,
+        message: str,
+        *,
+        key: str = "",
+    ) -> None:
+        with self._lock:
+            node = self.ensure_node(parent_node_id)
+            _push_incident(node.incidents, severity, kind, message, key, time.time())
+
+    def sensor_dtc_is_active(self, parent_node_id: int, child_id: int, code: int) -> bool:
+        with self._lock:
+            node = self._state.nodes.get(parent_node_id)
+            sensor = node.sensors.get(child_id) if node else None
+            record = sensor.active_dtcs.get(code) if sensor else None
+            return bool(record and record.active)
 
     def find_node(self, parent_node_id: int | None) -> PhysicalNode | None:
         if parent_node_id is None:
@@ -341,6 +493,16 @@ class StateStore:
                 for sensor in node.sensors.values():
                     if sensor.logical_id == logical_id:
                         return deepcopy(sensor)
+        return None
+
+    def find_sensor_summary(self, logical_id: str) -> tuple[NodeStatus, int] | None:
+        """Estado e número de DTCs ativos sem copiar o sensor inteiro."""
+
+        with self._lock:
+            for node in self._state.nodes.values():
+                for sensor in node.sensors.values():
+                    if sensor.logical_id == logical_id:
+                        return sensor.status, sensor.active_dtc_count
         return None
 
     def first_sensor_id(self) -> str | None:
@@ -360,3 +522,13 @@ class StateStore:
                 "connection_state": self._state.connection_state.value,
                 "connection_mode": self._state.connection_mode.value,
             }
+
+
+def _age_status(age: float, aging_after: float, stale_after: float, lost_after: float) -> NodeStatus:
+    if age >= lost_after:
+        return NodeStatus.LOST
+    if age >= stale_after:
+        return NodeStatus.STALE
+    if age >= aging_after:
+        return NodeStatus.AGING
+    return NodeStatus.ONLINE

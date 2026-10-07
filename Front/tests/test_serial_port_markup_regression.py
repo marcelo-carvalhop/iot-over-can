@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 def test_port_option_list_disables_markup():
-    source = (Path(__file__).resolve().parents[1] / "pico_tui" / "screens.py").read_text()
+    source = (Path(__file__).resolve().parents[1] / "pico_tui" / "dialogs.py").read_text()
     assert 'OptionList(id="port-list", markup=False)' in source
 
 

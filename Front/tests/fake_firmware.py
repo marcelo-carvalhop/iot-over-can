@@ -105,6 +105,10 @@ class FakeFirmware:
             return
         cmd = tokens[0].upper()
 
+        if cmd == "AUTH" and len(tokens) >= 2 and tokens[1].upper() == "UNLOCK":
+            # Mesmo contrato do firmware real (serial_console.c): OK AUTH_UNLOCKED.
+            self._write("OK AUTH_UNLOCKED\n")
+            return
         if line == "!":
             self.telemetry = False
             self._write("OK TELEMETRY=OFF\n")
@@ -153,12 +157,12 @@ class FakeFirmware:
                 self.fft_armed = True
                 self._write("OK FFT=ARMED\n")
         elif cmd in ("SIMULATE", "SIM"):
-            self._write("ERR SIMULATE removed from lean baseline\n")
+            self._write("ERR SIMULATE disabled\n")
         elif cmd == "ACQ" and len(tokens) >= 2 and tokens[1].upper() == "POLLING":
             self.acquisition = "POLLING"
             self._write("OK ACQ=POLLING_RESTARTED\n")
         elif cmd == "ACQ" and len(tokens) >= 2 and tokens[1].upper() == "DRDY":
-            self._write("ERR DRDY disabled in polling baseline. Use ACQ POLLING.\n")
+            self._write("ERR DRDY disabled. Use ACQ POLLING.\n")
         elif cmd == "PING":
             self._write("PONG UPTIME_MS=12345\n")
         elif cmd == "DTC" and len(tokens) >= 2 and tokens[1].upper() == "CLEAR":

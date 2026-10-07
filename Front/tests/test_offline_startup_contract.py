@@ -3,14 +3,14 @@ from pathlib import Path
 
 def test_run_script_does_not_hardcode_serial_port():
     root = Path(__file__).resolve().parents[2]
-    script = (root / "scripts" / "run_tui.sh").read_text()
+    script = (root / "Codigo" / "scripts" / "run_tui.sh").read_text()
     assert '/dev/ttyACM0}"' not in script
     assert 'PORT="${1:-}"' in script
 
 
 def test_run_script_does_not_reinstall_every_start():
     root = Path(__file__).resolve().parents[2]
-    script = (root / "scripts" / "run_tui.sh").read_text()
+    script = (root / "Codigo" / "scripts" / "run_tui.sh").read_text()
     assert 'command -v iot-over-can-tui' in script
     assert 'exec iot-over-can-tui' in script
 

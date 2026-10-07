@@ -104,7 +104,7 @@ typedef enum {
     ACQ_MODE_UNKNOWN   = 0x00,
     ACQ_MODE_DRDY      = 0x01, // INT/DRDY ativo, leitura I2C fora da ISR
     ACQ_MODE_POLLING   = 0x02, // fallback por polling I2C
-    ACQ_MODE_SIMULATED = 0x03, // legado; modo sintético removido da baseline enxuta
+    ACQ_MODE_SIMULATED = 0x03, // reservado; aquisição sintética não habilitada
     ACQ_MODE_IDLE      = 0x04  // aquisição pausada
 } AcquisitionMode;
 

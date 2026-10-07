@@ -15,6 +15,7 @@ from pico_tui.core.events import (
     LogEvent,
     TelemetryReceived,
     WirelessCandidateReceived,
+    WirelessAssociationReceived,
 )
 
 
@@ -52,6 +53,7 @@ class LogManager:
         bus.subscribe(TelemetryReceived, self._on_telemetry)
         bus.subscribe(LocalNodeTelemetryReceived, self._on_local_node_telemetry)
         bus.subscribe(WirelessCandidateReceived, self._on_wireless_candidate)
+        bus.subscribe(WirelessAssociationReceived, self._on_wireless_association)
 
     async def _on_log(self, event: LogEvent) -> None:
         entry = LogEntry(
@@ -110,6 +112,21 @@ class LogManager:
                 "reporter": event.reporter_node_id,
                 "uuid": event.wireless_uuid,
                 "profile": event.profile_id,
+                "rssi_dbm": event.rssi_dbm,
+                "protocol": event.protocol_version,
+            }
+        )
+
+    async def _on_wireless_association(self, event: WirelessAssociationReceived) -> None:
+        self._write_jsonl(
+            {
+                "type": "wireless_association",
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                "node": event.parent_node_id,
+                "child": event.child_id,
+                "uuid": event.wireless_uuid,
+                "profile": event.profile_id,
+                "state": event.state,
                 "rssi_dbm": event.rssi_dbm,
                 "protocol": event.protocol_version,
             }

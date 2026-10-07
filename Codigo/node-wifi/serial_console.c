@@ -536,7 +536,7 @@ static void process_line(char *line) {
             return;
         }
         if (ntok >= 2 && str_ieq(tok[1], "DRDY")) {
-            print_err("DRDY disabled in polling baseline. Use ACQ POLLING.");
+            print_err("DRDY disabled. Use ACQ POLLING.");
             return;
         }
         print_err("Usage: ACQ POLLING");

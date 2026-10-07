@@ -1,1428 +1,1356 @@
+"""Telas em tela cheia da TUI.
+
+Navegação (Início é sempre a base da pilha):
+
+    Início ─┬─ Módulo CAN NN ── Sensor NN.CC ── Espectro FFT
+            ├─ Sensor NN.CC
+            ├─ Comandos
+            ├─ Rede CAN
+            ├─ Mensagens
+            ├─ Sensores sem fio
+            └─ Ajuda
+
+Cada tela recebe o estado pronto em ``refresh_view`` (chamado pelo app a cada
+ciclo) e só atualiza os widgets que mudaram.
+"""
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
-from typing import Any, Callable
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.message import Message
-from textual.screen import ModalScreen
-from textual.widgets import Button, DataTable, Input, Label, OptionList, Sparkline, Static
-from textual.widgets.option_list import Option
+from textual.screen import Screen
+from textual.widgets import Input, Label, OptionList, Sparkline, Static
 
-from pico_tui import commands
 from pico_tui import palette
-from pico_tui.core.models import AppState, PhysicalNode, SensorNode, SpectrumSample
-from pico_tui.dtc_catalog import dtc_description
-from pico_tui.serial_client import list_available_ports
+from pico_tui import presentation as pres
+from pico_tui.command_catalog import ACTIONS_BY_KEY, GROUP_ORDER, actions_for, can_command
+from pico_tui.core.models import AppState, ConnectionMode, SensorNode
+from pico_tui.spectrum import (  # noqa: F401 - reexportados por compatibilidade
+    _spectrum_chart,
+    _spectrum_metadata,
+    _spectrum_peaks,
+    spectrum_chart,
+    spectrum_fields,
+    spectrum_peaks,
+)
+from pico_tui.widgets import (
+    LEVEL_COLORS,
+    Breadcrumb,
+    EquipmentList,
+    Fields,
+    FlowLine,
+    KeyBar,
+    MessageLog,
+    Paragraphs,
+    StableOptionList,
+    StatusBand,
+    hanging_lines,
+    incident_items,
+    level_text,
+    node_title,
+    sensor_prompt,
+)
+
+if TYPE_CHECKING:  # pragma: no cover
+    from pico_tui.app import PicoTuiApp
+
+# Reexportados para scripts antigos que importavam diálogos daqui.
+from pico_tui.dialogs import (  # noqa: F401
+    ConfigRequest,
+    ConfigScreen,
+    ConfirmScreen,
+    ConnectionChoice,
+    ConnectScreen,
+    ParameterScreen,
+    TargetScreen,
+    WirelessNodeScreen,
+)
 
 
-@dataclass(slots=True)
-class ConnectionChoice:
-    port: str = ""
-    mode: str = "auto"
-    demo: bool = False
+def section(title: str, *, id: str | None = None, classes: str = "") -> Vertical:
+    container = Vertical(id=id, classes=f"section {classes}".strip())
+    container.border_title = title
+    return container
 
 
-@dataclass(slots=True)
-class ConfigRequest:
-    mode: str
-    window: str
-    rate_hz: float | None
-    window_size: int | None
-    stalta: float | None
-    gain: float | None
-    apply_and_verify: bool
+def _value(text: str, color: str = palette.TEXT_PRIMARY, *, bold: bool = False) -> Text:
+    return Text(text, style=f"bold {color}" if bold else color)
 
 
+def _condition_value(condition: pres.Condition) -> Text:
+    value = level_text(condition.level, bold=True)
+    if condition.reasons:
+        value.append(f"  {condition.reasons[0]}", style=palette.TEXT_PRIMARY)
+        if len(condition.reasons) > 1:
+            value.append(f" (+{len(condition.reasons) - 1})", style=palette.TEXT_MUTED)
+    return value
 
 
-class TelemetryCommandRequested(Message):
-    """Ação solicitada pela tela detalhada de telemetria."""
-
-    def __init__(self, logical_id: str, action: str, value: int | None = None) -> None:
-        self.logical_id = logical_id
-        self.action = action.upper()
-        self.value = value
-        super().__init__()
+# ---------------------------------------------------------------------------
+# Base
+# ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
-class FftRequest:
-    bins: int
-    mode: str
+class BaseScreen(Screen):
+    """Faixa de estado, caminho de navegação, corpo e barra de teclas."""
 
+    BINDINGS = [Binding("escape", "back", "Voltar", show=False)]
+    SCREEN_HINTS: Sequence[tuple[str, str, str | None]] = ()
+    SHOW_BACK = True
 
-@dataclass(slots=True)
-class CanNodeCommandRequest:
-    node_id: int
-    command: str
-
-
-@dataclass(slots=True)
-class CanNetworkCommandRequest:
-    label: str
-    command: str
-
-
-class ConnectScreen(ModalScreen[ConnectionChoice | None]):
-    BINDINGS = [
-        Binding("r", "refresh_ports", "Atualizar portas", show=True),
-        Binding("escape", "cancel", "Cancelar", show=True),
-        Binding("d", "demo", "Demonstração", show=True),
-    ]
-
-    def __init__(self, initial_port: str = "", initial_mode: str = "auto", *, allow_cancel: bool = True) -> None:
-        super().__init__()
-        self.initial_port = initial_port or ""
-        self.initial_mode = (initial_mode or "auto").lower()
-        self.allow_cancel = allow_cancel
+    @property
+    def tui(self) -> PicoTuiApp:
+        return self.app  # type: ignore[return-value]
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="connect-dialog", classes="modal"):
-            yield Static("CONEXÃO SERIAL", classes="modal-title")
-            yield Static(
-                "Selecione uma porta detectada ou informe o caminho manualmente. "
-                "ESP32 costuma aparecer como /dev/ttyUSB*, /dev/tty.SLAB_USBtoUART ou COMx; "
-                "Pico USB CDC costuma aparecer como /dev/ttyACM*.",
-                classes="modal-hint",
-            )
-            yield Label("Portas disponíveis")
-            yield OptionList(id="port-list", markup=False)
-            yield Label("Modo de protocolo")
-            yield OptionList(
-                Option("Detecção automática", id="auto"),
-                Option("Probe 00 / interface CAN", id="gateway"),
-                Option("Sensor direto Pico 2 W", id="sensor"),
-                id="connection-mode-list",
-            )
-            yield Label("Caminho manual")
-            yield Input(placeholder="/dev/ttyUSB0, /dev/ttyACM0, COM5, socket://host:port", id="manual-port")
-            with Horizontal(classes="modal-buttons"):
-                yield Button("Demonstração", id="demo-button")
-                yield Button("Conectar", id="connect-button", variant="primary")
-                yield Button("Cancelar" if self.allow_cancel else "Sair", id="cancel-button")
-            yield Static("R atualiza a lista • D inicia demonstração • Esc cancela", classes="modal-hint")
+        yield StatusBand(id="status-band")
+        yield Breadcrumb(id="breadcrumb")
+        yield from self.compose_body()
+        yield KeyBar(id="key-bar")
+
+    def compose_body(self) -> ComposeResult:  # pragma: no cover - abstrato
+        yield from ()
+
+    def breadcrumb(self) -> tuple[Sequence[str], str]:
+        return ("Início",), ""
+
+    def key_hints(self) -> list[tuple[str, str, str | None]]:
+        hints: list[tuple[str, str, str | None]] = []
+        if self.SHOW_BACK:
+            hints.append(("Esc", "Voltar", "screen.back"))
+        hints.extend(self.SCREEN_HINTS)
+        hints.extend(self.tui.global_hints(home=not self.SHOW_BACK))
+        return hints
 
     def on_mount(self) -> None:
-        self._populate_ports()
-        mode_list = self.query_one("#connection-mode-list", OptionList)
-        mode_ids = ["auto", "gateway", "sensor"]
-        mode_list.highlighted = mode_ids.index(self.initial_mode) if self.initial_mode in mode_ids else 0
-        if self.initial_port:
-            input_widget = self.query_one("#manual-port", Input)
-            detected_devices = {port.device for port in list_available_ports()}
-            if self.initial_port not in detected_devices:
-                input_widget.value = self.initial_port
-        self.query_one("#port-list", OptionList).focus()
+        parts, subtitle = self.breadcrumb()
+        self.query_one("#breadcrumb", Breadcrumb).set_parts(parts, subtitle)
+        self.query_one("#key-bar", KeyBar).set_hints(self.key_hints())
+        self.call_after_refresh(self.tui.refresh_now)
 
-    def _populate_ports(self) -> None:
-        widget = self.query_one("#port-list", OptionList)
-        widget.clear_options()
-        ports = list_available_ports()
-        if not ports:
-            widget.add_option(Option("Nenhuma porta detectada", id="__none__", disabled=True))
-            widget.highlighted = 0
-            return
-        selected_index = 0
-        for index, port in enumerate(ports):
-            widget.add_option(Option(port.label(), id=port.device))
-            if port.device == self.initial_port:
-                selected_index = index
-        widget.highlighted = selected_index
+    def on_screen_resume(self) -> None:
+        self.call_after_refresh(self.tui.refresh_now)
 
-    def _selected_mode(self) -> str:
-        widget = self.query_one("#connection-mode-list", OptionList)
-        option = widget.get_option_at_index(widget.highlighted or 0)
-        return option.id or "auto"
+    def refresh_view(self, state: AppState) -> None:
+        self.query_one("#status-band", StatusBand).show(
+            state,
+            security_label=self.tui.security_label(),
+            port=state.port,
+            compact=self.app.has_class("bp-narrow") or self.app.has_class("bp-short"),
+        )
+        parts, subtitle = self.breadcrumb()
+        self.query_one("#breadcrumb", Breadcrumb).set_parts(parts, subtitle)
+        self.update_body(state)
 
-    def _selected_port(self) -> str:
-        manual = self.query_one("#manual-port", Input).value.strip()
-        if manual:
-            return manual
-        widget = self.query_one("#port-list", OptionList)
-        if widget.option_count == 0:
-            return ""
-        option = widget.get_option_at_index(widget.highlighted or 0)
-        return "" if option.id == "__none__" else str(option.id or "")
+    def update_body(self, state: AppState) -> None:  # pragma: no cover - abstrato
+        pass
 
-    def action_refresh_ports(self) -> None:
-        self._populate_ports()
-        self.notify("Lista de portas atualizada", timeout=2)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-    def action_demo(self) -> None:
-        self.dismiss(ConnectionChoice(demo=True, mode="gateway"))
-
-    @on(Button.Pressed, "#connect-button")
-    def _connect(self) -> None:
-        port = self._selected_port()
-        if not port:
-            self.notify("Informe uma porta serial", severity="warning")
-            return
-        self.dismiss(ConnectionChoice(port=port, mode=self._selected_mode()))
-
-    @on(Button.Pressed, "#demo-button")
-    def _demo(self) -> None:
-        self.action_demo()
-
-    @on(Button.Pressed, "#cancel-button")
-    def _cancel(self) -> None:
-        self.action_cancel()
-
-    @on(Input.Submitted, "#manual-port")
-    def _manual_submit(self) -> None:
-        self._connect()
+    def action_back(self) -> None:
+        if len(self.app.screen_stack) > 1 and self.SHOW_BACK:
+            self.app.pop_screen()
 
 
+# ---------------------------------------------------------------------------
+# Início
+# ---------------------------------------------------------------------------
 
 
-class CanNetworkCommandScreen(ModalScreen[CanNetworkCommandRequest | None]):
-    """Comandos globais da rede CAN, independentes de nó selecionado."""
+class HomeScreen(BaseScreen):
+    SHOW_BACK = False
 
-    BINDINGS = [
-        Binding("escape", "cancel", "Cancelar", show=True),
-        Binding("e", "election", "Eleição", show=True),
-        Binding("s", "status", "Status global", show=True),
-    ]
+    def compose_body(self) -> ComposeResult:
+        with VerticalScroll(id="home-body", classes="body"):
+            with Horizontal(id="home-columns", classes="columns"):
+                with Vertical(id="home-main", classes="column column-left column-main"):
+                    with section("Precisa de atenção", id="sec-attention"):
+                        yield StableOptionList(id="attention-list", empty="Nada requer atenção agora.")
+                    with section("Equipamentos", id="sec-equipment", classes="grow"):
+                        yield EquipmentList(
+                            id="equipment-list",
+                            empty="Nenhum equipamento ainda. Pressione F3 ou p para conectar.",
+                        )
+                with Vertical(id="home-side", classes="column column-side"):
+                    with section("Rede CAN", id="sec-home-network"):
+                        yield Fields(id="home-network")
+                    with section("Conexão", id="sec-home-connection"):
+                        yield Fields(id="home-connection")
+            with section("Mensagens recentes", id="sec-home-messages"):
+                yield MessageLog(id="home-message-log")
 
-    COMMANDS = [
-        ("Iniciar eleição da rede", "22 00 FF 01"),
-        ("Solicitar status global", "22 20 FF 00"),
-        ("Liveness rápido", "22 30 FF 01"),
-        ("Liveness médio-rápido", "22 30 FF 02"),
-        ("Liveness normal", "22 30 FF 03"),
-        ("Liveness médio-lento", "22 30 FF 04"),
-        ("Liveness lento", "22 30 FF 05"),
-    ]
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="can-network-command-dialog", classes="modal extra-wide-modal"):
-            yield Static("COMANDOS DA REDE CAN", classes="modal-title")
-            yield Static(
-                "Ações globais não dependem de um módulo selecionado. "
-                "Eleição e consulta global podem ser emitidas pela conexão serial atual.",
-                classes="modal-hint",
-            )
-            yield OptionList(
-                *[Option(label, id=command) for label, command in self.COMMANDS],
-                id="can-network-command-list",
-            )
-            yield Label("Comando manual")
-            yield Input(placeholder="Ex.: 22 00 FF 01", id="can-network-manual-command")
-            with Horizontal(classes="modal-buttons"):
-                yield Button("Enviar", id="can-network-send", variant="primary")
-                yield Button("Fechar", id="can-network-cancel")
+    def breadcrumb(self) -> tuple[Sequence[str], str]:
+        return ("Início",), "visão geral do sistema"
 
     def on_mount(self) -> None:
-        self.query_one("#can-network-command-list", OptionList).highlighted = 0
+        super().on_mount()
+        self.set_messages_visible(self.tui.messages_on_home)
+        self.query_one("#equipment-list", EquipmentList).focus()
 
-    def _selected(self) -> CanNetworkCommandRequest | None:
-        manual = self.query_one("#can-network-manual-command", Input).value.strip()
-        if manual:
-            return CanNetworkCommandRequest(label="Comando manual", command=manual)
+    def set_messages_visible(self, visible: bool) -> None:
+        panel = self.query_one("#sec-home-messages")
+        panel.display = visible
+        if visible:
+            log = self.query_one("#home-message-log", MessageLog)
+            log.clear()
+            for entry in self.tui.visible_messages()[-200:]:
+                log.add_entry(entry)
 
-        options = self.query_one("#can-network-command-list", OptionList)
-        if options.option_count == 0:
-            return None
-        option = options.get_option_at_index(options.highlighted or 0)
-        command = str(option.id or "")
-        label = str(option.prompt)
-        return CanNetworkCommandRequest(label=label, command=command)
+    def add_message(self, entry) -> None:
+        panel = self.query_one("#sec-home-messages")
+        if panel.display:
+            self.query_one("#home-message-log", MessageLog).add_entry(entry)
 
-    @on(Button.Pressed, "#can-network-send")
-    def _send(self) -> None:
-        request = self._selected()
-        if request is None:
-            self.notify("Selecione ou informe um comando", severity="warning")
-            return
-        self.dismiss(request)
+    def update_body(self, state: AppState) -> None:
+        self.query_one("#equipment-list", EquipmentList).show(state)
 
-    @on(Button.Pressed, "#can-network-cancel")
-    def _cancel_button(self) -> None:
-        self.dismiss(None)
+        attention = pres.attention_items(state)
+        attention_list = self.query_one("#attention-list", StableOptionList)
+        width = attention_list.prompt_width
+        items = []
+        for index, item in enumerate(attention[:20]):
+            head = Text(f"{pres.symbol(item.level)} ", style=LEVEL_COLORS[item.level])
+            head.append(item.title, style=f"bold {palette.TEXT_PRIMARY}")
+            lines = hanging_lines([head, Text(item.reason, style=palette.TEXT_PRIMARY)], width, indent=2)
+            items.append((f"{item.target}|{index}", Text("\n").join(lines)))
+        attention_list.set_items(items)
+        # A faixa de estado já diz "Operação normal"; a seção só aparece quando há o que tratar.
+        self.query_one("#sec-attention").display = bool(items)
 
-    def action_election(self) -> None:
-        self.dismiss(CanNetworkCommandRequest("Iniciar eleição da rede", "22 00 FF 01"))
-
-    def action_status(self) -> None:
-        self.dismiss(CanNetworkCommandRequest("Solicitar status global", "22 20 FF 00"))
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
-class CanNodeCommandScreen(ModalScreen[CanNodeCommandRequest | None]):
-    BINDINGS = [
-        Binding("escape", "cancel", "Cancelar", show=True),
-    ]
-
-    COMMANDS = [
-        ("Solicitar status do nó", "22 20 {id:02X} 00"),
-        ("Desativar função do nó", "22 10 {id:02X} 00"),
-        ("Reativar função do nó", "22 10 {id:02X} 11"),
-        ("Limpar falha do nó", "22 10 {id:02X} 44"),
-        ("Iniciar eleição global", "22 00 FF 01"),
-        ("Solicitar status global", "22 20 FF 00"),
-        ("Liveness/heartbeat lento", "22 30 FF 05"),
-        ("Liveness/heartbeat normal", "22 30 FF 03"),
-        ("Liveness/heartbeat rápido", "22 30 FF 01"),
-    ]
-
-    def __init__(self, node: PhysicalNode) -> None:
-        super().__init__()
-        self.node = node
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="can-node-dialog", classes="modal extra-wide-modal"):
-            yield Static(f"CONFIGURAÇÃO DO MÓDULO CAN — Node {self.node.parent_node_id:02d}", classes="modal-title")
-            yield Static(
-                f"Tipo={self.node.node_type}  Status={self.node.status.value}  CAN={self.node.can_state}  "
-                f"Sensores={len(self.node.sensors)}",
-                classes="modal-hint",
-            )
-            yield Label("Ações rápidas")
-            yield OptionList(
-                *[Option(label, id=template.format(id=self.node.parent_node_id)) for label, template in self.COMMANDS],
-                id="can-command-list",
-            )
-            yield Label("Comando manual para o gateway serial")
-            yield Input(placeholder="Ex.: 22 20 04 00", id="can-manual-command")
-            with Horizontal(classes="modal-buttons"):
-                yield Button("Enviar", id="can-command-send", variant="primary")
-                yield Button("Fechar", id="can-command-cancel")
-
-    def _selected_command(self) -> str:
-        manual = self.query_one("#can-manual-command", Input).value.strip()
-        if manual:
-            return manual
-        options = self.query_one("#can-command-list", OptionList)
-        if options.option_count == 0:
-            return ""
-        option = options.get_option_at_index(options.highlighted or 0)
-        return str(option.id or "")
-
-    def on_mount(self) -> None:
-        self.query_one("#can-command-list", OptionList).highlighted = 0
-
-    @on(Button.Pressed, "#can-command-send")
-    def _send(self) -> None:
-        command = self._selected_command()
-        if not command:
-            self.notify("Selecione ou informe um comando", severity="warning")
-            return
-        self.dismiss(CanNodeCommandRequest(node_id=self.node.parent_node_id, command=command))
-
-    @on(Button.Pressed, "#can-command-cancel")
-    def _cancel_button(self) -> None:
-        self.dismiss(None)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
-class HelpScreen(ModalScreen[None]):
-    BINDINGS = [
-        Binding("escape", "close", "Fechar", show=True),
-        Binding("f1", "close", "Fechar", show=False),
-        Binding("enter", "close", "Fechar", show=False),
-    ]
-
-    HELP_TEXT = """\
-[b]Navegação principal[/b]
-  F1 Ajuda             F2 Menu             F3 Conexão/sensor
-  F4 Configurar alvo   F5 Solicitar status F6 Telemetria
-  F9 Rede CAN           Ctrl+L Comandos CAN
-  F7 FFT               F8 DTC              F9 Rede CAN FD
-  F10 Sair             F11 Compacto        F12 Snapshot
-
-[b]Atalhos operacionais[/b]
-  Ctrl+T Telemetria ON/OFF      Ctrl+F FFT do sensor selecionado
-  Ctrl+D DTC                    Ctrl+R Reconectar
-  Ctrl+P Pausar atualização     Ctrl+G Probe 00
-  Ctrl+N Focar árvore de nós          Ctrl+E Eventos
-  Ctrl+K Limpar DTC
-  Ctrl+O Reiniciar POLLING      Ctrl+W Wi-Fi ON
-  Ctrl+Y Estado segurança       Ctrl+C Parar telemetria (0x03)
-
-[b]Comandos internos[/b]
-  :status                       :node 20.01
-  :tel on 20.01                 :tel rate normal
-  :fft once 20.01 bins=64       :dtc list 20.01
-  :dtc clear 20.01 all          :acq polling
-  :config 20.01 rate=250 window=hann
-  :tel once / fast / slow       :tel period 1000
-  :wifi on / off / status       :security / :lock / :unlock <otp>
-  :can [cmd]                    :election / :canstatus
-  :connect / :disconnect / :reconnect
-
-[b]Comandos diretos da baseline[/b]
-  STATUS, GET, SET ..., APPLY, TELEMETRY ..., FFT ONCE
-  ACQ POLLING, DTC, DTC CLEAR, NET, NET WIFI ..., VERSION, PING, RESET
-  ACQ DRDY e comandos SLEEP/WAKE não fazem parte da baseline atual.
-
-No modo SENSOR_DIRECT, comandos sem ':' são enviados diretamente ao console
-ASCII do firmware. No modo GATEWAY_CAN, comandos sem ':' são enviados como
-linhas brutas ao gateway para diagnóstico.
-
-[dim]Esc, Enter ou F1 fecha esta janela.[/dim]
-"""
-
-    def compose(self) -> ComposeResult:
-        with VerticalScroll(id="help-dialog", classes="modal"):
-            yield Static("AJUDA", classes="modal-title")
-            yield Static(self.HELP_TEXT, id="help-body")
-
-    def action_close(self) -> None:
-        self.dismiss(None)
-
-
-class MainMenuScreen(ModalScreen[str | None]):
-    BINDINGS = [Binding("escape", "cancel", "Fechar", show=False)]
-
-    BASE_ITEMS = [
-        ("Conexão serial / trocar porta", "connection"),
-        ("Nós / sensores", "nodes"),
-        ("Diagnóstico", "dtc"),
-        ("Configuração do alvo", "config"),
-        ("Rede CAN / status", "network"),
-        ("Comandos da Rede CAN", "can_commands"),
-        ("Instrumentação / Probe 00", "gateway"),
-        ("Logs e exportação", "logs"),
-        ("Ajuda", "help"),
-        ("Sair", "quit"),
-    ]
-
-    def __init__(self, selected_profile: str = "") -> None:
-        super().__init__()
-        self.selected_profile = (selected_profile or "").upper()
-
-    def _items(self) -> list[tuple[str, str]]:
-        items = list(self.BASE_ITEMS)
-        if self.selected_profile == "VIBRATION":
-            insert_at = 2
-            items[insert_at:insert_at] = [
-                ("Sensor de vibração / Telemetria", "telemetry"),
-                ("Sensor de vibração / FFT", "fft"),
+        network_section = self.query_one("#sec-home-network")
+        network_section.display = state.connection_mode != ConnectionMode.SENSOR_DIRECT
+        gateway, network = state.gateway, state.network
+        bitrate = pres.MISSING
+        if gateway.arbitration_bitrate:
+            bitrate = f"{gateway.arbitration_bitrate // 1000} kbit/s"
+            if gateway.data_bitrate:
+                bitrate += f", dados {gateway.data_bitrate // 1000} kbit/s"
+        bus = gateway.can_state if gateway.can_state != "UNKNOWN" else pres.MISSING
+        bus_text = _value(bus)
+        if network.bus_off:
+            bus_text = level_text(pres.Level.CRITICAL, "Bus-off", bold=True)
+        elif network.error_passive:
+            bus_text = level_text(pres.Level.ATTENTION, "Error-passive", bold=True)
+        self.query_one("#home-network", Fields).set_fields(
+            [
+                ("Barramento", bus_text),
+                ("Taxa de bits", bitrate),
+                ("Quadros", f"{pres.fmt_int(network.frames_rx)} recebidos, {pres.fmt_int(network.frames_tx)} enviados"),
+                ("Erros", f"CRC {pres.fmt_int(network.crc_errors)}, interpretação {pres.fmt_int(network.parse_errors)}"),
             ]
-        return items
+        )
+        associated = sum(len(node.sensors) for node in state.nodes.values())
+        associated_uuids = {
+            sensor.wireless_uuid.lower()
+            for node in state.nodes.values()
+            for sensor in node.sensors.values()
+            if sensor.wireless_uuid and sensor.association_state.upper() != "UNBOUND"
+        }
+        now = time.monotonic()
+        available_uuids = {
+            candidate.wireless_uuid.lower()
+            for node in state.nodes.values()
+            for candidate in node.wireless_candidates.values()
+            if candidate.wireless_uuid.lower() not in associated_uuids
+            and (not candidate.last_seen_monotonic or now - candidate.last_seen_monotonic <= 15.0)
+        }
+        self.query_one("#home-connection", Fields).set_fields(
+            [
+                ("Estado", pres.connection_label(state.connection_state)),
+                ("Equipamento", pres.mode_label(state.connection_mode)),
+                ("Porta", state.port or pres.MISSING),
+                ("Sensores sem fio", f"{len(available_uuids)} disponíveis, {associated} associados"),
+                ("Última ação", state.last_action or pres.MISSING),
+            ]
+        )
 
-    def compose(self) -> ComposeResult:
-        with Vertical(id="menu-dialog", classes="modal"):
-            yield Static("MENU PRINCIPAL", classes="modal-title")
-            yield OptionList(*[Option(label, id=action) for label, action in self._items()], id="main-menu-list")
-
-    def on_mount(self) -> None:
-        widget = self.query_one("#main-menu-list", OptionList)
-        widget.highlighted = 0
-        widget.focus()
-
-    @on(OptionList.OptionSelected, "#main-menu-list")
-    def _selected(self, event: OptionList.OptionSelected) -> None:
-        self.dismiss(str(event.option.id))
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
+    @on(OptionList.OptionSelected, "#equipment-list")
+    @on(OptionList.OptionSelected, "#attention-list")
+    def _open(self, event: OptionList.OptionSelected) -> None:
+        option_id = str(event.option.id or "")
+        if option_id and option_id != "__empty__":
+            self.tui.open_target(option_id.split("|", 1)[0])
 
 
-class NodeNavigatorScreen(ModalScreen[str | None]):
-    """Navegação entre módulos CAN e sensores wireless associados."""
+# ---------------------------------------------------------------------------
+# Sensor
+# ---------------------------------------------------------------------------
 
-    BINDINGS = [
-        Binding("escape", "cancel", "Cancelar", show=False),
+
+class SensorScreen(BaseScreen):
+    """Tela própria de cada sensor: situação, métricas e intercorrências."""
+
+    BINDINGS = BaseScreen.BINDINGS + [
+        Binding("c", "commands", "Comandos", show=False),
+        Binding("f", "spectrum", "Espectro", show=False),
+        Binding("s", "status", "Atualizar", show=False),
+        Binding("d", "unbind", "Desassociar", show=False),
+        Binding("w", "wireless", "Sensores sem fio", show=False),
     ]
-
-    def __init__(self, state: AppState, current_logical_id: str | None = None) -> None:
-        super().__init__()
-        self.state = state
-        self.current_logical_id = current_logical_id
-
-    def _options(self) -> list[Option]:
-        options: list[Option] = []
-        if not self.state.nodes:
-            return [Option("Nenhum nó disponível", id="__empty__", disabled=True)]
-        for parent_id, node in sorted(self.state.nodes.items()):
-            node_marker = palette.STATUS_MARKERS.get(node.status.value, "[N/A]")
-            options.append(
-                Option(
-                    f"{node_marker} Node {parent_id:02d} — {node.node_type}",
-                    id=f"node:{parent_id}",
-                )
-            )
-            for child_id, sensor in sorted(node.sensors.items()):
-                quality = palette.QUALITY_MARKERS.get(sensor.quality.value, "[N/A]")
-                uuid = f"  UUID={sensor.wireless_uuid}" if sensor.wireless_uuid else ""
-                severity = sensor.highest_severity.value if sensor.highest_severity else "OK"
-                options.append(
-                    Option(
-                        f"   ↳ {quality} {sensor.logical_id}  {sensor.status.value}  "
-                        f"{sensor.sensor_mode.value}  DTC={severity}{uuid}",
-                        id=sensor.logical_id,
-                    )
-                )
-        if not any(not option.disabled for option in options):
-            options.append(Option("Nenhum sensor associado", id="__empty__", disabled=True))
-        return options
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="node-navigator-dialog", classes="modal wide-modal"):
-            yield Static("SELECIONAR NÓ / SENSOR", classes="modal-title")
-            yield Static(
-                "Use ↑/↓ e Enter. Módulos CAN e sensores wireless são alvos independentes.",
-                classes="modal-hint",
-            )
-            yield OptionList(*self._options(), id="node-navigator-list")
-            with Horizontal(classes="modal-buttons"):
-                yield Button("Selecionar", id="node-nav-select", variant="primary")
-                yield Button("Cancelar", id="node-nav-cancel")
-
-    def on_mount(self) -> None:
-        widget = self.query_one("#node-navigator-list", OptionList)
-        target_index: int | None = None
-        first_enabled: int | None = None
-        for index in range(widget.option_count):
-            option = widget.get_option_at_index(index)
-            if not option.disabled and first_enabled is None:
-                first_enabled = index
-            if option.id == self.current_logical_id:
-                target_index = index
-        widget.highlighted = target_index if target_index is not None else first_enabled
-        widget.focus()
-
-    def _selected_id(self) -> str | None:
-        widget = self.query_one("#node-navigator-list", OptionList)
-        if widget.highlighted is None:
-            return None
-        option = widget.get_option_at_index(widget.highlighted)
-        if option.disabled or option.id in {None, "__empty__"}:
-            return None
-        return str(option.id)
-
-    @on(OptionList.OptionSelected, "#node-navigator-list")
-    def _option_selected(self, event: OptionList.OptionSelected) -> None:
-        if event.option.id and not event.option.disabled:
-            self.dismiss(str(event.option.id))
-
-    @on(Button.Pressed, "#node-nav-select")
-    def _select_button(self) -> None:
-        logical_id = self._selected_id()
-        if logical_id:
-            self.dismiss(logical_id)
-        else:
-            self.notify("Selecione um sensor", severity="warning")
-
-    @on(Button.Pressed, "#node-nav-cancel")
-    def _cancel_button(self) -> None:
-        self.dismiss(None)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
-class ConfigScreen(ModalScreen[ConfigRequest | None]):
-    BINDINGS = [Binding("escape", "cancel", "Cancelar", show=False)]
-
-    def __init__(self, sensor: SensorNode) -> None:
-        super().__init__()
-        self.sensor = sensor
-
-    def compose(self) -> ComposeResult:
-        cfg = self.sensor.configuration
-        with VerticalScroll(id="config-dialog", classes="modal wide-modal"):
-            yield Static(f"CONFIGURAR {self.sensor.logical_id}", classes="modal-title")
-            yield Label("Modo")
-            yield OptionList(*[Option(v, id=v) for v in commands.DEFAULT_FSM_MODES], id="cfg-mode")
-            yield Label("Janela")
-            yield OptionList(*[Option(v, id=v) for v in commands.DEFAULT_WINDOW_TYPES], id="cfg-window")
-            yield Label("Taxa de amostragem [Hz]")
-            yield Input(value=_number(cfg.sample_rate_requested_hz), id="cfg-rate")
-            yield Label("Tamanho da janela")
-            yield Input(value=str(cfg.window_size or 512), id="cfg-size")
-            yield Label("Limiar STA/LTA")
-            yield Input(value=_number(cfg.stalta_threshold), id="cfg-stalta")
-            yield Label("Ganho/calibração")
-            yield Input(value=_number(cfg.calibration_gain), id="cfg-gain")
-            with Horizontal(classes="modal-buttons"):
-                yield Button("Aplicar", id="cfg-apply")
-                yield Button("Aplicar e verificar", id="cfg-verify", variant="primary")
-                yield Button("Cancelar", id="cfg-cancel")
-
-    def on_mount(self) -> None:
-        self._select_option("#cfg-mode", self.sensor.configuration.mode.value)
-        self._select_option("#cfg-window", self.sensor.configuration.window_type or "HANN")
-
-    def _select_option(self, selector: str, value: str) -> None:
-        widget = self.query_one(selector, OptionList)
-        for index in range(widget.option_count):
-            if widget.get_option_at_index(index).id == value:
-                widget.highlighted = index
-                return
-        widget.highlighted = 0
-
-    def _build(self, verify: bool) -> ConfigRequest | None:
-        try:
-            mode_list = self.query_one("#cfg-mode", OptionList)
-            win_list = self.query_one("#cfg-window", OptionList)
-            mode = str(mode_list.get_option_at_index(mode_list.highlighted or 0).id)
-            window = str(win_list.get_option_at_index(win_list.highlighted or 0).id)
-            return ConfigRequest(
-                mode=mode,
-                window=window,
-                rate_hz=_float_or_none(self.query_one("#cfg-rate", Input).value),
-                window_size=_int_or_none(self.query_one("#cfg-size", Input).value),
-                stalta=_float_or_none(self.query_one("#cfg-stalta", Input).value),
-                gain=_float_or_none(self.query_one("#cfg-gain", Input).value),
-                apply_and_verify=verify,
-            )
-        except ValueError as exc:
-            self.notify(str(exc), severity="error")
-            return None
-
-    @on(Button.Pressed, "#cfg-apply")
-    def _apply(self) -> None:
-        if request := self._build(False):
-            self.dismiss(request)
-
-    @on(Button.Pressed, "#cfg-verify")
-    def _verify(self) -> None:
-        if request := self._build(True):
-            self.dismiss(request)
-
-    @on(Button.Pressed, "#cfg-cancel")
-    def _cancel_button(self) -> None:
-        self.dismiss(None)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
-class FftRequestScreen(ModalScreen[FftRequest | None]):
-    BINDINGS = [Binding("escape", "cancel", "Cancelar", show=False)]
 
     def __init__(self, logical_id: str) -> None:
         super().__init__()
         self.logical_id = logical_id
+        self.parent_id = int(logical_id.split(".", 1)[0])
+        self._profile = ""
+        self._wireless_associated = False
+        self._hints_profile: str | None = None
 
-    def compose(self) -> ComposeResult:
-        with Vertical(id="fft-request-dialog", classes="modal"):
-            yield Static(f"SOLICITAR FFT — {self.logical_id}", classes="modal-title")
-            yield Label("Quantidade de bins")
-            yield OptionList(*[Option(str(v), id=str(v)) for v in commands.FFT_BIN_OPTIONS], id="fft-bins")
-            yield Label("Modo")
-            yield OptionList(
-                Option("Visualizar uma vez", id="VIEW_ONLY"),
-                Option("Salvar em arquivo", id="SAVE_TO_FILE"),
-                Option("Registrar janela", id="LOG_WINDOW"),
-                id="fft-mode",
+    def key_hints(self) -> list[tuple[str, str, str | None]]:
+        hints: list[tuple[str, str, str | None]] = [("Esc", "Voltar", "screen.back")]
+        if self._wireless_associated:
+            hints.extend(
+                [
+                    ("d", "Desassociar", "screen.unbind"),
+                    ("w", "Sensores sem fio", "screen.wireless"),
+                ]
             )
-            yield Static("64 bins é a opção padrão. 128/256 aumentam a carga do barramento.", classes="modal-hint")
-            with Horizontal(classes="modal-buttons"):
-                yield Button("Solicitar", id="fft-confirm", variant="primary")
-                yield Button("Cancelar", id="fft-cancel")
+        else:
+            hints.append(("c", "Comandos", "screen.commands"))
+            if self._profile == "VIBRATION":
+                hints.append(("f", "Espectro FFT", "screen.spectrum"))
+            hints.append(("s", "Atualizar", "screen.status"))
+        hints.extend(self.tui.global_hints(home=False, commands=False))
+        return hints
+
+    def compose_body(self) -> ComposeResult:
+        with VerticalScroll(id="sensor-body", classes="body"), Horizontal(classes="columns"):
+            with Vertical(classes="column"):
+                with section("Situação"):
+                    yield Fields(id="sensor-status")
+                with section("Métricas de vibração", id="sec-metrics"):
+                    yield Fields(id="sensor-metrics")
+                    yield Label("Tendência do RMS", classes="trend-label")
+                    yield Sparkline([], id="trend-rms", classes="trend")
+                    yield Label("Tendência do PPV", classes="trend-label")
+                    yield Sparkline([], id="trend-ppv", classes="trend")
+                with section("Dados recebidos", id="sec-raw"):
+                    yield Fields(id="sensor-raw")
+            with Vertical(classes="column"):
+                with section("Intercorrências", id="sec-incidents"):
+                    yield Paragraphs(id="sensor-incidents", empty="Nenhuma intercorrência registrada nesta sessão.")
+                    yield Fields(id="sensor-link", classes="subfields")
+                with section("Configuração aplicada", id="sec-config"):
+                    yield Fields(id="sensor-config")
+
+    def breadcrumb(self) -> tuple[Sequence[str], str]:
+        return ("Início", f"Módulo {self.parent_id:02d}", f"Sensor {self.logical_id}"), pres.profile_label(self._profile)
 
     def on_mount(self) -> None:
-        self.query_one("#fft-bins", OptionList).highlighted = 1
-        self.query_one("#fft-mode", OptionList).highlighted = 0
+        super().on_mount()
+        self.query_one("#sensor-body").focus()
 
-    @on(Button.Pressed, "#fft-confirm")
-    def _confirm(self) -> None:
-        bins_list = self.query_one("#fft-bins", OptionList)
-        mode_list = self.query_one("#fft-mode", OptionList)
-        bins = int(str(bins_list.get_option_at_index(bins_list.highlighted or 1).id))
-        mode = str(mode_list.get_option_at_index(mode_list.highlighted or 0).id)
-        self.dismiss(FftRequest(bins=bins, mode=mode))
-
-    @on(Button.Pressed, "#fft-cancel")
-    def _cancel_button(self) -> None:
-        self.dismiss(None)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-class TelemetryScreen(ModalScreen[None]):
-    """Telemetria detalhada e continuamente atualizada do sensor selecionado.
-
-    Abrir ou fechar a tela não altera o streaming do firmware. Os comandos de
-    aquisição somente são enviados por ações explícitas do operador.
-    """
-
-    BINDINGS = [
-        Binding("escape", "close", "Fechar", show=True),
-        Binding("space", "toggle_visual_pause", "Pausar gráfico", show=True),
-        Binding("o", "once", "Amostra única", show=False),
-    ]
-
-    ROWS: tuple[tuple[str, str], ...] = (
-        ("mode", "Modo FSM"),
-        ("acquisition", "Aquisição"),
-        ("axis", "Eixo"),
-        ("rate", "Taxa de amostragem"),
-        ("window", "Janela / tamanho"),
-        ("rms", "RMS"),
-        ("kurtosis", "Curtose (excesso)"),
-        ("crest", "Fator de crista"),
-        ("peak_hz", "Frequência dominante"),
-        ("peak_amp", "Amplitude dominante"),
-        ("entropy", "Entropia espectral"),
-        ("ppv", "PPV"),
-        ("stalta", "STA/LTA"),
-        ("clip", "Clipping"),
-        ("fft_valid", "FFT resumida"),
-        ("battery", "Bateria"),
-        ("dtc", "DTCs ativos"),
-        ("quality", "Qualidade"),
-        ("sequence", "Sequência / perda"),
-        ("updated", "Última atualização"),
-    )
-
-    def __init__(
-        self,
-        logical_id: str,
-        sensor_provider: Callable[[str], SensorNode | None],
-    ) -> None:
-        super().__init__()
-        self.logical_id = logical_id
-        self._sensor_provider = sensor_provider
-        self._visual_paused = False
-
-    def compose(self) -> ComposeResult:
-        sensor = self._sensor_provider(self.logical_id)
-        period = sensor.health.telemetry_period_ms if sensor else None
-        with Vertical(id="telemetry-dialog", classes="modal telemetry-modal"):
-            yield Static(f"TELEMETRIA DETALHADA — {self.logical_id}", classes="modal-title")
-            yield Static("Aguardando dados...", id="telemetry-live-status")
-            with Horizontal(id="telemetry-live-body"):
-                yield DataTable(id="telemetry-live-table", cursor_type="row", zebra_stripes=False)
-                with Vertical(id="telemetry-trends"):
-                    yield Label("TENDÊNCIA RMS", classes="section-title")
-                    yield Sparkline([], id="telemetry-rms-sparkline")
-                    yield Label("TENDÊNCIA PPV", classes="section-title")
-                    yield Sparkline([], id="telemetry-ppv-sparkline")
-                    yield Static("Espaço: pausar apenas a visualização", classes="modal-hint")
-            with Horizontal(id="telemetry-controls"):
-                yield Button("Iniciar", id="tel-start", variant="primary")
-                yield Button("Parar", id="tel-stop")
-                yield Button("Amostra única", id="tel-once")
-                yield Button("Rápido", id="tel-fast")
-                yield Button("Lento", id="tel-slow")
-            with Horizontal(id="telemetry-period-controls"):
-                yield Label("Período [ms]")
-                yield Input(value=str(period or 1000), id="tel-period-input")
-                yield Button("Aplicar período", id="tel-period-apply")
-                yield Button("Fechar", id="tel-close")
-
-    def on_mount(self) -> None:
-        table = self.query_one("#telemetry-live-table", DataTable)
-        table.add_column("Métrica", key="metric", width=27)
-        table.add_column("Valor", key="value", width=28)
-        for key, label in self.ROWS:
-            table.add_row(label, "N/A", key=key)
-        self.set_interval(0.25, self._refresh_live)
-        self._refresh_live()
-
-    def _refresh_live(self) -> None:
-        if self._visual_paused:
-            return
-        sensor = self._sensor_provider(self.logical_id)
+    def update_body(self, state: AppState) -> None:
+        node = state.nodes.get(self.parent_id)
+        sensor = node.sensors.get(int(self.logical_id.split(".", 1)[1])) if node else None
         if sensor is None:
-            self.query_one("#telemetry-live-status", Static).update("Sensor não encontrado")
-            return
-        sample = sensor.latest_telemetry
-        stream = "LIGADA" if sensor.health.telemetry_enabled else "DESLIGADA"
-        acq_ok = "OK" if sensor.acquisition_mode.value in {"POLLING", "SIM", "IDLE"} else "EXPERIMENTAL"
-        drdy = "desativado" if sensor.acquisition_mode.value == "POLLING" else "experimental/legado"
-        self.query_one("#telemetry-live-status", Static).update(
-            f"Estado: [b]{sensor.status.value}[/b]  •  Stream: [b]{stream}[/b]  •  "
-            f"Aquisição: [b]{sensor.acquisition_mode.value}[/b] ({acq_ok})  •  DRDY: {drdy}"
-        )
-        if sample is None:
-            self._update_values(
-                {
-                    "mode": sensor.sensor_mode.value,
-                    "acquisition": sensor.acquisition_mode.value,
-                    "dtc": str(sensor.active_dtc_count),
-                }
+            self.query_one("#sensor-status", Fields).set_fields(
+                [("Condição", level_text(pres.Level.NO_DATA, "Sensor não está mais presente na rede"))]
             )
             return
+        profile = (sensor.profile_id or "").upper()
+        wireless_associated = sensor.association_state.upper() != "UNBOUND"
+        if profile != self._profile or wireless_associated != self._wireless_associated:
+            self._profile = profile
+            self._wireless_associated = wireless_associated
+            self.query_one("#key-bar", KeyBar).set_hints(self.key_hints())
+        is_vibration = profile == "VIBRATION"
+        self.query_one("#sec-metrics").display = is_vibration
+        self.query_one("#sec-raw").display = not is_vibration
 
-        age = max(0.0, time.time() - sample.received_wall_time)
-        battery = "N/A"
-        if sample.battery.valid:
-            parts: list[str] = []
+        self.query_one("#sensor-status", Fields).set_fields(self._status_fields(sensor))
+        if is_vibration:
+            self._update_vibration(sensor)
+        else:
+            raw = sensor.latest_telemetry.raw if sensor.latest_telemetry else {}
+            fields = [(str(key).title(), str(value)) for key, value in sorted(raw.items())]
+            self.query_one("#sensor-raw", Fields).set_fields(
+                fields or [("Perfil", f"{pres.profile_label(profile)}: sem tela especializada; nenhum dado recebido ainda")]
+            )
+
+        self.query_one("#sensor-incidents", Paragraphs).set_items(incident_items(sensor.incidents, sensor.active_dtcs))
+        if wireless_associated and state.connection_mode == ConnectionMode.GATEWAY_CAN:
+            self.query_one("#sensor-link", Fields).set_fields(
+                [
+                    ("Vínculo wireless", sensor.association_state.upper()),
+                    ("Módulo responsável", f"Módulo {sensor.parent_node_id:02d}"),
+                    ("RSSI do vínculo", f"{sensor.association_rssi_dbm} dBm" if sensor.association_rssi_dbm is not None else pres.MISSING),
+                    ("Plano de dados", "Ainda não disponível via módulo CAN"),
+                ]
+            )
+            self.query_one("#sensor-config", Fields).set_fields(
+                [
+                    ("Configuração remota", "Indisponível enquanto o plano de dados wireless não estiver implementado"),
+                    ("Gerenciar vínculo", "Use F7 ou w para associar/desassociar sensores"),
+                ]
+            )
+        else:
+            total = sensor.rx_count + sensor.lost_count
+            self.query_one("#sensor-link", Fields).set_fields(
+                [
+                    ("Recebidas", pres.fmt_int(sensor.rx_count)),
+                    ("Perdidas", f"{pres.fmt_int(sensor.lost_count)} ({pres.fmt_number(sensor.loss_percent, 2, '%')})" if total else pres.MISSING),
+                    ("Duplicadas", pres.fmt_int(sensor.duplicate_count)),
+                    ("Fora de ordem", pres.fmt_int(sensor.out_of_order_count)),
+                ]
+            )
+            cfg = sensor.configuration
+            self.query_one("#sensor-config", Fields).set_fields(
+                [
+                    ("Modo", pres.sensor_mode_label(cfg.mode.value)),
+                    ("Taxa solicitada", pres.fmt_number(cfg.sample_rate_requested_hz, 1, "Hz")),
+                    ("Taxa efetiva", pres.fmt_number(cfg.sample_rate_effective_hz, 1, "Hz")),
+                    ("Janela", f"{(cfg.window_type or pres.MISSING).title()}, {cfg.window_size or pres.MISSING} amostras"),
+                    ("Limiar STA/LTA", pres.fmt_number(cfg.stalta_threshold, 2)),
+                    ("Ganho", pres.fmt_number(cfg.calibration_gain, 3)),
+                    ("Última alteração", _transaction_label(cfg.transaction_state)),
+                ]
+            )
+
+    @staticmethod
+    def _status_fields(sensor: SensorNode) -> list[tuple[str, Text | str]]:
+        sample = sensor.latest_telemetry
+        health = sensor.health
+        if health.telemetry_enabled:
+            period = f", a cada {health.telemetry_period_ms} ms" if health.telemetry_period_ms else ""
+            telemetry = f"Ligada{period}"
+        else:
+            telemetry = "Desligada"
+        battery = "Não instrumentada"
+        if sample is not None and sample.battery.valid:
+            parts = []
             if sample.battery.percentage is not None:
                 parts.append(f"{sample.battery.percentage:.0f}%")
             if sample.battery.voltage_v is not None:
-                parts.append(f"{sample.battery.voltage_v:.3f} V")
-            battery = " / ".join(parts) or "N/A"
-        rate = sample.sample_rate_effective_hz or sample.sample_rate_requested_hz
-        values = {
-            "mode": sample.mode.value,
-            "acquisition": sample.acquisition_mode.value,
-            "axis": sample.axis or "N/A",
-            "rate": _format_value(rate, 2, "Hz"),
-            "window": f"{sample.window_type or 'N/A'} / {sample.window_size or 'N/A'}",
-            "rms": _format_value(sample.rms, 5, sample.rms_unit),
-            "kurtosis": _format_value(sample.kurtosis, 5),
-            "crest": _format_value(sample.crest_factor, 4),
-            "peak_hz": _fft_value(sample.peak_frequency_hz, sample.fft_valid, 3, "Hz"),
-            "peak_amp": _fft_value(sample.peak_amplitude, sample.fft_valid, 6),
-            "entropy": _fft_value(sample.spectral_entropy, sample.fft_valid, 4),
-            "ppv": _format_value(sample.ppv_mm_s, 4, "mm/s"),
-            "stalta": _bool_value(sample.stalta_triggered),
-            "clip": "SATURADO" if sample.clipping is True else ("NÃO" if sample.clipping is False else "N/A"),
-            "fft_valid": _fft_valid_value(sample.fft_valid),
-            "battery": battery,
-            "dtc": str(sample.dtc_count if sample.dtc_count is not None else sensor.active_dtc_count),
-            "quality": f"{palette.QUALITY_MARKERS.get(sample.quality.value, '[N/A]')} {sample.quality.value}",
-            "sequence": f"{sample.sequence if sample.sequence is not None else 'N/A'} / {sensor.loss_percent:.2f}%",
-            "updated": f"há {age:.1f} s",
-        }
-        self._update_values(values)
-        history = list(sensor.telemetry_history)[-120:]
-        self.query_one("#telemetry-rms-sparkline", Sparkline).data = [
-            item.rms for item in history if item.rms is not None
-        ]
-        self.query_one("#telemetry-ppv-sparkline", Sparkline).data = [
-            item.ppv_mm_s for item in history if item.ppv_mm_s is not None
+                parts.append(pres.fmt_number(sample.battery.voltage_v, 2, "V"))
+            battery = ", ".join(parts) or "Instrumentada"
+        acquisition = sensor.acquisition_mode.value
+        if acquisition == "POLLING":
+            acquisition = "POLLING (modo oficial)"
+        elif acquisition == "DRDY":
+            acquisition = "DRDY (experimental)"
+        elif acquisition == "UNKNOWN":
+            acquisition = pres.MISSING
+        if sensor.association_state.upper() != "UNBOUND" and sample is None:
+            return [
+                ("Condição", _condition_value(pres.sensor_condition(sensor))),
+                ("Vínculo wireless", f"{sensor.association_state.upper()} via Módulo {sensor.parent_node_id:02d}"),
+                ("RSSI do vínculo", f"{sensor.association_rssi_dbm} dBm" if sensor.association_rssi_dbm is not None else pres.MISSING),
+                ("Telemetria", "Sem canal de dados via módulo nesta versão"),
+                ("Configuração", "Sem canal de comandos via módulo nesta versão"),
+                ("Perfil", pres.profile_label(sensor.profile_id)),
+                ("Identificador", sensor.wireless_uuid or pres.MISSING),
+            ]
+        return [
+            ("Condição", _condition_value(pres.sensor_condition(sensor))),
+            ("Comunicação", f"{pres.status_label(sensor.status)}, última leitura {pres.fmt_age(pres.sensor_age(sensor))}"),
+            ("Modo de operação", pres.sensor_mode_label(sensor.sensor_mode.value)),
+            ("Aquisição", acquisition),
+            ("Telemetria", telemetry),
+            ("Qualidade do dado", pres.quality_label(sensor.quality)),
+            ("Bateria", battery),
+            ("Identificador", sensor.wireless_uuid or pres.MISSING),
         ]
 
-    def _update_values(self, values: dict[str, object]) -> None:
-        table = self.query_one("#telemetry-live-table", DataTable)
-        for key, _ in self.ROWS:
-            table.update_cell(key, "value", str(values.get(key, "N/A")))
-
-    def _request(self, action: str, value: int | None = None) -> None:
-        self.post_message(TelemetryCommandRequested(self.logical_id, action, value))
-
-    def action_close(self) -> None:
-        self.dismiss(None)
-
-    def action_toggle_visual_pause(self) -> None:
-        self._visual_paused = not self._visual_paused
-        label = (
-            "VISUALIZAÇÃO PAUSADA — a recepção e o log continuam"
-            if self._visual_paused
-            else "Visualização retomada"
-        )
-        self.query_one("#telemetry-live-status", Static).update(label)
-        if not self._visual_paused:
-            self._refresh_live()
-
-    def action_once(self) -> None:
-        self._request("ONCE")
-
-    @on(Button.Pressed, "#tel-start")
-    def _start(self) -> None:
-        self._request("ON")
-
-    @on(Button.Pressed, "#tel-stop")
-    def _stop(self) -> None:
-        self._request("OFF")
-
-    @on(Button.Pressed, "#tel-once")
-    def _once(self) -> None:
-        self._request("ONCE")
-
-    @on(Button.Pressed, "#tel-fast")
-    def _fast(self) -> None:
-        self._request("FAST")
-
-    @on(Button.Pressed, "#tel-slow")
-    def _slow(self) -> None:
-        self._request("SLOW")
-
-    @on(Button.Pressed, "#tel-period-apply")
-    def _period(self) -> None:
-        try:
-            value = int(self.query_one("#tel-period-input", Input).value.strip())
-            if value <= 0:
-                raise ValueError
-        except ValueError:
-            self.notify("Período inválido", severity="error")
+    def _update_vibration(self, sensor: SensorNode) -> None:
+        sample = sensor.latest_telemetry
+        if sample is None:
+            self.query_one("#sensor-metrics", Fields).set_fields([("Leituras", "Sem telemetria recebida. Para sensores wireless associados, o plano de dados via módulo CAN ainda não está implementado.")])
             return
-        self._request("PERIOD", value)
+        fft_off = sample.fft_valid is False
 
-    @on(Button.Pressed, "#tel-close")
-    def _close_button(self) -> None:
-        self.action_close()
+        def fft_metric(value: object, decimals: int, unit: str = "") -> str:
+            return "Não calculada neste modo" if fft_off else pres.fmt_number(value, decimals, unit)
+
+        clip = _value("Não")
+        if sample.clipping is True:
+            clip = level_text(pres.Level.ATTENTION, "Sim, sinal saturado", bold=True)
+        elif sample.clipping is None:
+            clip = _value(pres.MISSING)
+        trigger = pres.MISSING if sample.stalta_triggered is None else ("Disparado" if sample.stalta_triggered else "Em repouso")
+        self.query_one("#sensor-metrics", Fields).set_fields(
+            [
+                ("RMS", _value(pres.fmt_number(sample.rms, 4, sample.rms_unit), bold=True)),
+                ("PPV", _value(pres.fmt_number(sample.ppv_mm_s, 3, "mm/s"), bold=True)),
+                ("Frequência dominante", fft_metric(sample.peak_frequency_hz, 2, "Hz")),
+                ("Amplitude dominante", fft_metric(sample.peak_amplitude, 5)),
+                ("Curtose (excesso)", pres.fmt_number(sample.kurtosis, 3)),
+                ("Fator de crista", pres.fmt_number(sample.crest_factor, 3)),
+                ("Entropia espectral", fft_metric(sample.spectral_entropy, 3)),
+                ("Gatilho STA/LTA", trigger),
+                ("Saturação", clip),
+                ("Eixo", sample.axis or pres.MISSING),
+            ]
+        )
+        history = list(sensor.telemetry_history)[-120:]
+        self.query_one("#trend-rms", Sparkline).data = [item.rms for item in history if item.rms is not None]
+        self.query_one("#trend-ppv", Sparkline).data = [item.ppv_mm_s for item in history if item.ppv_mm_s is not None]
+
+    def action_commands(self) -> None:
+        self.tui.open_commands(f"sensor:{self.logical_id}")
+
+    def action_spectrum(self) -> None:
+        if self._profile == "VIBRATION":
+            self.tui.start_action("sensor.fft", f"sensor:{self.logical_id}")
+
+    def action_status(self) -> None:
+        if not self._wireless_associated:
+            self.tui.start_action("sensor.status", f"sensor:{self.logical_id}")
+
+    def action_unbind(self) -> None:
+        if self._wireless_associated:
+            self.tui.request_wireless_unbind(self.logical_id)
+
+    def action_wireless(self) -> None:
+        self.tui.action_show_wireless()
 
 
-class FftViewScreen(ModalScreen[None]):
-    BINDINGS = [Binding("escape", "close", "Fechar", show=False), Binding("enter", "close", "Fechar", show=False)]
+def _transaction_label(value: str) -> str:
+    return {
+        "IDLE": "Nenhuma nesta sessão",
+        "SENT": "Enviada, aguardando o sensor",
+        "STAGED": "Recebida pelo sensor, aguardando aplicação",
+        "QUEUED": "Na fila do sensor",
+        "APPLIED": "Aplicada pelo sensor",
+        "VERIFIED": "Aplicada e verificada",
+        "FAILED": "Recusada pelo sensor",
+        "REJECTED": "Recusada pelo sensor",
+    }.get((value or "IDLE").upper(), value)
 
-    def __init__(
-        self,
-        logical_id: str,
-        sensor_provider: Callable[[str], SensorNode | None],
-        *,
-        requested_at: float | None = None,
-    ) -> None:
+
+# ---------------------------------------------------------------------------
+# Módulo CAN
+# ---------------------------------------------------------------------------
+
+
+class NodeScreen(BaseScreen):
+    """Tela própria de cada módulo CAN físico."""
+
+    BINDINGS = BaseScreen.BINDINGS + [
+        Binding("c", "commands", "Comandos", show=False),
+        Binding("s", "status", "Atualizar", show=False),
+        Binding("w", "wireless", "Sensores sem fio", show=False),
+    ]
+    SCREEN_HINTS = (
+        ("c", "Comandos", "screen.commands"),
+        ("s", "Atualizar", "screen.status"),
+        ("w", "Sensores sem fio", "screen.wireless"),
+    )
+
+    def __init__(self, node_id: int) -> None:
         super().__init__()
-        self.logical_id = logical_id
-        self._sensor_provider = sensor_provider
-        self.requested_at = requested_at or 0.0
+        self.node_id = node_id
+        self._title = f"Módulo {node_id:02d}"
 
-    def compose(self) -> ComposeResult:
-        with VerticalScroll(id="fft-view-dialog", classes="modal extra-wide-modal"):
-            yield Static(f"ESPECTRO FFT — {self.logical_id}", classes="modal-title")
-            yield Static("Aguardando resposta FFT...", id="fft-summary")
-            yield Static("", id="fft-ascii")
-            yield Static("", id="fft-peaks")
-            yield Static("Esc ou Enter: fechar", classes="modal-hint")
+    def key_hints(self) -> list[tuple[str, str, str | None]]:
+        hints: list[tuple[str, str, str | None]] = [("Esc", "Voltar", "screen.back"), *self.SCREEN_HINTS]
+        hints.extend(self.tui.global_hints(home=False, commands=False))
+        return hints
+
+    def compose_body(self) -> ComposeResult:
+        with VerticalScroll(id="node-body", classes="body"), Horizontal(classes="columns"):
+            with Vertical(classes="column"):
+                with section("Situação"):
+                    yield Fields(id="node-status")
+                with section("Sensor local", id="sec-local"):
+                    yield Fields(id="node-local")
+            with Vertical(classes="column"):
+                with section("Sensores sem fio associados"):
+                    yield StableOptionList(id="node-sensors", empty="Nenhum sensor sem fio associado a este módulo.")
+                with section("Descoberta sem fio", id="sec-discovery"):
+                    yield Fields(id="node-discovery")
+                    yield Paragraphs(id="node-candidates", empty="Nenhum sensor anunciando por perto.")
+                with section("Intercorrências"):
+                    yield Paragraphs(id="node-incidents", empty="Nenhuma intercorrência registrada nesta sessão.")
+
+    def breadcrumb(self) -> tuple[Sequence[str], str]:
+        return ("Início", self._title), ""
 
     def on_mount(self) -> None:
-        self.set_interval(0.25, self._refresh_spectrum)
-        self._refresh_spectrum()
+        super().on_mount()
+        self.query_one("#node-body").focus()
 
-    def _refresh_spectrum(self) -> None:
-        sensor = self._sensor_provider(self.logical_id)
-        summary = self.query_one("#fft-summary", Static)
+    def update_body(self, state: AppState) -> None:
+        node = state.nodes.get(self.node_id)
+        if node is None:
+            self.query_one("#node-status", Fields).set_fields(
+                [("Condição", level_text(pres.Level.NO_DATA, "Módulo não está mais presente na rede"))]
+            )
+            return
+        self._title = node_title(node)
+        uptime = pres.MISSING
+        if node.uptime_ms:
+            uptime = _duration(node.uptime_ms / 1000)
+        caps = ", ".join(pres.capability_label(cap) for cap in sorted(node.capabilities)) or pres.MISSING
+        self.query_one("#node-status", Fields).set_fields(
+            [
+                ("Condição", _condition_value(pres.node_condition(node))),
+                ("Comunicação", f"{pres.status_label(node.status)}, último contato {pres.fmt_age(pres.node_age(node))}"),
+                ("Papel na rede", pres.role_label(node.role)),
+                ("Estado CAN", node.can_state if node.can_state != "UNKNOWN" else pres.MISSING),
+                ("Capacidades", caps),
+                ("Firmware", node.firmware_version or pres.MISSING),
+                ("Protocolo", node.protocol_version or pres.MISSING),
+                ("Tempo ligado", uptime),
+                ("Quadros", f"{pres.fmt_int(node.rx_count)} recebidos, {pres.fmt_int(node.tx_count)} enviados, {pres.fmt_int(node.error_count)} erros"),
+            ]
+        )
+        has_local = node.local_sensor_profile not in {"", "NONE"} or node.local_sensor_value is not None
+        self.query_one("#sec-local").display = has_local
+        if has_local:
+            local_age = None
+            if node.local_sensor_last_seen_monotonic:
+                local_age = time.monotonic() - node.local_sensor_last_seen_monotonic
+            self.query_one("#node-local", Fields).set_fields(
+                [
+                    ("Perfil", pres.profile_label(node.local_sensor_profile)),
+                    ("Último valor", f"0x{node.local_sensor_value:02X}" if node.local_sensor_value is not None else pres.MISSING),
+                    ("Publicação", pres.fmt_bool(node.local_sensor_enabled, "Ativa", "Desativada")),
+                    ("Rodada", str(node.local_sensor_last_round) if node.local_sensor_last_round is not None else pres.MISSING),
+                    ("Atualizado", pres.fmt_age(local_age)),
+                ]
+            )
+        sensor_list = self.query_one("#node-sensors", StableOptionList)
+        width = sensor_list.prompt_width
+        sensor_list.set_items(
+            [(f"sensor:{sensor.logical_id}", sensor_prompt(sensor, width, indent=0)) for _cid, sensor in sorted(node.sensors.items())]
+        )
+        self.query_one("#node-discovery", Fields).set_fields(
+            [
+                ("Varredura BLE", pres.discovery_label(node.wireless_discovery_state)),
+                ("Ponto de acesso Wi-Fi", pres.discovery_label(node.wireless_ap_state)),
+            ]
+        )
+        candidates = []
+        for candidate in sorted(node.wireless_candidates.values(), key=lambda item: item.rssi_dbm, reverse=True):
+            line = Text(candidate.wireless_uuid, style=f"bold {palette.TEXT_PRIMARY}")
+            line.append(
+                f"  {pres.profile_label(candidate.profile_id)}, sinal {candidate.rssi_dbm} dBm ({_rssi_label(candidate.rssi_dbm)})",
+                style=palette.TEXT_SECONDARY,
+            )
+            candidates.append(line)
+        self.query_one("#node-candidates", Paragraphs).set_items(candidates)
+        self.query_one("#node-incidents", Paragraphs).set_items(incident_items(node.incidents, node.active_dtcs))
+
+    @on(OptionList.OptionSelected, "#node-sensors")
+    def _open_sensor(self, event: OptionList.OptionSelected) -> None:
+        option_id = str(event.option.id or "")
+        if option_id.startswith("sensor:"):
+            self.tui.open_target(option_id)
+
+    def action_commands(self) -> None:
+        self.tui.open_commands(f"node:{self.node_id:02d}")
+
+    def action_status(self) -> None:
+        self.tui.start_action("node.status", f"node:{self.node_id:02d}")
+
+    def action_wireless(self) -> None:
+        self.tui.action_show_wireless()
+
+
+def _rssi_label(rssi: int) -> str:
+    if rssi >= -60:
+        return "bom"
+    if rssi >= -75:
+        return "regular"
+    return "fraco"
+
+
+def _duration(seconds: float) -> str:
+    seconds = int(seconds)
+    days, rest = divmod(seconds, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes, secs = divmod(rest, 60)
+    if days:
+        return f"{days} d {hours} h"
+    if hours:
+        return f"{hours} h {minutes} min"
+    if minutes:
+        return f"{minutes} min {secs} s"
+    return f"{secs} s"
+
+
+# ---------------------------------------------------------------------------
+# Comandos
+# ---------------------------------------------------------------------------
+
+
+class CommandScreen(BaseScreen):
+    """Único lugar para enviar comandos: escolha o alvo e a ação."""
+
+    BINDINGS = BaseScreen.BINDINGS + [
+        Binding("a", "toggle_manual", "Comando manual", show=False),
+        Binding("t", "focus_target", "Alvo", show=False),
+    ]
+    SCREEN_HINTS = (("Enter", "Executar", None), ("t", "Trocar alvo", "screen.focus_target"), ("a", "Comando manual", "screen.toggle_manual"))
+
+    def __init__(self, target: str | None = None) -> None:
+        super().__init__()
+        self.target = target or ""
+        self._target_options: tuple[tuple[str, str], ...] = ()
+        self._actions_key: tuple = ()
+
+    def key_hints(self) -> list[tuple[str, str, str | None]]:
+        hints: list[tuple[str, str, str | None]] = [("Esc", "Voltar", "screen.back"), *self.SCREEN_HINTS]
+        hints.extend(self.tui.global_hints(home=False, commands=False))
+        return hints
+
+    def compose_body(self) -> ComposeResult:
+        with VerticalScroll(id="command-body", classes="body"):
+            with Horizontal(classes="columns"):
+                with Vertical(classes="column column-left column-main"):
+                    with section("Ações", id="sec-actions", classes="grow"):
+                        yield FlowLine(gap=3, id="cmd-target")
+                        yield StableOptionList(id="cmd-actions", empty="Nenhuma ação disponível para este alvo.")
+                with Vertical(classes="column column-side"):
+                    with section("O que esta ação faz", id="sec-details"):
+                        yield Paragraphs(id="cmd-details", empty="Selecione uma ação para ver os detalhes.")
+                        yield Fields(id="cmd-result", classes="subfields")
+            with section("Comando manual (avançado)", id="sec-manual"):
+                yield Static(
+                    "Texto enviado sem alteração ao equipamento conectado. Comece com : para comandos "
+                    "internos da TUI, como :tel on ou :node 04.",
+                    classes="hint",
+                )
+                yield Input(placeholder="ex.: STATUS, 22 20 FF 00 ou :tel on", id="cmd-manual")
+
+    def breadcrumb(self) -> tuple[Sequence[str], str]:
+        return ("Início", "Comandos"), ""
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        self.query_one("#sec-manual").display = False
+        self.query_one("#cmd-actions", StableOptionList).focus()
+
+    def _targets(self, state: AppState) -> list[tuple[str, str]]:
+        targets: list[tuple[str, str]] = []
+        if state.connection_mode != ConnectionMode.SENSOR_DIRECT:
+            targets.append(("Rede CAN (todos os módulos)", "network"))
+        for node_id, node in sorted(state.nodes.items()):
+            if node.node_type != "DIRECT_SENSOR_HOST":
+                targets.append((f"{node_title(node)} ({pres.role_label(node.role)})", f"node:{node_id:02d}"))
+            for _cid, sensor in sorted(node.sensors.items()):
+                targets.append((f"Sensor {sensor.logical_id} ({pres.profile_label(sensor.profile_id)})", f"sensor:{sensor.logical_id}"))
+        if not targets:
+            targets.append(("Rede CAN (todos os módulos)", "network"))
+        return targets
+
+    def update_body(self, state: AppState) -> None:
+        targets = tuple(self._targets(state))
+        self._target_options = targets
+        values = [value for _label, value in targets]
+        if self.target not in values:
+            self.target = values[0]
+        label = dict((value, text) for text, value in targets).get(self.target, self.target)
+        target_line = Text("Alvo: ", style=palette.TEXT_MUTED)
+        target_line.append(label, style=f"bold {palette.TEXT_PRIMARY}")
+        change = Text("t", style=f"bold {palette.ACCENT_FOCUS}")
+        change.append(" trocar alvo", style=palette.TEXT_SECONDARY)
+        self.query_one("#cmd-target", FlowLine).set_segments([target_line, change], [None, "screen.focus_target"])
+        self._update_actions(state)
+        self.query_one("#cmd-result", Fields).set_fields([("Último envio", state.last_action or "Nenhum nesta sessão")])
+
+    def _sensor_for(self, state: AppState) -> SensorNode | None:
+        if not self.target.startswith("sensor:"):
+            return None
+        logical = self.target.split(":", 1)[1]
+        parent, child = (int(part) for part in logical.split("."))
+        node = state.nodes.get(parent)
+        return node.sensors.get(child) if node else None
+
+    def _update_actions(self, state: AppState) -> None:
+        scope = self.target.split(":", 1)[0]
+        profile = ""
+        sensor = self._sensor_for(state)
+        if sensor is not None:
+            profile = sensor.profile_id
+        mode = state.connection_mode.value
+        wireless_without_data_plane = bool(
+            sensor is not None
+            and sensor.association_state.upper() != "UNBOUND"
+            and state.connection_mode == ConnectionMode.GATEWAY_CAN
+        )
+        actions = [] if wireless_without_data_plane else actions_for(scope, profile=profile, mode=mode)
+        key = (self.target, profile, mode, wireless_without_data_plane, tuple(action.key for action in actions))
+        if key == self._actions_key:
+            return
+        self._actions_key = key
+        items: list[tuple[str, Text]] = []
+        for group in GROUP_ORDER:
+            group_actions = [action for action in actions if action.group == group]
+            if not group_actions:
+                continue
+            items.append((f"group:{group}", Text(group, style=f"bold {palette.TEXT_MUTED}")))
+            for action in group_actions:
+                prompt = Text("  ")
+                prompt.append(action.title, style=palette.TEXT_PRIMARY)
+                if action.confirm:
+                    prompt.append("  pede confirmação", style=palette.TEXT_MUTED)
+                items.append((action.key, prompt))
+        option_list = self.query_one("#cmd-actions", StableOptionList)
+        option_list.set_items(items)
+        if wireless_without_data_plane:
+            self.query_one("#cmd-details", Paragraphs).set_items(
+                [
+                    Text("Este sensor possui vínculo lógico wireless, mas ainda não existe plano de dados Pico W ↔ módulo CAN.", style=palette.TEXT_PRIMARY),
+                    Text("Telemetria, FFT, configuração e comandos do sensor não são oferecidos para evitar ações sem efeito.", style=palette.TEXT_SECONDARY),
+                    Text("Use F7 ou w para gerenciar associação e desassociação.", style=palette.ACCENT_FOCUS),
+                ],
+                indent=0,
+            )
+        else:
+            self._show_details(option_list.highlighted_id)
+
+    def _show_details(self, action_key: str | None) -> None:
+        details = self.query_one("#cmd-details", Paragraphs)
+        action = ACTIONS_BY_KEY.get(action_key or "")
+        if action is None:
+            details.set_items([])
+            return
+        lines = [Text(action.description, style=palette.TEXT_PRIMARY)]
+        if action.scope in {"network", "node"} and action.key != "network.probe_status":
+            node_id = int(self.target.split(":", 1)[1]) if self.target.startswith("node:") else None
+            try:
+                raw = can_command(action.key, node_id, action.parameter.default if action.parameter else None)
+                suffix = ", conforme o valor escolhido" if action.parameter else ""
+                lines.append(Text(f"Envia {raw}{suffix}", style=palette.TEXT_MUTED))
+            except ValueError:
+                pass
+        notes = []
+        if action.protected:
+            notes.append(f"exige autorização do operador (segurança {self.tui.security_label()})")
+        if action.confirm:
+            notes.append("pede confirmação antes de enviar")
+        if notes:
+            lines.append(Text("Esta ação " + " e ".join(notes) + ".", style=palette.TEXT_MUTED))
+        details.set_items(lines, indent=0)
+
+    def set_target(self, target: str) -> None:
+        if target != self.target:
+            self.target = target
+            self._actions_key = ()
+            self.tui.refresh_now()
+
+    @on(OptionList.OptionHighlighted, "#cmd-actions")
+    def _highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        self._show_details(str(event.option.id or ""))
+
+    @on(OptionList.OptionSelected, "#cmd-actions")
+    def _selected(self, event: OptionList.OptionSelected) -> None:
+        action_key = str(event.option.id or "")
+        if action_key in ACTIONS_BY_KEY:
+            self.tui.start_action(action_key, self.target)
+
+    @on(Input.Submitted, "#cmd-manual")
+    def _manual(self, event: Input.Submitted) -> None:
+        text = event.value.strip()
+        event.input.value = ""
+        if text:
+            self.tui.submit_manual_command(text)
+
+    def action_toggle_manual(self) -> None:
+        manual = self.query_one("#sec-manual")
+        manual.display = not manual.display
+        if manual.display:
+            self.query_one("#cmd-manual", Input).focus()
+        else:
+            self.query_one("#cmd-actions", StableOptionList).focus()
+
+    def action_focus_target(self) -> None:
+        def chosen(value: str | None) -> None:
+            if value:
+                self.set_target(value)
+            self.query_one("#cmd-actions", StableOptionList).focus()
+
+        self.app.push_screen(TargetScreen(list(self._target_options), self.target), chosen)
+
+    def action_back(self) -> None:
+        manual = self.query_one("#sec-manual")
+        if manual.display and self.focused is self.query_one("#cmd-manual", Input):
+            self.action_toggle_manual()
+            return
+        super().action_back()
+
+
+# ---------------------------------------------------------------------------
+# Sensores sem fio
+# ---------------------------------------------------------------------------
+
+
+class WirelessScreen(BaseScreen):
+    """Gerencia descoberta, associação e remoção de vínculos wireless."""
+
+    BINDINGS = BaseScreen.BINDINGS + [
+        Binding("a", "associate", "Associar", show=False),
+        Binding("d", "unbind", "Desassociar", show=False),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._state: AppState | None = None
+        self._available: dict[str, list[tuple[int, object]]] = {}
+        self._associated: dict[str, SensorNode] = {}
+
+    def key_hints(self) -> list[tuple[str, str, str | None]]:
+        hints = [
+            ("Esc", "Voltar", "screen.back"),
+            ("Enter/a", "Associar disponível", "screen.associate"),
+            ("d", "Desassociar vínculo", "screen.unbind"),
+        ]
+        hints.extend(self.tui.global_hints(home=False, commands=False))
+        return hints
+
+    def compose_body(self) -> ComposeResult:
+        with VerticalScroll(id="wireless-body", classes="body"):
+            yield Static(
+                "A descoberta BLE é contínua. Associar define qual módulo CAN será responsável pelo sensor; "
+                "desassociar remove apenas esse vínculo lógico.",
+                classes="hint",
+            )
+            with Horizontal(classes="columns"):
+                with Vertical(classes="column column-left column-main"):
+                    with section("Disponíveis", id="sec-wireless-available", classes="grow"):
+                        yield StableOptionList(
+                            id="wireless-available",
+                            empty="Nenhum sensor sem fio disponível.\nObservações dos últimos 15 s.",
+                        )
+                with Vertical(classes="column column-side"):
+                    with section("Associados", id="sec-wireless-associated", classes="grow"):
+                        yield StableOptionList(id="wireless-associated", empty="Nenhum sensor sem fio associado.")
+            with section("Detalhes", id="sec-wireless-details"):
+                yield Paragraphs(id="wireless-details", empty="Realce um sensor para ver detalhes e recepção por módulo.")
+
+    def breadcrumb(self) -> tuple[Sequence[str], str]:
+        return ("Início", "Sensores sem fio"), "descoberta e vínculos"
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        self.query_one("#wireless-available", StableOptionList).focus()
+
+    @staticmethod
+    def _inventory(state: AppState) -> tuple[dict[str, list[tuple[int, object]]], dict[str, SensorNode]]:
+        associated: dict[str, SensorNode] = {}
+        for node in state.nodes.values():
+            for sensor in node.sensors.values():
+                if sensor.wireless_uuid and sensor.association_state.upper() != "UNBOUND":
+                    associated[sensor.wireless_uuid.lower()] = sensor
+        now = time.monotonic()
+        available: dict[str, list[tuple[int, object]]] = {}
+        for node_id, node in state.nodes.items():
+            for candidate in node.wireless_candidates.values():
+                key = candidate.wireless_uuid.lower()
+                if key in associated:
+                    continue
+                if candidate.last_seen_monotonic and now - candidate.last_seen_monotonic > 15.0:
+                    continue
+                available.setdefault(key, []).append((node_id, candidate))
+        for observations in available.values():
+            observations.sort(key=lambda item: item[1].rssi_dbm, reverse=True)
+        return available, associated
+
+    def update_body(self, state: AppState) -> None:
+        self._state = state
+        self._available, self._associated = self._inventory(state)
+        available_list = self.query_one("#wireless-available", StableOptionList)
+        available_items: list[tuple[str, Text]] = []
+        for key, observations in sorted(self._available.items(), key=lambda item: item[1][0][1].rssi_dbm, reverse=True):
+            best_node, best = observations[0]
+            # A lista wireless não depende da largura transitória da OptionList.
+            # Cada informação ocupa uma linha semântica curta; assim o primeiro
+            # refresh já é seguro no terminal mínimo suportado (48 colunas).
+            lines = [
+                Text(f"  {best.wireless_uuid}", style=f"bold {palette.TEXT_PRIMARY}"),
+                Text(f"  {pres.profile_label(best.profile_id)}", style=palette.TEXT_SECONDARY),
+                Text(
+                    f"  Melhor: Módulo {best_node:02d} · {best.rssi_dbm} dBm ({_rssi_label(best.rssi_dbm)})",
+                    style=palette.TEXT_SECONDARY,
+                ),
+                Text(f"  Observado por {len(observations)} módulo(s)", style=palette.TEXT_MUTED),
+            ]
+            available_items.append((f"candidate:{key}", Text("\n").join(lines)))
+        available_list.set_items(available_items)
+
+        assoc_list = self.query_one("#wireless-associated", StableOptionList)
+        assoc_items: list[tuple[str, Text]] = []
+        for key, sensor in sorted(self._associated.items(), key=lambda item: item[1].logical_id):
+            rssi = f"{sensor.association_rssi_dbm} dBm" if sensor.association_rssi_dbm is not None else pres.MISSING
+            lines = [
+                Text(f"  Sensor {sensor.logical_id}", style=f"bold {palette.TEXT_PRIMARY}"),
+                Text(
+                    f"  {pres.profile_label(sensor.profile_id)} · {sensor.association_state.upper()}",
+                    style=palette.TEXT_SECONDARY,
+                ),
+                Text(f"  {sensor.wireless_uuid}", style=palette.TEXT_MUTED),
+                Text(f"  Módulo {sensor.parent_node_id:02d} · {rssi}", style=palette.TEXT_SECONDARY),
+            ]
+            assoc_items.append((f"sensor:{sensor.logical_id}", Text("\n").join(lines)))
+        assoc_list.set_items(assoc_items)
+        self._show_current_details()
+
+    def _focused_id(self) -> str | None:
+        associated = self.query_one("#wireless-associated", StableOptionList)
+        available = self.query_one("#wireless-available", StableOptionList)
+        if self.focused is associated:
+            return associated.highlighted_id
+        if self.focused is available:
+            return available.highlighted_id
+        return available.highlighted_id or associated.highlighted_id
+
+    def _show_current_details(self) -> None:
+        option_id = self._focused_id()
+        details = self.query_one("#wireless-details", Paragraphs)
+        if not option_id:
+            details.set_items([])
+            return
+        if option_id.startswith("candidate:"):
+            key = option_id.split(":", 1)[1]
+            observations = self._available.get(key, [])
+            if not observations:
+                details.set_items([])
+                return
+            best_node, best = observations[0]
+            lines = [
+                Text(f"{best.wireless_uuid} · {pres.profile_label(best.profile_id)} · protocolo {best.protocol_version or pres.MISSING}", style=palette.TEXT_PRIMARY),
+                Text(f"Recomendação atual: Módulo {best_node:02d} ({best.rssi_dbm} dBm). A escolha não é automática.", style=palette.ACCENT_FOCUS),
+            ]
+            for node_id, candidate in observations:
+                lines.append(Text(f"Módulo {node_id:02d}: {candidate.rssi_dbm} dBm ({_rssi_label(candidate.rssi_dbm)})", style=palette.TEXT_SECONDARY))
+            details.set_items(lines, indent=2)
+            return
+        if option_id.startswith("sensor:"):
+            logical_id = option_id.split(":", 1)[1]
+            sensor = next((item for item in self._associated.values() if item.logical_id == logical_id), None)
+            if sensor is None:
+                details.set_items([])
+                return
+            lines = [
+                Text(f"Sensor {sensor.logical_id} · {pres.profile_label(sensor.profile_id)}", style=f"bold {palette.TEXT_PRIMARY}"),
+                Text(f"UUID {sensor.wireless_uuid}", style=palette.TEXT_SECONDARY),
+                Text(f"Vínculo {sensor.association_state.upper()} · Módulo {sensor.parent_node_id:02d}", style=palette.TEXT_SECONDARY),
+                Text(
+                    "Este vínculo representa identidade e responsabilidade. Telemetria e comandos via módulo CAN ainda não fazem parte do plano de dados.",
+                    style=palette.TEXT_MUTED,
+                ),
+            ]
+            details.set_items(lines, indent=2)
+
+    @on(OptionList.OptionHighlighted, "#wireless-available")
+    @on(OptionList.OptionHighlighted, "#wireless-associated")
+    def _highlighted(self) -> None:
+        self._show_current_details()
+
+    @on(OptionList.OptionSelected, "#wireless-available")
+    def _candidate_selected(self, event: OptionList.OptionSelected) -> None:
+        option_id = str(event.option.id or "")
+        if option_id.startswith("candidate:"):
+            observations = self._available.get(option_id.split(":", 1)[1], [])
+            if observations:
+                self.tui.request_wireless_bind(observations[0][1].wireless_uuid)
+
+    @on(OptionList.OptionSelected, "#wireless-associated")
+    def _associated_selected(self, event: OptionList.OptionSelected) -> None:
+        option_id = str(event.option.id or "")
+        if option_id.startswith("sensor:"):
+            self.tui.open_target(option_id)
+
+    def action_associate(self) -> None:
+        available = self.query_one("#wireless-available", StableOptionList)
+        option_id = available.highlighted_id
+        if option_id and option_id.startswith("candidate:"):
+            observations = self._available.get(option_id.split(":", 1)[1], [])
+            if observations:
+                self.tui.request_wireless_bind(observations[0][1].wireless_uuid)
+                return
+        self.notify("Realce um sensor na lista Disponíveis.", severity="warning", timeout=3)
+
+    def action_unbind(self) -> None:
+        associated = self.query_one("#wireless-associated", StableOptionList)
+        option_id = associated.highlighted_id
+        if option_id and option_id.startswith("sensor:"):
+            self.tui.request_wireless_unbind(option_id.split(":", 1)[1])
+            return
+        self.notify("Realce um sensor na lista Associados.", severity="warning", timeout=3)
+
+
+# ---------------------------------------------------------------------------
+# Rede CAN
+# ---------------------------------------------------------------------------
+
+
+class NetworkScreen(BaseScreen):
+    BINDINGS = BaseScreen.BINDINGS + [Binding("c", "commands", "Comandos", show=False)]
+    SCREEN_HINTS = (("c", "Comandos da rede", "screen.commands"),)
+
+    def key_hints(self) -> list[tuple[str, str, str | None]]:
+        hints: list[tuple[str, str, str | None]] = [("Esc", "Voltar", "screen.back"), *self.SCREEN_HINTS]
+        hints.extend(self.tui.global_hints(home=False, commands=False))
+        return hints
+
+    def compose_body(self) -> ComposeResult:
+        with VerticalScroll(id="network-body", classes="body"), Horizontal(classes="columns"):
+            with Vertical(classes="column column-left"):
+                with section("Barramento"):
+                    yield Fields(id="net-bus")
+                with section("Tráfego"):
+                    yield Fields(id="net-traffic")
+                with section("Probe 00 (instrumentação)"):
+                    yield Fields(id="net-probe")
+            with Vertical(classes="column"), section("Quadros recentes", id="sec-frames"):
+                yield Paragraphs(id="net-frames", empty="Nenhum quadro CAN recebido nesta sessão.")
+
+    def breadcrumb(self) -> tuple[Sequence[str], str]:
+        return ("Início", "Rede CAN"), ""
+
+    def update_body(self, state: AppState) -> None:
+        gateway, network = state.gateway, state.network
+
+        def bits(value: int | None) -> str:
+            return f"{value // 1000} kbit/s" if value else pres.MISSING
+
+        def flag(value: bool, label: str, level: pres.Level) -> Text:
+            return level_text(level, label, bold=True) if value else _value("Não")
+
+        self.query_one("#net-bus", Fields).set_fields(
+            [
+                ("Estado", gateway.can_state if gateway.can_state != "UNKNOWN" else pres.MISSING),
+                ("Arbitragem", bits(gateway.arbitration_bitrate)),
+                ("Fase de dados", bits(gateway.data_bitrate)),
+                ("Bus-off", flag(network.bus_off, "Sim", pres.Level.CRITICAL)),
+                ("Error-passive", flag(network.error_passive, "Sim", pres.Level.ATTENTION)),
+                ("Utilização", pres.fmt_number(network.utilization_percent, 1, "%")),
+            ]
+        )
+        self.query_one("#net-traffic", Fields).set_fields(
+            [
+                ("Quadros recebidos", pres.fmt_int(network.frames_rx)),
+                ("Quadros enviados", pres.fmt_int(network.frames_tx)),
+                ("Bytes recebidos", pres.fmt_int(network.bytes_rx)),
+                ("Bytes enviados", pres.fmt_int(network.bytes_tx)),
+                ("Erros de CRC", pres.fmt_int(network.crc_errors)),
+                ("Erros de interpretação", pres.fmt_int(network.parse_errors)),
+                ("Transferências em curso", pres.fmt_int(network.active_transfers)),
+            ]
+        )
+        uptime = _duration(gateway.uptime_ms / 1000) if gateway.uptime_ms else pres.MISSING
+        self.query_one("#net-probe", Fields).set_fields(
+            [
+                ("Firmware", gateway.firmware_version or pres.MISSING),
+                ("Protocolo", gateway.protocol_version or pres.MISSING),
+                ("Porta serial", gateway.serial_port or state.port or pres.MISSING),
+                ("Wi-Fi", gateway.wifi_state if gateway.wifi_state != "UNKNOWN" else pres.MISSING),
+                ("Tempo ligado", uptime),
+            ]
+        )
+        frames = []
+        for frame in list(network.recent_frames)[::-1][:40]:
+            line = Text(f"{'Recebido' if frame.direction == 'RX' else 'Enviado'} ", style=palette.TEXT_MUTED)
+            line.append(f"0x{frame.can_id:08X}", style=f"bold {palette.TEXT_PRIMARY}")
+            line.append(f"  {'FD' if frame.fd else 'clássico'}, {len(frame.data)} bytes  ", style=palette.TEXT_SECONDARY)
+            line.append(frame.data.hex(" ") or "(vazio)", style=palette.TEXT_PRIMARY)
+            frames.append(line)
+        self.query_one("#net-frames", Paragraphs).set_items(frames, indent=4)
+
+    def action_commands(self) -> None:
+        self.tui.open_commands("network")
+
+
+# ---------------------------------------------------------------------------
+# Mensagens
+# ---------------------------------------------------------------------------
+
+
+class MessagesScreen(BaseScreen):
+    BINDINGS = BaseScreen.BINDINGS + [
+        Binding("d", "toggle_debug", "Depuração", show=False),
+        Binding("h", "toggle_home", "Na tela inicial", show=False),
+        Binding("l", "clear_view", "Limpar", show=False),
+    ]
+
+    def key_hints(self) -> list[tuple[str, str, str | None]]:
+        debug = "ocultar depuração" if self.tui.preferences.show_debug_messages else "mostrar depuração"
+        home = "tirar da tela inicial" if self.tui.messages_on_home else "fixar na tela inicial"
+        hints: list[tuple[str, str, str | None]] = [
+            ("Esc", "Voltar", "screen.back"),
+            ("d", debug.capitalize(), "screen.toggle_debug"),
+            ("h", home.capitalize(), "screen.toggle_home"),
+            ("l", "Limpar visualização", "screen.clear_view"),
+        ]
+        hints.extend(self.tui.global_hints(home=False, commands=True))
+        return hints
+
+    def compose_body(self) -> ComposeResult:
+        with section("Todas as mensagens", id="sec-messages", classes="body grow"):
+            yield MessageLog(id="messages-log")
+
+    def breadcrumb(self) -> tuple[Sequence[str], str]:
+        return ("Início", "Mensagens"), "registro completo também salvo em logs/"
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        self._reload()
+        self.query_one("#messages-log", MessageLog).focus()
+
+    def _reload(self) -> None:
+        log = self.query_one("#messages-log", MessageLog)
+        log.clear()
+        for entry in self.tui.visible_messages():
+            log.add_entry(entry)
+
+    def add_message(self, entry) -> None:
+        if entry.level == "DEBUG" and not self.tui.preferences.show_debug_messages:
+            return
+        self.query_one("#messages-log", MessageLog).add_entry(entry)
+
+    def action_toggle_debug(self) -> None:
+        self.tui.set_preference("show_debug_messages", not self.tui.preferences.show_debug_messages)
+        self._reload()
+        self.query_one("#key-bar", KeyBar).set_hints(self.key_hints())
+
+    def action_toggle_home(self) -> None:
+        self.tui.set_messages_on_home(not self.tui.messages_on_home)
+        self.query_one("#key-bar", KeyBar).set_hints(self.key_hints())
+        state = "aparecem" if self.tui.messages_on_home else "não aparecem mais"
+        self.notify(f"As mensagens recentes {state} na tela inicial.", timeout=3)
+
+    def action_clear_view(self) -> None:
+        self.query_one("#messages-log", MessageLog).clear()
+
+
+# ---------------------------------------------------------------------------
+# Espectro FFT
+# ---------------------------------------------------------------------------
+
+
+class FftScreen(BaseScreen):
+    BINDINGS = BaseScreen.BINDINGS + [Binding("n", "again", "Novo espectro", show=False)]
+
+    def __init__(self, logical_id: str, *, requested_at: float | None = None) -> None:
+        super().__init__()
+        self.logical_id = logical_id
+        self.requested_at = requested_at or 0.0
+        self._chart_key: tuple = ()
+
+    def key_hints(self) -> list[tuple[str, str, str | None]]:
+        hints: list[tuple[str, str, str | None]] = [("Esc", "Voltar", "screen.back"), ("n", "Novo espectro", "screen.again")]
+        hints.extend(self.tui.global_hints(home=False, commands=True))
+        return hints
+
+    def compose_body(self) -> ComposeResult:
+        with VerticalScroll(id="fft-body", classes="body"):
+            with section("Espectro", id="sec-chart"):
+                yield Static("Aguardando o espectro do sensor...", id="fft-ascii")
+            with Horizontal(classes="columns"):
+                with Vertical(classes="column"), section("Picos principais"):
+                    yield Paragraphs(id="fft-peaks", empty="Sem picos para mostrar.")
+                with Vertical(classes="column"), section("Parâmetros"):
+                    yield Fields(id="fft-meta")
+
+    def breadcrumb(self) -> tuple[Sequence[str], str]:
+        parent = int(self.logical_id.split(".", 1)[0])
+        return ("Início", f"Módulo {parent:02d}", f"Sensor {self.logical_id}", "Espectro"), ""
+
+    def update_body(self, state: AppState) -> None:
+        parent, child = (int(part) for part in self.logical_id.split("."))
+        node = state.nodes.get(parent)
+        sensor = node.sensors.get(child) if node else None
         chart = self.query_one("#fft-ascii", Static)
-        peaks = self.query_one("#fft-peaks", Static)
         if sensor is None:
-            summary.update("Sensor não encontrado.")
-            chart.update("")
-            peaks.update("")
+            chart.update("Sensor não encontrado.")
             return
         telemetry = sensor.latest_telemetry
         if telemetry is not None and telemetry.fft_valid is False:
-            summary.update("FFT não calculada para o buffer atual. Comportamento esperado no modo SEISMIC.")
-            chart.update("")
-            peaks.update("")
+            chart.update("O sensor não calcula FFT no modo atual (esperado no modo Sísmico).")
             return
         spectrum = sensor.latest_fft
         if spectrum is None or spectrum.received_wall_time < self.requested_at:
-            summary.update("Aguardando linha FFT válida e completa...")
-            chart.update("O vetor FFT não faz parte de TEL; ele é recebido separadamente após FFT ONCE.")
-            peaks.update("")
+            chart.update("Aguardando o espectro do sensor. O vetor chega separado da telemetria, após o pedido.")
             return
-        summary.update(_spectrum_metadata(spectrum))
-        chart.update(_spectrum_chart(spectrum))
-        peaks.update(_spectrum_peaks(spectrum))
+        width = max(20, self.query_one("#sec-chart").content_size.width or 60)
+        key = (spectrum.received_wall_time, width)
+        if key != self._chart_key:
+            self._chart_key = key
+            chart.update(Text(spectrum_chart(spectrum, width=width), style=palette.ACCENT_FOCUS))
+        self.query_one("#fft-peaks", Paragraphs).set_items([Text(row) for row in spectrum_peaks(spectrum)])
+        self.query_one("#fft-meta", Fields).set_fields(spectrum_fields(spectrum))
 
-    def action_close(self) -> None:
-        self.dismiss(None)
+    def on_resize(self) -> None:
+        self._chart_key = ()
 
-class DtcScreen(ModalScreen[str | None]):
-    BINDINGS = [
-        Binding("escape", "close", "Fechar", show=False),
-        Binding("c", "clear_selected", "Limpar selecionado", show=True),
-        Binding("a", "clear_all", "Limpar todos", show=True),
-    ]
+    def action_again(self) -> None:
+        self.tui.start_action("sensor.fft", f"sensor:{self.logical_id}")
 
-    def __init__(self, sensor: SensorNode) -> None:
-        super().__init__()
-        self.sensor = sensor
 
-    def compose(self) -> ComposeResult:
-        with Vertical(id="dtc-dialog", classes="modal extra-wide-modal"):
-            yield Static(f"DIAGNÓSTICOS — {self.sensor.logical_id}", classes="modal-title")
-            yield DataTable(id="dtc-table", cursor_type="row")
-            with Horizontal(classes="modal-buttons"):
-                yield Button("Limpar selecionado", id="dtc-clear-one")
-                yield Button("Limpar todos", id="dtc-clear-all")
-                yield Button("Fechar", id="dtc-close", variant="primary")
+# ---------------------------------------------------------------------------
+# Ajuda
+# ---------------------------------------------------------------------------
+
+
+class HelpScreen(BaseScreen):
+    def key_hints(self) -> list[tuple[str, str, str | None]]:
+        return [("Esc", "Voltar", "screen.back"), *self.tui.global_hints(home=False, commands=True, help=False)]
+
+    def compose_body(self) -> ComposeResult:
+        with VerticalScroll(id="help-body", classes="body"):
+            with section("Navegação"):
+                yield Fields(
+                    [
+                        ("Setas e Enter", "Escolher um item e abrir"),
+                        ("Esc", "Voltar para a tela anterior"),
+                        ("F2 ou i", "Início, com o resumo do sistema"),
+                        ("F3 ou p", "Conectar ou trocar a porta serial"),
+                        ("F4 ou c", "Comandos (na tela de um equipamento, já com ele como alvo)"),
+                        ("F5 ou r", "Rede CAN: barramento, tráfego e quadros"),
+                        ("F6 ou m", "Mensagens: registro completo de eventos"),
+                        ("F7 ou w", "Sensores sem fio: descobrir, associar e desassociar"),
+                        ("F1 ou ?", "Esta ajuda"),
+                        ("F10 ou q", "Sair"),
+                        ("Tab", "Passar para a próxima lista ou campo"),
+                        ("Ctrl+C", "Interromper a telemetria do sensor direto"),
+                    ]
+                )
+            with section("Símbolos de condição"):
+                yield Fields(
+                    [
+                        (f"{pres.symbol(pres.Level.NORMAL)} Normal", "Equipamento comunicando, sem diagnósticos ativos"),
+                        (f"{pres.symbol(pres.Level.ATTENTION)} Atenção", "Sem dados recentes, diagnóstico de aviso ou sinal saturado"),
+                        (f"{pres.symbol(pres.Level.CRITICAL)} Crítico", "Comunicação perdida, diagnóstico crítico ou bus-off"),
+                        (f"{pres.symbol(pres.Level.NO_DATA)} Sem dados", "Aguardando a primeira comunicação"),
+                    ]
+                )
+            with section("Telas de equipamento"):
+                yield Paragraphs(id="help-screens")
+            with section("Comandos internos (avançado)"):
+                yield Paragraphs(id="help-internal")
+
+    def breadcrumb(self) -> tuple[Sequence[str], str]:
+        return ("Início", "Ajuda"), ""
 
     def on_mount(self) -> None:
-        table = self.query_one("#dtc-table", DataTable)
-        table.add_columns("Código", "Descrição", "Severidade", "Sintoma", "Ocorrências", "Estado")
-        for record in sorted(self.sensor.active_dtcs.values(), key=lambda item: item.code):
-            table.add_row(
-                f"0x{record.code:04X}",
-                dtc_description(record.code),
-                record.severity.value,
-                f"0x{record.symptom:02X}" if record.symptom is not None else "N/A",
-                str(record.occurrence_count),
-                "ATIVO" if record.active else "HISTÓRICO",
-                key=str(record.code),
-            )
-
-    def action_close(self) -> None:
-        self.dismiss(None)
-
-    def action_clear_selected(self) -> None:
-        table = self.query_one("#dtc-table", DataTable)
-        if table.row_count and table.cursor_row >= 0:
-            key = table.get_row_at(table.cursor_row)[0]
-            self.dismiss(f"one:{key}")
-
-    def action_clear_all(self) -> None:
-        self.dismiss("all")
-
-    @on(Button.Pressed, "#dtc-clear-one")
-    def _one(self) -> None:
-        self.action_clear_selected()
-
-    @on(Button.Pressed, "#dtc-clear-all")
-    def _all(self) -> None:
-        self.action_clear_all()
-
-    @on(Button.Pressed, "#dtc-close")
-    def _close_button(self) -> None:
-        self.action_close()
-
-
-class NetworkScreen(ModalScreen[None]):
-    BINDINGS = [Binding("escape", "close", "Fechar", show=False), Binding("enter", "close", "Fechar", show=False)]
-
-    def __init__(self, state: AppState) -> None:
-        super().__init__()
-        self.state = state
-
-    def compose(self) -> ComposeResult:
-        gw = self.state.gateway
-        net = self.state.network
-        with VerticalScroll(id="network-dialog", classes="modal extra-wide-modal"):
-            yield Static("REDE CAN FD", classes="modal-title")
-            yield Static(
-                f"Arbitragem: {gw.arbitration_bitrate or 'N/A'} bit/s\n"
-                f"Dados: {gw.data_bitrate or 'N/A'} bit/s\n"
-                f"CAN: {gw.can_state}  Wi-Fi: {gw.wifi_state}\n"
-                f"Frames RX/TX: {net.frames_rx}/{net.frames_tx}\n"
-                f"Bytes RX/TX: {net.bytes_rx}/{net.bytes_tx}\n"
-                f"CRC: {net.crc_errors}  Parse: {net.parse_errors}\n"
-                f"Bus-off: {net.bus_off}  Error passive: {net.error_passive}\n"
-                f"Utilização: {net.utilization_percent if net.utilization_percent is not None else 'N/A'}%\n"
-                f"Transferências ativas: {net.active_transfers}"
-            )
-            yield Static("FRAMES RECENTES", classes="section-title")
-            yield Static(_frames_text(list(net.recent_frames)[-30:]), id="can-frame-list")
-
-    def action_close(self) -> None:
-        self.dismiss(None)
-
-
-
-class CanNodeDetailScreen(ModalScreen[str | None]):
-    """Visão viva e operacional do módulo CAN físico."""
-
-    BINDINGS = [
-        Binding("escape", "close", "Fechar", show=True),
-        Binding("d", "dtc", "DTC", show=True),
-        Binding("c", "config", "Configurar", show=True),
-    ]
-
-    def __init__(
-        self,
-        node_id: int,
-        node_provider: Callable[[int | None], PhysicalNode | None],
-    ) -> None:
-        super().__init__()
-        self.node_id = node_id
-        self._node_provider = node_provider
-
-    def compose(self) -> ComposeResult:
-        with VerticalScroll(id="can-node-detail-dialog", classes="modal extra-wide-modal"):
-            yield Static(f"MÓDULO CAN — Node {self.node_id:02d}", classes="modal-title")
-            yield Static("Aguardando dados do módulo...", id="can-node-live-summary")
-            yield Static("IDENTIDADE / CAN / CAPACIDADES", classes="section-title")
-            yield DataTable(id="can-node-live-table", cursor_type="row", zebra_stripes=False)
-            yield Static("SENSOR LOCAL", classes="section-title")
-            yield Static("Perfil e valor do sensor local são atualizados na tabela acima.", classes="modal-hint")
-            yield Static("WIRELESS", classes="section-title")
-            yield Static("Discovery e candidatos observados pelo módulo.", classes="modal-hint")
-            yield Static("CANDIDATOS WIRELESS", classes="section-title")
-            yield Static("Nenhum candidato wireless observado", id="can-node-candidates")
-            yield Static("SENSORES WIRELESS ASSOCIADOS", classes="section-title")
-            yield Static("Nenhum sensor wireless associado", id="can-node-children")
-            with Horizontal(classes="modal-buttons"):
-                yield Button("DTC", id="can-node-dtc")
-                yield Button("Configurar", id="can-node-config")
-                yield Button("Fechar", id="can-node-close", variant="primary")
-
-    def on_mount(self) -> None:
-        table = self.query_one("#can-node-live-table", DataTable)
-        table.add_column("Campo", key="field", width=28)
-        table.add_column("Valor", key="value", width=54)
-        rows = (
-            ("status", "Estado"),
-            ("role", "Papel distribuído"),
-            ("type", "Tipo"),
-            ("firmware", "Firmware"),
-            ("protocol", "Protocolo"),
-            ("can", "Estado CAN"),
-            ("rx", "RX"),
-            ("tx", "TX"),
-            ("errors", "Erros"),
-            ("caps", "Capacidades"),
-            ("local_profile", "Sensor local / perfil"),
-            ("local_value", "Sensor local / valor"),
-            ("local_enabled", "Sensor local / habilitado"),
-            ("local_round", "Sensor local / rodada"),
-            ("wireless_scan", "Wireless discovery"),
-            ("wireless_ap", "Wi-Fi AP"),
-            ("wireless_candidates", "Candidatos wireless"),
-            ("wireless_children", "Sensores associados"),
-            ("dtc", "DTCs do módulo"),
+        super().on_mount()
+        self.query_one("#help-screens", Paragraphs).set_items(
+            indent=0,
+            items=[
+                Text("Na tela inicial, Enter sobre um módulo ou sensor abre a tela própria dele."),
+                Text("A tela do sensor mostra situação, métricas do perfil, intercorrências e a configuração aplicada."),
+                Text("A tela do módulo mostra papel na rede, sensor local, sensores sem fio e descoberta BLE."),
+                Text("F7 ou w abre o gerenciamento wireless: candidatos disponíveis, vínculos ativos, associação e desassociação."),
+                Text("Sensores wireless associados ainda não expõem telemetria/FFT/configuração via módulo CAN; essas ações ficam ocultas até existir o plano de dados."),
+                Text("Em qualquer tela de equipamento com canal de comandos disponível, c abre os comandos já apontados para ele."),
+            ]
         )
-        for key, label in rows:
-            table.add_row(label, "N/A", key=key)
-        self.set_interval(0.25, self._refresh_live)
-        self._refresh_live()
-
-    def _refresh_live(self) -> None:
-        node = self._node_provider(self.node_id)
-        if node is None:
-            self.query_one("#can-node-live-summary", Static).update(
-                "Módulo não está mais presente no estado da rede."
-            )
-            return
-
-        local_value = (
-            f"0x{node.local_sensor_value:02X}"
-            if node.local_sensor_value is not None
-            else "N/A"
+        self.query_one("#help-internal", Paragraphs).set_items(
+            [
+                Text("Na tela de comandos, a abre o campo de comando manual. Texto sem : vai direto ao equipamento."),
+                Text(":status   :node 04   :node 04.01   :can   :can 22 20 FF 00   :election   :canstatus"),
+                Text(":tel on|off|once|fast|slow|period <ms>   :fft [sensor] bins=64   :acq polling"),
+                Text(":dtc list [sensor]   :dtc clear [sensor] all|0xCÓDIGO   :wifi on|off|status"),
+                Text(":config [sensor] mode=STRUCTURAL rate=250 window=HANN   :connect [porta] [modo]"),
+                Text(":wireless   :bind [uuid] [módulo]   :unbind [uuid] [módulo]"),
+                Text(":disconnect   :reconnect   :export csv   :snapshot   :security   :lock   :quit"),
+            ],
+            indent=2,
         )
-        local_enabled = (
-            "SIM" if node.local_sensor_enabled is True
-            else ("NÃO" if node.local_sensor_enabled is False else "N/A")
-        )
-        caps = ", ".join(sorted(node.capabilities)) if node.capabilities else "CAN"
-        values = {
-            "status": node.status.value,
-            "role": node.role,
-            "type": node.node_type,
-            "firmware": node.firmware_version or "N/A",
-            "protocol": node.protocol_version or "N/A",
-            "can": node.can_state,
-            "rx": node.rx_count,
-            "tx": node.tx_count,
-            "errors": node.error_count,
-            "caps": caps,
-            "local_profile": node.local_sensor_profile,
-            "local_value": local_value,
-            "local_enabled": local_enabled,
-            "local_round": node.local_sensor_last_round if node.local_sensor_last_round is not None else "N/A",
-            "wireless_scan": node.wireless_discovery_state,
-            "wireless_ap": node.wireless_ap_state,
-            "wireless_candidates": node.wireless_candidate_count,
-            "wireless_children": len(node.sensors),
-            "dtc": node.active_dtc_count,
-        }
-        table = self.query_one("#can-node-live-table", DataTable)
-        for key, value in values.items():
-            table.update_cell(key, "value", str(value))
-
-        age_text = "N/A"
-        if node.local_sensor_last_seen_monotonic:
-            age_text = f"{max(0.0, time.monotonic() - node.local_sensor_last_seen_monotonic):.2f} s"
-        self.query_one("#can-node-live-summary", Static).update(
-            f"Node [b]{node.parent_node_id:02d}[/b] • {node.status.value} • {node.role} • "
-            f"sensor local={node.local_sensor_profile}:{local_value} • atualizado há {age_text}"
-        )
-
-        candidate_lines = []
-        for candidate in sorted(
-            node.wireless_candidates.values(),
-            key=lambda item: item.rssi_dbm,
-            reverse=True,
-        ):
-            candidate_lines.append(
-                f"{candidate.wireless_uuid}  profile={candidate.profile_id}  "
-                f"RSSI={candidate.rssi_dbm} dBm  protocol={candidate.protocol_version or 'N/A'}"
-            )
-        self.query_one("#can-node-candidates", Static).update(
-            "\n".join(candidate_lines) if candidate_lines else "Nenhum candidato wireless observado"
-        )
-
-        child_lines = []
-        for child_id, sensor in sorted(node.sensors.items()):
-            child_lines.append(
-                f"{sensor.logical_id}  profile={sensor.profile_id or 'UNKNOWN'}  "
-                f"status={sensor.status.value}  UUID={sensor.wireless_uuid or 'N/A'}"
-            )
-        self.query_one("#can-node-children", Static).update(
-            "\n".join(child_lines) if child_lines else "Nenhum sensor wireless associado"
-        )
-
-    def action_close(self) -> None:
-        self.dismiss(None)
-
-    def action_dtc(self) -> None:
-        self.dismiss("dtc")
-
-    def action_config(self) -> None:
-        self.dismiss("config")
-
-    @on(Button.Pressed, "#can-node-dtc")
-    def _dtc_button(self) -> None:
-        self.action_dtc()
-
-    @on(Button.Pressed, "#can-node-config")
-    def _config_button(self) -> None:
-        self.action_config()
-
-    @on(Button.Pressed, "#can-node-close")
-    def _close_button(self) -> None:
-        self.action_close()
-
-
-class CanNodeDtcScreen(ModalScreen[None]):
-    """DTCs pertencentes ao módulo CAN físico."""
-
-    BINDINGS = [Binding("escape", "close", "Fechar", show=True)]
-
-    def __init__(
-        self,
-        node_id: int,
-        node_provider: Callable[[int | None], PhysicalNode | None],
-    ) -> None:
-        super().__init__()
-        self.node_id = node_id
-        self._node_provider = node_provider
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="can-node-dtc-dialog", classes="modal extra-wide-modal"):
-            yield Static(f"DTC DO MÓDULO — Node {self.node_id:02d}", classes="modal-title")
-            yield Static(
-                "DTC do módulo é separado dos DTCs dos sensores wireless.",
-                classes="modal-hint",
-            )
-            yield DataTable(id="can-node-dtc-table", cursor_type="row")
-            yield Static("", id="can-node-dtc-empty")
-            with Horizontal(classes="modal-buttons"):
-                yield Button("Fechar", id="can-node-dtc-close", variant="primary")
-
-    def on_mount(self) -> None:
-        table = self.query_one("#can-node-dtc-table", DataTable)
-        table.add_columns("Código", "Descrição", "Severidade", "Sintoma", "Ocorrências", "Estado")
-        self.set_interval(0.5, self._refresh_live)
-        self._refresh_live()
-
-    def _refresh_live(self) -> None:
-        node = self._node_provider(self.node_id)
-        table = self.query_one("#can-node-dtc-table", DataTable)
-        table.clear()
-        if node is None or not node.active_dtcs:
-            self.query_one("#can-node-dtc-empty", Static).update(
-                "Nenhum DTC de módulo reportado."
-            )
-            return
-
-        self.query_one("#can-node-dtc-empty", Static).update("")
-        for record in sorted(node.active_dtcs.values(), key=lambda item: item.code):
-            table.add_row(
-                f"0x{record.code:04X}",
-                dtc_description(record.code),
-                record.severity.value,
-                f"0x{record.symptom:02X}" if record.symptom is not None else "N/A",
-                str(record.occurrence_count),
-                "ATIVO" if record.active else "HISTÓRICO",
-                key=str(record.code),
-            )
-
-    def action_close(self) -> None:
-        self.dismiss(None)
-
-    @on(Button.Pressed, "#can-node-dtc-close")
-    def _close_button(self) -> None:
-        self.action_close()
-
-
-class SensorDetailScreen(ModalScreen[None]):
-    BINDINGS = [Binding("escape", "close", "Fechar", show=False), Binding("enter", "close", "Fechar", show=False)]
-
-    def __init__(self, sensor: SensorNode) -> None:
-        super().__init__()
-        self.sensor = sensor
-
-    def compose(self) -> ComposeResult:
-        cfg = self.sensor.configuration
-        health = self.sensor.health
-        if self.sensor.acquisition_mode.value == "POLLING":
-            drdy_text = "DRDY: desativado (POLLING é a baseline saudável)\n"
-        elif self.sensor.acquisition_mode.value == "DRDY":
-            drdy_text = (
-                f"DRDY IRQ: {health.drdy_irq_count if health.drdy_irq_count is not None else 'N/A'}\n"
-                f"DRDY perdidas: {health.drdy_missed_count if health.drdy_missed_count is not None else 'N/A'}\n"
-            )
-        else:
-            drdy_text = "DRDY: N/A\n"
-        with VerticalScroll(id="node-detail-dialog", classes="modal"):
-            yield Static(f"DETALHE — {self.sensor.logical_id}", classes="modal-title")
-            yield Static(
-                f"UUID: {self.sensor.wireless_uuid or 'N/A'}\n"
-                f"Estado: {self.sensor.status.value}\n"
-                f"Qualidade: {self.sensor.quality.value}\n"
-                f"Modo: {self.sensor.sensor_mode.value}\n"
-                f"Aquisição: {self.sensor.acquisition_mode.value}\n"
-                f"Taxa solicitada/efetiva: {cfg.sample_rate_requested_hz or 'N/A'} / {cfg.sample_rate_effective_hz or 'N/A'} Hz\n"
-                f"Janela: {cfg.window_type or 'N/A'} ({cfg.window_size or 'N/A'})\n"
-                f"{drdy_text}"
-                f"RX: {self.sensor.rx_count}  Perdidas: {self.sensor.lost_count}\n"
-                f"Duplicadas: {self.sensor.duplicate_count}  Fora de ordem: {self.sensor.out_of_order_count}\n"
-                f"DTCs ativos: {self.sensor.active_dtc_count}"
-            )
-
-    def action_close(self) -> None:
-        self.dismiss(None)
-
-
-class ConfirmScreen(ModalScreen[bool]):
-    BINDINGS = [Binding("escape", "no", "Não", show=False), Binding("n", "no", "Não", show=False), Binding("y", "yes", "Sim", show=False)]
-
-    def __init__(self, title: str, message: str) -> None:
-        super().__init__()
-        self.dialog_title = title
-        self.message = message
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="confirm-dialog", classes="modal"):
-            yield Static(self.dialog_title, classes="modal-title")
-            yield Static(self.message)
-            with Horizontal(classes="modal-buttons"):
-                yield Button("Não", id="confirm-no")
-                yield Button("Sim", id="confirm-yes", variant="error")
-
-    def action_yes(self) -> None:
-        self.dismiss(True)
-
-    def action_no(self) -> None:
-        self.dismiss(False)
-
-    @on(Button.Pressed, "#confirm-yes")
-    def _yes(self) -> None:
-        self.action_yes()
-
-    @on(Button.Pressed, "#confirm-no")
-    def _no(self) -> None:
-        self.action_no()
-
-
-def _number(value: float | None) -> str:
-    return "" if value is None else f"{value:g}"
-
-
-def _float_or_none(text: str) -> float | None:
-    text = text.strip().replace(",", ".")
-    if not text:
-        return None
-    value = float(text)
-    if value != value or value in {float("inf"), float("-inf")}:
-        raise ValueError("Valor numérico inválido")
-    return value
-
-
-def _int_or_none(text: str) -> int | None:
-    text = text.strip()
-    if not text:
-        return None
-    value = int(text, 0)
-    if value <= 0:
-        raise ValueError("O tamanho deve ser positivo")
-    return value
-
-
-def _format_value(value: object, decimals: int = 3, unit: str = "") -> str:
-    if value is None:
-        return "N/A"
-    try:
-        text = f"{float(value):.{decimals}f}"
-    except (TypeError, ValueError):
-        text = str(value)
-    return f"{text} {unit}".strip()
-
-
-def _bool_value(value: bool | None) -> str:
-    if value is None:
-        return "N/A"
-    return "SIM" if value else "NÃO"
-
-
-def _fft_valid_value(value: bool | None) -> str:
-    if value is True:
-        return "VÁLIDA"
-    if value is False:
-        return "NÃO CALCULADA (esperado no modo atual)"
-    return "N/A"
-
-
-def _fft_value(value: object, fft_valid: bool | None, decimals: int, unit: str = "") -> str:
-    if fft_valid is False:
-        return "N/A (FFT desativada)"
-    return _format_value(value, decimals, unit)
-
-
-def _spectrum_frequency(spectrum: SpectrumSample, bin_index: int) -> float | None:
-    if spectrum.sample_rate_hz is None or not spectrum.fft_size:
-        return None
-    return bin_index * spectrum.sample_rate_hz / spectrum.fft_size
-
-
-def _spectrum_metadata(spectrum: SpectrumSample) -> str:
-    bins = len(spectrum.magnitudes)
-    resolution = None
-    if spectrum.sample_rate_hz is not None and spectrum.fft_size:
-        resolution = spectrum.sample_rate_hz / spectrum.fft_size
-    max_frequency = _spectrum_frequency(spectrum, max(0, bins - 1))
-    nyquist = spectrum.sample_rate_hz / 2 if spectrum.sample_rate_hz is not None else None
-    return (
-        f"Bins recebidos: {bins}  •  FFT: {spectrum.fft_size or 'N/A'} pontos  •  "
-        f"Fs: {_format_value(spectrum.sample_rate_hz, 2, 'Hz')}  •  "
-        f"Δf: {_format_value(resolution, 4, 'Hz')}\n"
-        f"Janela: {spectrum.window_type or 'N/A'}  •  Unidade vertical: {spectrum.magnitude_unit or 'raw'}  •  "
-        f"Faixa exibida: 0 a {_format_value(max_frequency, 2, 'Hz')}  •  "
-        f"Nyquist: {_format_value(nyquist, 2, 'Hz')}"
-    )
-
-
-def _spectrum_chart(spectrum: SpectrumSample, width: int = 72, height: int = 14) -> str:
-    values = spectrum.magnitudes
-    if not values:
-        return "N/A"
-    chart_width = max(16, min(width, len(values)))
-    buckets: list[tuple[float, int]] = []
-    for column in range(chart_width):
-        start = column * len(values) // chart_width
-        end = max(start + 1, (column + 1) * len(values) // chart_width)
-        local = values[start:end]
-        local_index = max(range(len(local)), key=lambda idx: local[idx])
-        buckets.append((float(local[local_index]), start + local_index))
-    peak_value = max(value for value, _ in buckets)
-    scale = peak_value if peak_value > 0 else 1.0
-    lines: list[str] = []
-    for row in range(height, 0, -1):
-        threshold = scale * row / height
-        label = f"{threshold:>9.3g} ┤"
-        body = "".join("█" if value >= threshold else " " for value, _ in buckets)
-        lines.append(label + body)
-    lines.append(f"{0:>9.3g} └" + "─" * chart_width)
-
-    max_frequency = _spectrum_frequency(spectrum, len(values) - 1)
-    if max_frequency is None:
-        left, middle, right = "bin 0", f"bin {(len(values) - 1) // 2}", f"bin {len(values) - 1}"
-        axis_name = "Bins espectrais"
-    else:
-        left, middle, right = "0 Hz", f"{max_frequency / 2:.2f} Hz", f"{max_frequency:.2f} Hz"
-        axis_name = "Frequência"
-    gap1 = max(1, chart_width // 2 - len(left) - len(middle) // 2)
-    gap2 = max(1, chart_width - len(left) - gap1 - len(middle) - len(right))
-    lines.append(" " * 11 + left + " " * gap1 + middle + " " * gap2 + right)
-    lines.append(f"Magnitude [{spectrum.magnitude_unit or 'raw'}] × {axis_name}")
-    return "\n".join(lines)
-
-
-def _spectrum_peaks(spectrum: SpectrumSample, count: int = 5) -> str:
-    if not spectrum.magnitudes:
-        return ""
-    ranked = sorted(enumerate(spectrum.magnitudes), key=lambda item: item[1], reverse=True)[:count]
-    rows = ["PICOS PRINCIPAIS"]
-    for position, (index, value) in enumerate(ranked, start=1):
-        frequency = _spectrum_frequency(spectrum, index)
-        frequency_text = f"{frequency:.3f} Hz" if frequency is not None else f"bin {index}"
-        rows.append(f"{position}. {frequency_text:<16} magnitude={value:.6g}  bin={index}")
-    return "\n".join(rows)
-
-def _frames_text(frames: list[Any]) -> str:
-    if not frames:
-        return "Nenhum frame recebido."
-    return "\n".join(
-        f"{frame.direction} 0x{frame.can_id:08X} {'FD' if frame.fd else 'CAN'} "
-        f"DLC={len(frame.data):02d} {frame.data.hex(' ')}"
-        for frame in frames
-    )

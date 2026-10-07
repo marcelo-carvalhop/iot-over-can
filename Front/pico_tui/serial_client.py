@@ -253,7 +253,9 @@ class SerialClient:
                 on_error(str(exc))
                 self._report_disconnect(on_disconnect)
                 return
-        self._report_disconnect(on_disconnect, only_if_open=False)
+        # Saída solicitada por close() não é perda de conexão. A notificação
+        # de desconexão fica restrita às exceções reais tratadas acima.
+        return
 
     def _report_disconnect(self, callback: Callable[[], None], *, only_if_open: bool = True) -> None:
         if self._disconnect_reported:
@@ -302,14 +304,21 @@ class SerialClient:
     def close(self) -> None:
         self._stop_event.set()
         backend = self._backend
+        thread = self._thread
+
+        # Não feche o descritor enquanto a thread pode estar dentro de
+        # pyserial.read(). Em PTYs isso transformava ``fd`` em None no meio
+        # da leitura e gerava PytestUnhandledThreadExceptionWarning. Como a
+        # leitura tem timeout finito, basta sinalizar a parada e aguardar.
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=max(1.0, self.read_timeout + 0.5))
+
+        self._thread = None
         self._backend = None
         if backend is not None:
             try:
                 backend.close()
             except Exception:
                 pass
-        if self._thread is not None and self._thread is not threading.current_thread():
-            self._thread.join(timeout=1.0)
-        self._thread = None
         with self._echo_lock:
             self._pending_echoes.clear()

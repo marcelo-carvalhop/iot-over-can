@@ -6,22 +6,24 @@ import math
 import shlex
 import time
 import uuid
+from collections import deque
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
-from textual import on, work
-from textual.app import App, ComposeResult
+from textual import work
+from textual.app import App
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
-from textual.events import Key, Resize
 from textual.css.query import NoMatches
+from textual.events import Key, Resize
+from textual.screen import ModalScreen, Screen
 from textual.theme import Theme
-from textual.widgets import Footer, Header, Input, Static, Tree
 
 from pico_tui import commands, palette
+from pico_tui import presentation as pres
+from pico_tui.command_catalog import ACTIONS_BY_KEY, can_command
 from pico_tui.core.event_bus import EventBus
 from pico_tui.core.events import (
     CommandAck,
@@ -35,61 +37,61 @@ from pico_tui.core.events import (
     TransferFailed,
 )
 from pico_tui.core.models import (
-    ConnectionMode,
     AcquisitionMode,
+    ConnectionMode,
     ConnectionState,
-    DataQuality,
     SensorMode,
+    Severity,
     SpectrumSample,
 )
 from pico_tui.core.state_store import StateStore
-from pico_tui.dtc_catalog import dtc_description
-from pico_tui.protocol.router import DecoderRouter
-from pico_tui.screens import (
+from pico_tui.dialogs import (
     ConfigRequest,
-    CanNetworkCommandScreen,
-    CanNodeCommandScreen,
     ConfigScreen,
     ConfirmScreen,
     ConnectScreen,
-    DtcScreen,
-    FftRequestScreen,
-    FftViewScreen,
-    HelpScreen,
-    MainMenuScreen,
-    NodeNavigatorScreen,
-    NetworkScreen,
-    CanNodeDetailScreen,
-    CanNodeDtcScreen,
-    SensorDetailScreen,
-    TelemetryCommandRequested,
-    TelemetryScreen,
+    ParameterScreen,
+    WirelessNodeScreen,
 )
-from pico_tui.serial_client import SerialClient
+from pico_tui.dtc_catalog import dtc_description
+from pico_tui.preferences import load_preferences, save_preferences
+from pico_tui.protocol.router import DecoderRouter
+from pico_tui.screens import (
+    BaseScreen,
+    CommandScreen,
+    FftScreen,
+    HelpScreen,
+    HomeScreen,
+    MessagesScreen,
+    NetworkScreen,
+    NodeScreen,
+    SensorScreen,
+    WirelessScreen,
+)
 from pico_tui.security import SecurityManager
+from pico_tui.serial_client import SerialClient
 from pico_tui.services.controller import DomainController
 from pico_tui.services.demo import DemoProducer
 from pico_tui.services.log_manager import LogManager
-from pico_tui.widgets import (
-    CanNetworkDashboardPanel,
-    ConfigPanel,
-    EventLog,
-    ModeSelected,
-    QuickApplyRequested,
-    NetworkTreePanel,
-    NodeTelemetryPanel,
-    QuickStatusPanel,
-    TelemetryPanel,
-    WindowSelected,
-)
+from pico_tui.widgets import MessageEntry
+
+REFRESH_SECONDS = 0.5
+UI_HISTORY_SAMPLES = 120
+UI_RECENT_FRAMES = 40
+MESSAGE_HISTORY = 2000
+
+# Larguras (em colunas) que mudam a disposição das telas.
+BREAKPOINT_MEDIUM = 60
+BREAKPOINT_WIDE = 100
+BREAKPOINT_SHORT = 30
 
 
 def build_theme() -> Theme:
     return Theme(
-        name="tundra-autumn",
+        name="iot-over-can-industrial",
         primary=palette.ACCENT_FOCUS,
-        secondary=palette.ACCENT_COPPER,
-        accent=palette.ACCENT_ACTION,
+        secondary=palette.ACCENT_ACTION,
+        accent=palette.ACCENT_FOCUS,
         warning=palette.STATE_WARNING,
         error=palette.STATE_CRITICAL,
         success=palette.STATE_OK,
@@ -103,36 +105,30 @@ def build_theme() -> Theme:
 
 class PicoTuiApp(App[None]):
     CSS_PATH = "app.tcss"
-    TITLE = "iot-over-can — CAN Network Console"
-    SUB_TITLE = "desconectado"
+    TITLE = "iot-over-can"
+    ENABLE_COMMAND_PALETTE = False
 
+    # Cada ação global tem uma tecla de função e uma letra, para terminais sem
+    # teclas F (celular, SSH em tablets, consoles seriais).
     BINDINGS = [
-        Binding("f1", "show_help", "Ajuda", show=True),
-        Binding("f2", "show_menu", "Menu", show=True),
-        Binding("f3", "connection_setup", "Conexão", show=True),
-        Binding("f4", "configure_selected", "Configurar", show=True),
-        Binding("f5", "request_status", "Status", show=True),
-        Binding("f6", "show_telemetry", "Telemetria", show=False),
-        Binding("f7", "request_fft", "FFT", show=False),
-        Binding("f8", "show_dtc", "DTC", show=True),
-        Binding("f9", "show_network", "Rede", show=True),
-        Binding("f10", "exit_confirm", "Sair", show=True),
-        Binding("f11", "toggle_compact", "Compacto", show=False),
-        Binding("f12", "snapshot", "Snapshot", show=False),
-        Binding("ctrl+t", "toggle_telemetry", "Telemetria", show=False),
-        Binding("ctrl+f", "request_fft", "FFT", show=False),
-        Binding("ctrl+d", "show_dtc", "DTC", show=False),
-        Binding("ctrl+r", "reconnect", "Reconectar", show=False),
-        Binding("ctrl+p", "pause_refresh", "Pausar", show=False),
-        Binding("ctrl+g", "show_gateway", "Probe 00", show=False),
-        Binding("ctrl+n", "focus_nodes", "Nós", show=False),
-        Binding("ctrl+e", "focus_events", "Eventos", show=False),
-        Binding("ctrl+b", "show_node_detail", "Detalhe", show=False),
-        Binding("ctrl+k", "clear_dtc", "Limpar DTC", show=False),
-        Binding("ctrl+l", "can_network_commands", "Comandos CAN", show=False),
-        Binding("ctrl+o", "restart_acquisition", "Reiniciar aquisição", show=False),
-        Binding("ctrl+w", "wifi_connect", "Wi-Fi ON", show=False),
-        Binding("ctrl+y", "security_status", "Segurança", show=False),
+        Binding("f1", "show_help", "Ajuda", show=False),
+        Binding("question_mark", "show_help", "Ajuda", show=False),
+        Binding("f2", "go_home", "Início", show=False),
+        Binding("i", "go_home", "Início", show=False),
+        Binding("f3", "connection_setup", "Conexão", show=False),
+        Binding("p", "connection_setup", "Conexão", show=False),
+        Binding("f4", "open_commands", "Comandos", show=False),
+        Binding("c", "open_commands", "Comandos", show=False),
+        Binding("f5", "show_network", "Rede", show=False),
+        Binding("r", "show_network", "Rede", show=False),
+        Binding("f6", "show_messages", "Mensagens", show=False),
+        Binding("m", "show_messages", "Mensagens", show=False),
+        Binding("f7", "show_wireless", "Sensores sem fio", show=False),
+        Binding("w", "show_wireless", "Sensores sem fio", show=False),
+        # Compatibilidade com a interface anterior. O caminho principal é F7/w,
+        # sempre exposto na barra de teclas e na Ajuda.
+        Binding("ctrl+a", "show_wireless", "Sensores sem fio", show=False),
+        Binding("f10", "exit_confirm", "Sair", show=False),
         Binding("q", "exit_confirm", "Sair", show=False),
     ]
 
@@ -146,6 +142,9 @@ class PicoTuiApp(App[None]):
         enable_file_log: bool = True,
         security_mode: str = "presence",
         security_config: str | None = None,
+        show_messages: bool | None = None,
+        ascii_symbols: bool | None = None,
+        preferences_path: str | Path | None = None,
     ) -> None:
         super().__init__()
         self.initial_port = port
@@ -154,6 +153,13 @@ class PicoTuiApp(App[None]):
         self.demo_requested = demo
         self.enable_file_log = enable_file_log
         self.security = SecurityManager(security_mode, security_config)
+        self.preferences_path = preferences_path
+        self.preferences, self._preferences_warning = load_preferences(preferences_path)
+        # Opções de linha de comando valem só para a sessão e não alteram o arquivo.
+        self._messages_override = show_messages
+        # --ascii vale só para a sessão: não é gravado em tui.json quando outra
+        # preferência for salva depois.
+        pres.use_ascii_symbols(self.preferences.ascii_symbols if ascii_symbols is None else ascii_symbols)
 
         self.bus = EventBus()
         self.state_store = StateStore()
@@ -175,12 +181,14 @@ class PicoTuiApp(App[None]):
         self._last_ping_sent: float | None = None
         self._device_auth_until = 0.0
         self._pending_device_command: str | None = None
+        # Comandos mutáveis emitidos enquanto a autenticação do firmware está em
+        # curso: são enviados em ordem logo após OK AUTH_UNLOCKED.
+        self._pending_device_queue: list[str] = []
         self._device_auth_inflight = False
-        self._manual_compact: bool | None = None
-        self._refresh_paused = False
-        self._last_selected_id: str | None = None
         self._connecting = False
+        self._action_running = False
         self.log_messages: list[str] = []
+        self.message_history: deque[MessageEntry] = deque(maxlen=MESSAGE_HISTORY)
 
         # Compatibilidade com o programa-base e os testes existentes.
         self.connected = False
@@ -190,38 +198,21 @@ class PicoTuiApp(App[None]):
         self.simulate_on = False
         self.port_name = ""
 
-    def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
-        yield Static(id="status-bar")
-        with Horizontal(id="main-row"):
-            with Vertical(id="left-col"):
-                yield NetworkTreePanel()
-                yield QuickStatusPanel()
-            with Vertical(id="center-col"):
-                yield CanNetworkDashboardPanel()
-                vibration_panel = TelemetryPanel()
-                vibration_panel.display = False
-                yield vibration_panel
-                yield EventLog()
-            with Vertical(id="right-col"):
-                yield NodeTelemetryPanel()
-                vibration_config = ConfigPanel()
-                vibration_config.display = False
-                yield vibration_config
-        yield Input(
-            placeholder="Comando direto ou :can, :node 04, :node 04.01, :connect, :status",
-            id="command-input",
-        )
-        yield Footer()
+    # ------------------------------------------------------------------
+    # Ciclo de vida
+    # ------------------------------------------------------------------
+
+    def get_default_screen(self) -> Screen:
+        return HomeScreen()
 
     def on_mount(self) -> None:
         self.register_theme(build_theme())
-        self.theme = "tundra-autumn"
+        self.theme = "iot-over-can-industrial"
+        self._apply_breakpoints(self.size.width, self.size.height)
         self._register_event_handlers()
         self.run_worker(self._process_lines(), group="decoder", exclusive=True)
-        self.set_interval(0.35, self._refresh_ui)
+        self.set_interval(REFRESH_SECONDS, self._refresh_ui)
         self.set_interval(1.0, self._expire_fragment_transfers)
-        self._refresh_status_bar()
         self._boot()
 
     async def on_unmount(self) -> None:
@@ -241,6 +232,8 @@ class PicoTuiApp(App[None]):
     @work
     async def _boot(self) -> None:
         await self.bus.publish(LogEvent("INFO", f"Sessão {self.session_id} iniciada", "TUI"))
+        if self._preferences_warning:
+            await self.bus.publish(LogEvent("WARNING", self._preferences_warning, "TUI"))
         if self.security.config_error:
             await self.bus.publish(LogEvent("ERROR", self.security.last_reason, "SECURITY"))
             self.notify(self.security.last_reason, title="Segurança", severity="error", timeout=10)
@@ -266,12 +259,12 @@ class PicoTuiApp(App[None]):
             await self.bus.publish(
                 LogEvent(
                     "INFO",
-                    "TUI iniciada sem conexão serial. Use F3, Menu > Conexão ou :connect.",
+                    "TUI iniciada sem conexão serial. Use F3 (ou p) para conectar.",
                     "SERIAL",
                 )
             )
             self.notify(
-                "Sem hardware conectado. A TUI está disponível em modo offline; use F3 ou :connect para conectar.",
+                "Nenhum equipamento conectado. Pressione F3 ou p para escolher a porta.",
                 title="iot-over-can",
                 timeout=6,
             )
@@ -292,6 +285,7 @@ class PicoTuiApp(App[None]):
                 severity="warning",
                 timeout=7,
             )
+
 
     async def _open_connection_dialog(self, *, exit_on_cancel: bool = False) -> None:
         choice = await self.push_screen_wait(
@@ -348,7 +342,7 @@ class PicoTuiApp(App[None]):
         self.serial_client = client
         self.connected = True
         self.port_name = port
-        client.set_console_echo_filter(mode.lower() != "gateway")
+        client.set_console_echo_filter(mode.lower() not in {"gateway", "probe"})
         client.start_reading(
             on_line=lambda line: self.call_from_thread(self._enqueue_line, line),
             on_error=lambda error: self.call_from_thread(self._serial_error, error),
@@ -359,6 +353,7 @@ class PicoTuiApp(App[None]):
         forced = {
             "gateway": ConnectionMode.GATEWAY_CAN,
             "gateway_can": ConnectionMode.GATEWAY_CAN,
+            "probe": ConnectionMode.GATEWAY_CAN,
             "sensor": ConnectionMode.SENSOR_DIRECT,
             "sensor_direct": ConnectionMode.SENSOR_DIRECT,
         }.get(mode.lower())
@@ -366,8 +361,8 @@ class PicoTuiApp(App[None]):
             await self.bus.publish(ConnectionModeDetected(forced))
         await self._send_probe(mode)
         self._connecting = False
-        self.query_one("#command-input", Input).focus()
         return True
+
 
     async def _send_probe(self, mode: str) -> None:
         normalized = mode.lower()
@@ -379,7 +374,7 @@ class PicoTuiApp(App[None]):
                 await asyncio.sleep(0.05)
             return
 
-        if normalized in {"gateway", "gateway_can"}:
+        if normalized in {"gateway", "gateway_can", "probe"}:
             self._send_raw("PROBE_VERSION")
             await asyncio.sleep(0.12)
             self._send_raw("PROBE_STATUS")
@@ -408,6 +403,7 @@ class PicoTuiApp(App[None]):
         self.serial_client = None
         self._device_auth_until = 0.0
         self._pending_device_command = None
+        self._pending_device_queue.clear()
         self._device_auth_inflight = False
         if client:
             client.close()
@@ -445,7 +441,7 @@ class PicoTuiApp(App[None]):
         if event.level.upper() != "DEBUG":
             return False
         message = event.message.strip()
-        if event.source in {"GATEWAY", "SERIAL"} and (
+        if event.source in {"PROBE", "GATEWAY", "SERIAL"} and (
             message.startswith("GW_UNPARSED:") or message.startswith("AUTO_UNPARSED:")
         ):
             return True
@@ -455,31 +451,27 @@ class PicoTuiApp(App[None]):
             return True
         return False
 
+
     async def _on_log_event(self, event: LogEvent) -> None:
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_messages.append(f"{timestamp} [{event.level}] {event.source}: {event.message}")
+        clock = datetime.now().strftime("%H:%M:%S")
+        self.log_messages.append(f"{clock} [{event.level}] {event.source}: {event.message}")
         if len(self.log_messages) > 3000:
             del self.log_messages[:1000]
-        # O LogManager continua persistindo DEBUG bruto em JSONL. O painel
-        # central, porém, é um EventLog operacional e não um console serial.
+        # O LogManager continua persistindo DEBUG bruto em JSONL. A interface
+        # mostra um registro operacional, não um console serial.
         if self._event_is_main_log_noise(event):
             return
-        colors = {
-            "DEBUG": palette.TEXT_DIM,
-            "INFO": palette.STATE_INFO,
-            "WARNING": palette.STATE_WARNING,
-            "ERROR": palette.STATE_CRITICAL,
-            "CRITICAL": palette.STATE_CRITICAL,
-        }
-        color = colors.get(event.level.upper(), palette.TEXT_PRIMARY)
-        safe = event.message.replace("[", "\\[")
-        try:
-            self.query_one(EventLog).write(
-                f"[{palette.TEXT_DIM}]{timestamp}[/] [{color}][{event.level.upper()}][/] "
-                f"[{palette.TEXT_MUTED}]{event.source}[/] {safe}"
-            )
-        except Exception:
-            pass
+        entry = MessageEntry(clock, event.level, event.source, event.message)
+        self.message_history.append(entry)
+        if entry.level == "DEBUG" and not self.preferences.show_debug_messages:
+            return
+        for screen in self.screen_stack:
+            add = getattr(screen, "add_message", None)
+            if add is not None:
+                try:
+                    add(entry)
+                except NoMatches:
+                    pass
 
     async def _on_mode_detected(self, event: ConnectionModeDetected) -> None:
         if self.serial_client:
@@ -487,6 +479,7 @@ class PicoTuiApp(App[None]):
         await self.bus.publish(LogEvent("INFO", f"Modo detectado: {event.mode.value}", "PROTOCOL"))
         # O handshake é serializado exclusivamente por _send_probe(); não envie
         # uma segunda rajada de VERSION/STATUS/GET durante a detecção automática.
+
 
     async def _on_command_ack(self, event: CommandAck) -> None:
         command_upper = (event.command or "").upper()
@@ -496,12 +489,16 @@ class PicoTuiApp(App[None]):
             pending = self._pending_device_command
             self._pending_device_command = None
             await self.bus.publish(LogEvent("INFO", "Firmware autenticado; enviando comando pendente.", "SECURITY"))
+            queued, self._pending_device_queue = self._pending_device_queue, []
             if pending:
                 self._send_raw(pending)
+            for queued_command in queued:
+                self._send_raw(queued_command)
         elif command_upper.startswith("AUTH_") and event.state in {"FAILED", "REJECTED"}:
             self._device_auth_until = 0.0
             self._device_auth_inflight = False
             self._pending_device_command = None
+            self._pending_device_queue.clear()
 
         tx = f" tx={event.transaction_id}" if event.transaction_id else ""
         self.state_store.set_last_action(f"{event.state}: {event.command}{tx}")
@@ -513,9 +510,29 @@ class PicoTuiApp(App[None]):
                 sensor.child_id,
                 transaction_state=event.state,
             )
+        if sensor and event.state in {"FAILED", "REJECTED"} and not command_upper.startswith("AUTH_"):
+            reason = str(event.payload.get("REASON", "")) if event.payload else ""
+            self.state_store.add_sensor_incident(
+                sensor.parent_node_id,
+                sensor.child_id,
+                Severity.WARNING,
+                "COMANDO",
+                f"Comando recusado pelo sensor: {reason or event.command}",
+                key=f"command:{event.command}",
+            )
+        node_id = event.payload.get("NODE") if event.payload else None
+        if isinstance(node_id, int) and event.state in {"APPLIED", "REJECTED"} and self.state_store.find_node(node_id):
+            self.state_store.add_node_incident(
+                node_id,
+                Severity.INFO if event.state == "APPLIED" else Severity.WARNING,
+                "COMANDO",
+                f"Comando {'aplicado' if event.state == 'APPLIED' else 'recusado'} pelo módulo: {event.command}",
+                key=f"command:{event.command}:{event.state}",
+            )
         await self.bus.publish(LogEvent("INFO", f"{event.state}: {event.command}{tx}", "COMMAND"))
         if event.state == "APPLIED" and self.state_store.snapshot().connection_mode == ConnectionMode.SENSOR_DIRECT:
             self._send_raw("STATUS")
+
 
     async def _on_transfer_completed(self, event: TransferCompleted) -> None:
         await self.bus.publish(
@@ -540,53 +557,50 @@ class PicoTuiApp(App[None]):
         await self.bus.publish(
             LogEvent(
                 level,
-                f"{event.parent_node_id:02d}.{event.child_id:02d} DTC 0x{event.record.code:04X} — "
-                f"{dtc_description(event.record.code)} — severity={event.record.severity.value}",
+                f"Sensor {event.parent_node_id:02d}.{event.child_id:02d}: DTC 0x{event.record.code:04X}, "
+                f"{dtc_description(event.record.code)} "
+                f"(gravidade {pres.level_label(pres.severity_level(event.record.severity)).lower()})",
                 "DTC",
             )
         )
         if event.record.severity.value == "CRITICAL":
-            self.notify(f"DTC crítico 0x{event.record.code:04X}", severity="error", timeout=5)
+            self.notify(
+                f"Sensor {event.parent_node_id:02d}.{event.child_id:02d}: {dtc_description(event.record.code)}",
+                title=f"DTC crítico 0x{event.record.code:04X}",
+                severity="error",
+                timeout=8,
+            )
 
     async def _on_spectrum_received(self, event: SpectrumReceived) -> None:
         await self.bus.publish(
             LogEvent("INFO", f"FFT recebida de {event.sample.logical_id}: {len(event.sample.magnitudes)} bins", "FFT")
         )
 
-    def _refresh_ui(self) -> None:
-        if self._refresh_paused:
-            return
+
+    def refresh_now(self) -> None:
+        self._refresh_ui(force=True)
+
+    def _refresh_ui(self, force: bool = False) -> None:
         self.state_store.refresh_freshness()
-        state = self.state_store.snapshot()
-        selected = self.state_store.find_sensor(state.selected_logical_id) if state.selected_logical_id else None
-        selected_node = self.state_store.find_node(state.selected_node_id)
+        state = self.state_store.snapshot(history=UI_HISTORY_SAMPLES, frames=UI_RECENT_FRAMES)
+        # Seleção implícita: comandos internos sem alvo (:tel on, :dtc list)
+        # usam o primeiro sensor quando nada foi aberto ainda.
+        if state.selected_logical_id is None and state.selected_node_id is None:
+            first = self.state_store.first_sensor_id()
+            if first:
+                self.state_store.set_selected(first)
+                state.selected_logical_id = first
+        selected = None
+        if state.selected_logical_id:
+            selected = _find_in_state(state, state.selected_logical_id)
         self._sync_compatibility_fields(state, selected)
-
-        # Em versões mais antigas do Textual, ``App.query_one`` pesquisa apenas
-        # a tela atualmente ativa. Enquanto um modal está aberto, os widgets da
-        # tela principal não fazem parte dessa árvore e ``NoMatches`` é normal.
-        # O estado continua sendo atualizado e será renderizado no próximo ciclo
-        # após o fechamento do modal.
-        try:
-            self.query_one(NetworkTreePanel).refresh_state(state)
-            self.query_one(CanNetworkDashboardPanel).refresh_state(state, selected_node, selected)
-            self.query_one(NodeTelemetryPanel).refresh_state(state)
-
-            vibration_selected = bool(
-                selected
-                and (selected.profile_id or "").upper() == "VIBRATION"
-            )
-            telemetry_panel = self.query_one(TelemetryPanel)
-            config_panel = self.query_one(ConfigPanel)
-            telemetry_panel.display = vibration_selected
-            config_panel.display = vibration_selected
-            telemetry_panel.show_sensor(selected if vibration_selected else None)
-            config_panel.show_sensor(selected if vibration_selected else None)
-
-            self.query_one(QuickStatusPanel).refresh_state(state, selected)
-            self._refresh_status_bar(state)
-        except NoMatches:
-            return
+        screen = self.screen
+        if isinstance(screen, BaseScreen):
+            try:
+                screen.refresh_view(state)
+            except NoMatches:
+                # A tela ainda está montando; o próximo ciclo atualiza.
+                pass
 
     def _expire_fragment_transfers(self) -> None:
         self.run_worker(
@@ -604,59 +618,6 @@ class PicoTuiApp(App[None]):
             self.telemetry_on = selected.health.telemetry_enabled
             self.simulate_on = selected.configuration.simulation_enabled
 
-    def _refresh_status_bar(self, state: Any | None = None) -> None:
-        state = state or self.state_store.snapshot()
-        selected = state.selected_logical_id or (f"Node {state.selected_node_id:02d}" if state.selected_node_id is not None else "rede")
-        conn_color = palette.STATE_OK if self.connected else palette.STATE_WARNING
-        paused = f"  [{palette.STATE_WARNING}]PAUSADO[/]" if self._refresh_paused else ""
-        try:
-            status_bar = self.query_one("#status-bar", Static)
-        except NoMatches:
-            return
-        status_bar.update(
-            f"[b {conn_color}]{state.connection_state.value}[/]  │  "
-            f"{state.connection_mode.value}  │  porta={state.port or 'N/A'}  │  "
-            f"alvo=[b]{selected}[/b]  │  CAN={state.gateway.can_state}  │  "
-            f"{self.security.status_label()}  │  RX={state.network.frames_rx} CRC={state.network.crc_errors}{paused}"
-        )
-        self.sub_title = f"{state.connection_mode.value} | {selected} | sessão {self.session_id}"
-
-    @on(Tree.NodeSelected, "#node-tree")
-    def _node_selected(self, event: Tree.NodeSelected) -> None:
-        data = event.node.data
-        if isinstance(data, tuple) and data:
-            if data[0] == "node":
-                node_id = int(data[1])
-                self.state_store.set_selected_node(node_id)
-                self._last_selected_id = None
-                self.run_worker(self._open_can_node_detail(node_id))
-            elif data[0] == "sensor":
-                logical_id = f"{int(data[1]):02d}.{int(data[2]):02d}"
-                self.state_store.set_selected(logical_id)
-                self._last_selected_id = logical_id
-
-    @on(Input.Submitted, "#command-input")
-    def _command_submitted(self, event: Input.Submitted) -> None:
-        text = event.value.strip()
-        event.input.value = ""
-        if not text:
-            return
-        if text.startswith(":"):
-            self.run_worker(self._execute_internal_command(text[1:]))
-        else:
-            self._send_raw(text)
-
-    @on(ModeSelected)
-    def _mode_selected(self, event: ModeSelected) -> None:
-        self.run_worker(self._stage_field("MODE", event.mode))
-
-    @on(WindowSelected)
-    def _window_selected(self, event: WindowSelected) -> None:
-        self.run_worker(self._stage_field("WINDOW", event.window))
-
-    @on(QuickApplyRequested)
-    def _quick_apply_requested(self) -> None:
-        self.run_worker(self._apply_quick_configuration())
 
     def _send_raw(self, command: str) -> bool:
         if self.demo_requested or self.state_store.snapshot().connection_mode == ConnectionMode.DEMO:
@@ -698,9 +659,13 @@ class PicoTuiApp(App[None]):
                     pass
                 return False
             if self._device_auth_inflight:
-                reason = "Autenticação do firmware em andamento; aguarde o ACK antes de outro comando mutável."
-                self.run_worker(self.bus.publish(LogEvent("WARNING", reason, "SECURITY")))
-                return False
+                if len(self._pending_device_queue) >= 32:
+                    reason = "Muitos comandos aguardando a autenticação do firmware; comando descartado."
+                    self.run_worker(self.bus.publish(LogEvent("WARNING", reason, "SECURITY")))
+                    return False
+                self._pending_device_queue.append(command)
+                self.run_worker(self.bus.publish(LogEvent("DEBUG", "Comando aguardando autenticação do firmware", "SECURITY")))
+                return True
             try:
                 # O segredo nunca passa pelo EventLog nem pelo histórico visual da TUI.
                 # O comando original só é transmitido após receber OK AUTH_UNLOCKED.
@@ -812,6 +777,7 @@ class PicoTuiApp(App[None]):
             target = args[0]
             if "." in target and self.state_store.find_sensor(target):
                 self.state_store.set_selected(target)
+                self.open_target(f"sensor:{target}")
             else:
                 try:
                     node_id = int(target, 0)
@@ -819,6 +785,7 @@ class PicoTuiApp(App[None]):
                     node_id = int(target, 16) if all(c in "0123456789abcdefABCDEF" for c in target) else -1
                 if self.state_store.find_node(node_id):
                     self.state_store.set_selected_node(node_id)
+                    self.open_target(f"node:{node_id:02d}")
                 else:
                     await self.bus.publish(LogEvent("WARNING", f"Alvo {target} não encontrado", "COMMAND"))
         elif cmd == "tel":
@@ -847,6 +814,12 @@ class PicoTuiApp(App[None]):
             await self._send_network_command("Solicitar status global", "22 20 FF 00")
         elif cmd == "can":
             await self._command_can(args)
+        elif cmd in {"bind", "associar"}:
+            await self._command_wireless_bind(args)
+        elif cmd in {"unbind", "desassociar"}:
+            await self._command_wireless_unbind(args)
+        elif cmd in {"wireless", "semfio", "sem-fio"}:
+            self.action_show_wireless()
         elif cmd == "disconnect":
             await self._disconnect()
         elif cmd == "reconnect":
@@ -859,19 +832,33 @@ class PicoTuiApp(App[None]):
                 await self._open_connection_dialog()
         elif cmd == "export" and args and args[0].lower() == "csv":
             self._export_csv()
+        elif cmd == "snapshot":
+            # Substitui o antigo F12: estado completo em exports/snapshot_*.json.
+            self.action_snapshot()
         elif cmd == "save" and args and args[0].lower() == "log":
             await self.bus.publish(LogEvent("INFO", "O log JSONL é persistido continuamente", "LOG"))
+        elif cmd in {"home", "inicio", "início"}:
+            self.action_go_home()
+        elif cmd in {"messages", "mensagens", "log"}:
+            self.action_show_messages()
         elif cmd in {"quit", "exit"}:
             self.action_exit_confirm()
         else:
             await self.bus.publish(LogEvent("ERROR", f"Comando interno desconhecido: {cmd}", "COMMAND"))
 
+
     async def _send_network_command(self, label: str, command: str) -> None:
+        if self.state_store.snapshot(history=0, frames=0).connection_mode == ConnectionMode.DEMO:
+            self._send_raw(command)
+            self.state_store.set_last_action(f"{label}: {command} (demonstração, nada foi enviado)")
+            await self.bus.publish(LogEvent("INFO", f"{label}: {command}", "CAN"))
+            return
         if not self.serial_client or not self.serial_client.is_open:
             await self.bus.publish(LogEvent("ERROR", f"Não conectado: {label}", "CAN"))
-            self.notify("Conecte a uma porta serial antes de enviar comandos CAN.", severity="warning")
+            self.notify("Conecte-se a uma porta serial (F3) antes de enviar comandos.", severity="warning")
             return
         if self._send_raw(command):
+            self.state_store.set_last_action(f"{label}: {command}")
             await self.bus.publish(LogEvent("INFO", f"{label}: {command}", "CAN"))
 
     async def _command_can(self, args: list[str]) -> None:
@@ -879,23 +866,124 @@ class PicoTuiApp(App[None]):
             command = " ".join(args)
             await self._send_network_command("Comando CAN manual", command)
             return
-
-        state = self.state_store.snapshot()
-        node = self.state_store.find_node(state.selected_node_id)
-
-        # Sem nó selecionado, :can abre os comandos globais da rede.
+        state = self.state_store.snapshot(history=0, frames=0)
+        node = self.state_store.find_node(state.selected_node_id) if state.selected_node_id is not None else None
+        # Sem módulo selecionado, :can abre os comandos da rede inteira.
         if node is None:
-            request = await self.push_screen_wait(CanNetworkCommandScreen())
-            if request:
-                await self._send_network_command(request.label, request.command)
+            self.open_commands("network")
             return
+        self.open_commands(f"node:{node.parent_node_id:02d}")
 
-        request = await self.push_screen_wait(CanNodeCommandScreen(node))
-        if request:
-            await self._send_network_command(
-                f"Comando CAN para Node {request.node_id:02d}",
-                request.command,
+
+    def _wireless_observations(self, wireless_uuid: str, *, max_age_s: float = 15.0) -> list[tuple[int, int]]:
+        """Retorna observações BLE recentes (módulo, RSSI), melhor sinal primeiro."""
+
+        now = time.monotonic()
+        state = self.state_store.snapshot(history=0, frames=0)
+        observations: list[tuple[int, int]] = []
+        for node_id, node in state.nodes.items():
+            candidate = next(
+                (item for item in node.wireless_candidates.values() if item.wireless_uuid.lower() == wireless_uuid.lower()),
+                None,
             )
+            if candidate is None:
+                continue
+            if candidate.last_seen_monotonic and now - candidate.last_seen_monotonic > max_age_s:
+                continue
+            observations.append((node_id, candidate.rssi_dbm))
+        observations.sort(key=lambda item: item[1], reverse=True)
+        return observations
+
+    def _associated_sensor_by_uuid(self, wireless_uuid: str):
+        for node in self.state_store.snapshot(history=0, frames=0).nodes.values():
+            for sensor in node.sensors.values():
+                if (
+                    sensor.wireless_uuid
+                    and sensor.wireless_uuid.lower() == wireless_uuid.lower()
+                    and sensor.association_state.upper() != "UNBOUND"
+                ):
+                    return sensor
+        return None
+
+    def _best_wireless_observation(self, wireless_uuid: str | None = None) -> tuple[str, int] | None:
+        state = self.state_store.snapshot(history=0, frames=0)
+        associated = {
+            sensor.wireless_uuid.lower()
+            for node in state.nodes.values()
+            for sensor in node.sensors.values()
+            if sensor.wireless_uuid and sensor.association_state.upper() != "UNBOUND"
+        }
+        now = time.monotonic()
+        best: tuple[str, int, int] | None = None
+        for node_id, node in state.nodes.items():
+            for candidate in node.wireless_candidates.values():
+                if candidate.wireless_uuid.lower() in associated:
+                    continue
+                if wireless_uuid and candidate.wireless_uuid.lower() != wireless_uuid.lower():
+                    continue
+                if candidate.last_seen_monotonic and now - candidate.last_seen_monotonic > 15.0:
+                    continue
+                if best is None or candidate.rssi_dbm > best[2]:
+                    best = (candidate.wireless_uuid, node_id, candidate.rssi_dbm)
+        return (best[0], best[1]) if best is not None else None
+
+    async def _command_wireless_bind(self, args: list[str]) -> None:
+        uuid_value: str | None = None
+        node_id: int | None = None
+        if args and args[0].lower() not in {"best", "auto"}:
+            uuid_value = args[0]
+        if len(args) > 1:
+            try:
+                node_id = int(args[1], 0)
+            except ValueError:
+                await self.bus.publish(LogEvent("ERROR", f"Módulo inválido: {args[1]}", "BLE"))
+                return
+        if uuid_value:
+            existing = self._associated_sensor_by_uuid(uuid_value)
+            if existing is not None:
+                await self.bus.publish(
+                    LogEvent(
+                        "WARNING",
+                        f"{uuid_value} já está associado como {existing.logical_id}; desassocie antes de migrar",
+                        "BLE",
+                    )
+                )
+                return
+        best = self._best_wireless_observation(uuid_value)
+        if best is None:
+            await self.bus.publish(LogEvent("WARNING", "Nenhum candidato wireless recente foi observado", "BLE"))
+            return
+        resolved_uuid, recommended_node = best
+        target = node_id if node_id is not None else recommended_node
+        if self._send_raw(commands.wireless_association("BIND", target, resolved_uuid)):
+            await self.bus.publish(LogEvent("INFO", f"Associação solicitada: {resolved_uuid} → Módulo {target:02d}", "BLE"))
+
+    async def _command_wireless_unbind(self, args: list[str]) -> None:
+        if not args:
+            sensor = self._selected_sensor()
+            if sensor is None or not sensor.wireless_uuid or sensor.association_state.upper() == "UNBOUND":
+                await self.bus.publish(
+                    LogEvent("WARNING", "Uso: :unbind <uuid> [módulo] ou selecione um sensor associado", "BLE")
+                )
+                return
+            uuid_value = sensor.wireless_uuid
+            node_id = sensor.parent_node_id
+        else:
+            uuid_value = args[0]
+            if len(args) > 1:
+                try:
+                    node_id = int(args[1], 0)
+                except ValueError:
+                    await self.bus.publish(LogEvent("ERROR", f"Módulo inválido: {args[1]}", "BLE"))
+                    return
+            else:
+                sensor = self._associated_sensor_by_uuid(uuid_value)
+                if sensor is None:
+                    await self.bus.publish(LogEvent("WARNING", f"Associação não encontrada para {uuid_value}", "BLE"))
+                    return
+                node_id = sensor.parent_node_id
+        if self._send_raw(commands.wireless_association("UNBIND", node_id, uuid_value)):
+            await self.bus.publish(LogEvent("INFO", f"Desassociação solicitada: {uuid_value} do Módulo {node_id:02d}", "BLE"))
 
     async def _command_tel(self, args: list[str]) -> None:
         if not args:
@@ -994,7 +1082,7 @@ class PicoTuiApp(App[None]):
             await self.bus.publish(
                 LogEvent(
                     "WARNING",
-                    "Uso: :acq polling. ACQ DRDY não pertence à baseline atual.",
+                    "Uso: :acq polling. ACQ DRDY não faz parte do fluxo operacional atual.",
                     "COMMAND",
                 )
             )
@@ -1143,7 +1231,7 @@ class PicoTuiApp(App[None]):
             return
         mode = self.state_store.snapshot().connection_mode
         if mode == ConnectionMode.SENSOR_DIRECT:
-            # A baseline direta oferece limpeza global com o comando literal DTC CLEAR.
+            # A conexão direta oferece limpeza global com o comando literal DTC CLEAR.
             self._send_raw(commands.direct_dtc_clear())
         elif mode == ConnectionMode.DEMO:
             self.state_store.clear_dtc(sensor.parent_node_id, sensor.child_id, code)
@@ -1239,113 +1327,6 @@ class PicoTuiApp(App[None]):
         output.write_text(json.dumps(_jsonable(self.state_store.snapshot()), ensure_ascii=False, indent=2), encoding="utf-8")
         return output
 
-    def action_show_help(self) -> None:
-        self.push_screen(HelpScreen())
-
-    @work
-    async def action_show_menu(self) -> None:
-        selected = self._selected_sensor()
-        action = await self.push_screen_wait(MainMenuScreen(selected.profile_id if selected else ""))
-        if not action:
-            return
-        mapping = {
-            "connection": self.action_connection_setup,
-            "nodes": self.action_show_node_navigator,
-            "telemetry": self.action_show_telemetry,
-            "fft": self.action_request_fft,
-            "dtc": self.action_show_dtc,
-            "config": self.action_configure_selected,
-            "network": self.action_show_network,
-            "can_commands": self.action_can_network_commands,
-            "wifi_on": self.action_wifi_connect,
-            "wifi_off": lambda: self.run_worker(self._set_wifi(False)),
-            "gateway": self.action_show_gateway,
-            "logs": self.action_focus_events,
-            "help": self.action_show_help,
-            "quit": self.action_exit_confirm,
-        }
-        callback = mapping.get(action)
-        if callback:
-            callback()
-
-    @work
-    async def action_show_node_navigator(self) -> None:
-        state = self.state_store.snapshot()
-        target = await self.push_screen_wait(
-            NodeNavigatorScreen(state, state.selected_logical_id)
-        )
-        if target:
-            if target.startswith("node:"):
-                node_id = int(target.split(":", 1)[1])
-                self.state_store.set_selected_node(node_id)
-                self._last_selected_id = None
-                await self.bus.publish(LogEvent("INFO", f"Módulo CAN selecionado: Node {node_id:02d}", "NAVIGATION"))
-            else:
-                self.state_store.set_selected(target)
-                self._last_selected_id = target
-                await self.bus.publish(LogEvent("INFO", f"Sensor wireless selecionado: {target}", "NAVIGATION"))
-            try:
-                self.query_one("#node-tree", Tree).focus()
-            except NoMatches:
-                pass
-
-    def action_focus_nodes(self) -> None:
-        self.query_one("#node-tree", Tree).focus()
-
-    def action_show_telemetry(self) -> None:
-        sensor = self._selected_sensor()
-        if sensor is None:
-            self.notify("Selecione um sensor wireless", severity="warning")
-            return
-        if (sensor.profile_id or "").upper() != "VIBRATION":
-            self.notify(
-                f"Não há tela especializada para PROFILE={sensor.profile_id or 'UNKNOWN'}.",
-                severity="warning",
-            )
-            return
-        self.push_screen(TelemetryScreen(sensor.logical_id, self.state_store.find_sensor))
-
-    # Compatibilidade com chamadas internas e versões anteriores.
-    def action_focus_telemetry(self) -> None:
-        self.action_show_telemetry()
-
-    def action_focus_events(self) -> None:
-        self.query_one("#event-log").focus()
-
-    def action_request_status(self) -> None:
-        self.run_worker(self._request_status())
-
-    def action_toggle_telemetry(self) -> None:
-        self.run_worker(self._set_telemetry(not self.telemetry_on))
-
-    @on(TelemetryCommandRequested)
-    def _telemetry_command_requested(self, event: TelemetryCommandRequested) -> None:
-        self.state_store.set_selected(event.logical_id)
-        self.run_worker(self._execute_telemetry_control(event.action, event.value))
-
-    @work
-    async def action_configure_selected(self) -> None:
-        sensor = self._selected_sensor()
-        state = self.state_store.snapshot()
-        if sensor is None:
-            node = self.state_store.find_node(state.selected_node_id)
-            if node is None:
-                self.notify("Selecione um módulo CAN ou sensor", severity="warning")
-                return
-            request_node = await self.push_screen_wait(CanNodeCommandScreen(node))
-            if request_node:
-                self._send_raw(request_node.command)
-                await self.bus.publish(LogEvent("INFO", f"Comando CAN enviado para Node {request_node.node_id:02d}: {request_node.command}", "CAN"))
-            return
-        if (sensor.profile_id or "").upper() != "VIBRATION":
-            self.notify(
-                f"Configuração especializada ainda não implementada para PROFILE={sensor.profile_id or 'UNKNOWN'}.",
-                severity="warning",
-            )
-            return
-        request = await self.push_screen_wait(ConfigScreen(sensor))
-        if request:
-            await self._apply_config_request(sensor.logical_id, request)
 
     async def _apply_config_request(self, logical_id: str, request: ConfigRequest) -> None:
         sensor = self.state_store.find_sensor(logical_id)
@@ -1396,149 +1377,326 @@ class PicoTuiApp(App[None]):
                 )
             )
 
-    @work
-    async def action_request_fft(self) -> None:
-        sensor = self._selected_sensor()
-        if sensor is None:
-            self.notify("Selecione um sensor wireless", severity="warning")
-            return
-        if (sensor.profile_id or "").upper() != "VIBRATION":
-            self.notify("FFT disponível apenas para PROFILE=VIBRATION.", severity="warning")
-            return
-        request = await self.push_screen_wait(FftRequestScreen(sensor.logical_id))
-        if request:
-            requested_at = time.time()
-            sent = await self._request_fft_for_selected(request.bins, request.mode)
-            if sent:
-                self.push_screen(
-                    FftViewScreen(
-                        sensor.logical_id,
-                        self.state_store.find_sensor,
-                        requested_at=requested_at,
-                    )
-                )
 
-    @work
-    async def action_show_dtc(self) -> None:
-        sensor = self._selected_sensor()
-        if sensor is not None:
-            result = await self.push_screen_wait(DtcScreen(sensor))
-            if result == "all":
-                confirmed = await self.push_screen_wait(
-                    ConfirmScreen("LIMPAR DTCs", f"Apagar todos os DTCs ativos do sensor {sensor.logical_id}?")
-                )
-                if confirmed:
-                    await self._send_dtc_clear(None)
-            elif result and result.startswith("one:"):
-                code_text = result.split(":", 1)[1]
-                try:
-                    code = int(code_text, 0)
-                except ValueError:
-                    code = int(code_text)
-                await self._send_dtc_clear(code)
-            return
+    # ------------------------------------------------------------------
+    # Navegação e ações globais
+    # ------------------------------------------------------------------
 
-        state = self.state_store.snapshot()
-        node = self.state_store.find_node(state.selected_node_id)
-        if node is not None:
-            await self.push_screen_wait(
-                CanNodeDtcScreen(node.parent_node_id, self.state_store.find_node)
+    def global_hints(self, *, home: bool, commands: bool = True, help: bool = True) -> list[tuple[str, str, str | None]]:
+        hints: list[tuple[str, str, str | None]] = []
+        if not home:
+            hints.append(("F2/i", "Início", "app.go_home"))
+        if commands:
+            hints.append(("F4/c", "Comandos", "app.open_commands"))
+        if home:
+            hints.extend(
+                [
+                    ("F3/p", "Conexão", "app.connection_setup"),
+                    ("F5/r", "Rede", "app.show_network"),
+                    ("F6/m", "Mensagens", "app.show_messages"),
+                    ("F7/w", "Sensores sem fio", "app.show_wireless"),
+                ]
             )
-            return
+        if help:
+            hints.append(("F1/?", "Ajuda", "app.show_help"))
+        if home:
+            hints.append(("F10/q", "Sair", "app.exit_confirm"))
+        return hints
 
-        self.notify("Selecione um módulo CAN ou sensor wireless", severity="warning")
+    def security_label(self) -> str:
+        label = self.security.status_label()
+        return {
+            "SEC=OFF": "desligada",
+            "SEC=YUBIKEY": "com YubiKey",
+            "SEC=LOCKED": "bloqueada, sem YubiKey",
+            "SEC=CONFIG_ERROR": "com erro de configuração",
+        }.get(label, label.replace("SEC=", "").lower())
+
+    @property
+    def messages_on_home(self) -> bool:
+        if self._messages_override is not None:
+            return self._messages_override
+        return self.preferences.show_messages_on_home
+
+    def set_messages_on_home(self, visible: bool) -> None:
+        self._messages_override = None
+        self.set_preference("show_messages_on_home", visible)
+        for screen in self.screen_stack:
+            if isinstance(screen, HomeScreen):
+                screen.set_messages_visible(visible)
+
+    def set_preference(self, name: str, value: bool) -> None:
+        setattr(self.preferences, name, value)
+        error = save_preferences(self.preferences, self.preferences_path)
+        if error:
+            self.notify(error, severity="warning", timeout=6)
+
+    def visible_messages(self) -> list[MessageEntry]:
+        show_debug = self.preferences.show_debug_messages
+        return [entry for entry in self.message_history if show_debug or entry.level != "DEBUG"]
+
+    def _modal_open(self) -> bool:
+        return isinstance(self.screen, ModalScreen)
+
+    def _replace_top(self, screen: Screen) -> None:
+        """Abre uma tela de primeiro nível sem empilhar indefinidamente."""
+
+        while len(self.screen_stack) > 1 and not isinstance(self.screen, ModalScreen):
+            self.pop_screen()
+        self.push_screen(screen)
+
+    def action_go_home(self) -> None:
+        if self._modal_open():
+            return
+        while len(self.screen_stack) > 1 and not isinstance(self.screen, ModalScreen):
+            self.pop_screen()
+
+    def action_show_help(self) -> None:
+        if not self._modal_open() and not isinstance(self.screen, HelpScreen):
+            self.push_screen(HelpScreen())
 
     def action_show_network(self) -> None:
-        self.push_screen(NetworkScreen(self.state_store.snapshot()))
+        if not self._modal_open() and not isinstance(self.screen, NetworkScreen):
+            self._replace_top(NetworkScreen())
+
+    def action_show_messages(self) -> None:
+        if not self._modal_open() and not isinstance(self.screen, MessagesScreen):
+            self._replace_top(MessagesScreen())
+
+    def action_show_wireless(self) -> None:
+        if not self._modal_open() and not isinstance(self.screen, WirelessScreen):
+            self._replace_top(WirelessScreen())
+
+    def action_open_commands(self) -> None:
+        if self._modal_open() or isinstance(self.screen, CommandScreen):
+            return
+        screen = self.screen
+        if isinstance(screen, SensorScreen):
+            self.open_commands(f"sensor:{screen.logical_id}")
+        elif isinstance(screen, NodeScreen):
+            self.open_commands(f"node:{screen.node_id:02d}")
+        elif isinstance(screen, FftScreen):
+            self.open_commands(f"sensor:{screen.logical_id}")
+        else:
+            self.open_commands(None)
+
+    def open_commands(self, target: str | None) -> None:
+        if target is None:
+            state = self.state_store.snapshot(history=0, frames=0)
+            if state.connection_mode == ConnectionMode.SENSOR_DIRECT and state.selected_logical_id:
+                target = f"sensor:{state.selected_logical_id}"
+            else:
+                target = "network"
+        self.push_screen(CommandScreen(target))
+
+    def open_target(self, target: str) -> None:
+        """Abre a tela própria de um módulo ("node:04") ou sensor ("sensor:04.01")."""
+
+        kind, _, ident = target.partition(":")
+        if kind == "sensor" and ident:
+            self.state_store.set_selected(ident)
+            self.push_screen(SensorScreen(ident))
+        elif kind == "node" and ident:
+            node_id = int(ident)
+            self.state_store.set_selected_node(node_id)
+            self.push_screen(NodeScreen(node_id))
+
+    def submit_manual_command(self, text: str) -> None:
+        if text.startswith(":"):
+            self.run_worker(self._execute_internal_command(text[1:]))
+        else:
+            self._send_raw(text)
 
     @work
-    async def action_can_network_commands(self) -> None:
-        request = await self.push_screen_wait(CanNetworkCommandScreen())
-        if request:
-            await self._send_network_command(request.label, request.command)
-
-    def action_show_gateway(self) -> None:
-        state = self.state_store.snapshot()
-        message = (
-            f"Probe 00 — instrumentação externa à lógica distribuída\nFirmware: {state.gateway.firmware_version or 'N/A'}\n"
-            f"Protocolo: {state.gateway.protocol_version or 'N/A'}\nCAN: {state.gateway.can_state}\n"
-            f"Wi-Fi: {state.gateway.wifi_state}\nPorta: {state.gateway.serial_port or state.port or 'N/A'}"
-        )
-        self.notify(message, title="Instrumentação / Probe 00", timeout=6)
-
-    def action_clear_dtc(self) -> None:
-        self.action_show_dtc()
-
-    async def _open_can_node_detail(self, node_id: int) -> None:
-        result = await self.push_screen_wait(
-            CanNodeDetailScreen(node_id, self.state_store.find_node)
-        )
-        if result == "dtc":
-            await self.push_screen_wait(
-                CanNodeDtcScreen(node_id, self.state_store.find_node)
+    async def request_wireless_bind(self, wireless_uuid: str) -> None:
+        existing = self._associated_sensor_by_uuid(wireless_uuid)
+        if existing is not None:
+            self.notify(f"Já associado como {existing.logical_id}.", severity="warning", timeout=4)
+            return
+        observations = self._wireless_observations(wireless_uuid)
+        if not observations:
+            self.notify("O candidato não foi observado recentemente por nenhum módulo.", severity="warning", timeout=5)
+            return
+        state = self.state_store.snapshot(history=0, frames=0)
+        profile = "UNKNOWN"
+        for node in state.nodes.values():
+            candidate = next(
+                (item for item in node.wireless_candidates.values() if item.wireless_uuid.lower() == wireless_uuid.lower()),
+                None,
             )
-        elif result == "config":
-            node = self.state_store.find_node(node_id)
-            if node is not None:
-                request = await self.push_screen_wait(CanNodeCommandScreen(node))
-                if request:
-                    await self._send_network_command(
-                        f"Comando CAN para Node {request.node_id:02d}",
-                        request.command,
-                    )
+            if candidate is not None:
+                profile = candidate.profile_id
+                break
+        node_id = await self.push_screen_wait(WirelessNodeScreen(wireless_uuid, pres.profile_label(profile), observations))
+        if node_id is None:
+            return
+        confirmed = await self.push_screen_wait(
+            ConfirmScreen(
+                "Associar sensor sem fio",
+                f"Associar {wireless_uuid} ao Módulo {node_id:02d}?\n\n"
+                "O módulo passará a ser responsável pelo vínculo lógico e pelo liveness deste sensor.",
+                confirm_label="Associar",
+            )
+        )
+        if not confirmed:
+            return
+        if self._send_raw(commands.wireless_association("BIND", node_id, wireless_uuid)):
+            await self.bus.publish(LogEvent("INFO", f"Associação solicitada: {wireless_uuid} → Módulo {node_id:02d}", "BLE"))
+            self.notify("Associação solicitada; aguardando confirmação do módulo.", timeout=4)
 
     @work
-    async def action_show_node_detail(self) -> None:
-        sensor = self._selected_sensor()
-        if sensor is not None:
-            await self.push_screen_wait(SensorDetailScreen(sensor))
+    async def request_wireless_unbind(self, logical_id: str) -> None:
+        sensor = self.state_store.find_sensor(logical_id)
+        if sensor is None or not sensor.wireless_uuid or sensor.association_state.upper() == "UNBOUND":
+            self.notify("O sensor não possui uma associação wireless ativa.", severity="warning", timeout=4)
+            return
+        confirmed = await self.push_screen_wait(
+            ConfirmScreen(
+                "Desassociar sensor sem fio",
+                f"Desassociar {logical_id} ({sensor.wireless_uuid}) do Módulo {sensor.parent_node_id:02d}?\n\n"
+                "O sensor voltará a aparecer como disponível se continuar anunciando por BLE. "
+                "O item lógico só será removido depois da confirmação do módulo.",
+                confirm_label="Desassociar",
+                danger=True,
+            )
+        )
+        if not confirmed:
+            return
+        if self._send_raw(commands.wireless_association("UNBIND", sensor.parent_node_id, sensor.wireless_uuid)):
+            await self.bus.publish(
+                LogEvent("INFO", f"Desassociação solicitada: {sensor.wireless_uuid} do Módulo {sensor.parent_node_id:02d}", "BLE")
+            )
+            self.notify("Desassociação solicitada; aguardando UNBOUND do módulo.", timeout=4)
+
+    def start_action(self, action_key: str, target: str, value: str | None = None) -> None:
+        """Executa uma ação do catálogo, pedindo parâmetro e confirmação se preciso."""
+
+        if self._action_running:
+            self.notify("Aguarde a ação anterior terminar.", severity="warning", timeout=3)
+            return
+        self.run_worker(self._action_flow(action_key, target, value), group="command-flow")
+
+    async def _action_flow(self, action_key: str, target: str, value: str | None) -> None:
+        action = ACTIONS_BY_KEY.get(action_key)
+        if action is None:
+            return
+        self._action_running = True
+        try:
+            target_label = _target_label(target)
+            if action.parameter is not None and value is None:
+                value = await self.push_screen_wait(ParameterScreen(action, target_label))
+                if value is None:
+                    return
+            if action.confirm:
+                confirmed = await self.push_screen_wait(
+                    ConfirmScreen(action.title, f"{target_label}\n\n{action.confirm}", confirm_label="Enviar", danger=True)
+                )
+                if not confirmed:
+                    return
+            await self.execute_action(action_key, target, value)
+        finally:
+            self._action_running = False
+
+    async def execute_action(self, action_key: str, target: str, value: str | None = None) -> None:
+        """Traduz uma ação do catálogo nos comandos de protocolo existentes."""
+
+        action = ACTIONS_BY_KEY[action_key]
+        kind, _, ident = target.partition(":")
+        if action.scope == "network":
+            if action_key == "network.probe_status":
+                self._send_raw("PROBE_STATUS")
+                self.state_store.set_last_action("Probe 00: PROBE_STATUS")
+                return
+            await self._send_network_command(action.title, can_command(action_key, None, value))
+            return
+        if action.scope == "node":
+            node_id = int(ident)
+            self.state_store.set_selected_node(node_id)
+            await self._send_network_command(f"{action.title} (módulo {node_id:02d})", can_command(action_key, node_id, value))
             return
 
-        state = self.state_store.snapshot()
-        node = self.state_store.find_node(state.selected_node_id)
-        if node is not None:
-            await self._open_can_node_detail(node.parent_node_id)
+        # O vínculo wireless atual ainda é plano de controle. Enquanto o plano de
+        # dados Pico ↔ módulo CAN não estiver implementado, não enviamos comandos
+        # de telemetria/configuração a um filho wireless como se esse canal existisse.
+        sensor = self.state_store.find_sensor(ident)
+        mode = self.state_store.snapshot(history=0, frames=0).connection_mode
+        if (
+            sensor is not None
+            and sensor.association_state.upper() != "UNBOUND"
+            and mode == ConnectionMode.GATEWAY_CAN
+        ):
+            self.notify(
+                "Este sensor está associado, mas o plano de dados via módulo CAN ainda não está disponível. "
+                "Use F7/w para gerenciar o vínculo.",
+                severity="warning",
+                timeout=7,
+            )
+            await self.bus.publish(
+                LogEvent("WARNING", f"Ação {action.title} não enviada a {ident}: plano de dados wireless indisponível", "BLE")
+            )
             return
+        self.state_store.set_selected(ident)
+        self.state_store.set_last_action(f"{action.title} (sensor {ident})")
+        if action_key == "sensor.status":
+            await self._request_status()
+        elif action_key == "sensor.telemetry_on":
+            await self._set_telemetry(True)
+        elif action_key == "sensor.telemetry_off":
+            await self._set_telemetry(False)
+        elif action_key == "sensor.telemetry_once":
+            await self._execute_telemetry_control("ONCE")
+        elif action_key == "sensor.telemetry_period":
+            await self._execute_telemetry_control("PERIOD", int(value or 1000))
+        elif action_key == "sensor.fft":
+            requested_at = time.time()
+            if await self._request_fft_for_selected(int(value or 64), "VIEW_ONLY"):
+                if not (isinstance(self.screen, FftScreen) and self.screen.logical_id == ident):
+                    self.push_screen(FftScreen(ident, requested_at=requested_at))
+                else:
+                    self.screen.requested_at = requested_at
+        elif action_key == "sensor.configure":
+            sensor = self.state_store.find_sensor(ident)
+            if sensor is not None:
+                request = await self.push_screen_wait(ConfigScreen(sensor))
+                if request:
+                    await self._apply_config_request(ident, request)
+        elif action_key == "sensor.stop_now":
+            await self._stop_telemetry_stream()
+        elif action_key == "sensor.restart_acq":
+            await self._restart_acquisition()
+        elif action_key == "sensor.dtc_refresh":
+            await self._send_dtc_list()
+        elif action_key == "sensor.dtc_clear":
+            await self._send_dtc_clear(None)
+        elif action_key == "sensor.wifi_status":
+            await self._wifi_status()
+        elif action_key == "sensor.wifi_on":
+            await self._set_wifi(True)
+        elif action_key == "sensor.wifi_off":
+            await self._set_wifi(False)
 
-        self.notify("Selecione um módulo CAN ou sensor wireless", severity="warning")
+    @work
+    async def action_connection_setup(self) -> None:
+        if self._modal_open():
+            return
+        await self._open_connection_dialog()
 
-    def action_restart_acquisition(self) -> None:
-        self.run_worker(self._restart_acquisition())
-
-    def action_wifi_connect(self) -> None:
-        self.run_worker(self._set_wifi(True))
-
-    def action_security_status(self) -> None:
-        self.notify(self.security.status_label(), title="Segurança", timeout=5)
+    @work
+    async def action_exit_confirm(self) -> None:
+        if self._modal_open():
+            return
+        confirmed = await self.push_screen_wait(
+            ConfirmScreen("Sair", "Encerrar a TUI? A conexão serial será fechada.", confirm_label="Sair")
+        )
+        if confirmed:
+            self.exit()
 
     def action_stop_telemetry(self) -> None:
         self.run_worker(self._stop_telemetry_stream())
 
-    def action_toggle_compact(self) -> None:
-        current = self.has_class("compact")
-        self._manual_compact = not current
-        self.set_class(not current, "compact")
-
-    def action_pause_refresh(self) -> None:
-        self._refresh_paused = not self._refresh_paused
-        self.state_store.set_refresh_paused(self._refresh_paused)
-        self._refresh_status_bar()
-
     def action_snapshot(self) -> None:
         output = self._snapshot()
         self.run_worker(self.bus.publish(LogEvent("INFO", f"Snapshot salvo: {output}", "EXPORT")))
-
-    def action_reconnect(self) -> None:
-        self.run_worker(self._reconnect())
-
-    def action_connection_setup(self) -> None:
-        self.run_worker(self._open_connection_dialog())
-
-    @work
-    async def action_exit_confirm(self) -> None:
-        confirmed = await self.push_screen_wait(ConfirmScreen("ENCERRAR", "Deseja encerrar a TUI?"))
-        if confirmed:
-            self.exit()
 
     def on_key(self, event: Key) -> None:
         # Textual 1.x reserva Ctrl+C antes do sistema de bindings. O tratamento
@@ -1549,8 +1707,31 @@ class PicoTuiApp(App[None]):
             self.action_stop_telemetry()
 
     def on_resize(self, event: Resize) -> None:
-        if self._manual_compact is None:
-            self.set_class(event.size.width < 112, "compact")
+        self._apply_breakpoints(event.size.width, event.size.height)
+
+    def _apply_breakpoints(self, width: int, height: int) -> None:
+        self.set_class(width < BREAKPOINT_MEDIUM, "bp-narrow")
+        self.set_class(BREAKPOINT_MEDIUM <= width < BREAKPOINT_WIDE, "bp-medium")
+        self.set_class(width >= BREAKPOINT_WIDE, "bp-wide")
+        self.set_class(height < BREAKPOINT_SHORT, "bp-short")
+
+
+def _target_label(target: str) -> str:
+    kind, _, ident = target.partition(":")
+    if kind == "sensor":
+        return f"Alvo: sensor {ident}"
+    if kind == "node":
+        return f"Alvo: módulo {ident}"
+    return "Alvo: rede CAN inteira"
+
+
+def _find_in_state(state: Any, logical_id: str) -> Any:
+    try:
+        parent, child = (int(part) for part in logical_id.split(".", 1))
+    except ValueError:
+        return None
+    node = state.nodes.get(parent)
+    return node.sensors.get(child) if node else None
 
 
 def _jsonable(value: Any) -> Any:

@@ -7,7 +7,7 @@
 
 #define ENABLE_LE_PERIPHERAL
 #define ENABLE_LOG_ERROR
-#define ENABLE_PRINTF_HEXDUMP
+#define ENABLE_PRINTF_HEXDUMP  // required by Pico SDK HCI stdout dump backend
 
 #define MAX_NR_GATT_CLIENTS 0
 #define HCI_OUTGOING_PRE_BUFFER_SIZE 4

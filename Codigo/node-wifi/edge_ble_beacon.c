@@ -43,7 +43,7 @@ static void build_advertisement(void) {
         g_adv_data[i++] = (uint8_t)((uuid >> shift) & 0xFFu);
     }
 
-    /* Short local name keeps the legacy advertisement under 31 bytes. */
+    /* Short local name keeps the advertisement under the 31-byte limit. */
     static const char name[] = "IOTCAN";
     g_adv_data[i++] = (uint8_t)(1 + sizeof(name) - 1);
     g_adv_data[i++] = BLUETOOTH_DATA_TYPE_SHORTENED_LOCAL_NAME;

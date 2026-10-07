@@ -1,43 +1,21 @@
-# Documentação
+# Documentação do iot-over-can
 
-## Arquivos principais
+A documentação oficial é organizada por assunto, sem cópias paralelas ou release notes que repitam o estado do projeto.
 
-- `project-description.md`: descrição conceitual do projeto.
+| Documento | Conteúdo |
+|---|---|
+| [`descrição-do-projeto.md`](descrição-do-projeto.md) | finalidade, escopo e conceitos |
+| [`estrutura-do-projeto.md`](estrutura-do-projeto.md) | organização do repositório |
+| [`requisitos.md`](requisitos.md) | requisitos funcionais, de interface, software e segurança |
+| [`build_e_teste.md`](build_e_teste.md) | instalação, execução, build, upload e validação |
+| [`modelo_de_seguranca.md`](modelo_de_seguranca.md) | autorização, arquivos locais, provisionamento e renovação |
+| [`desafios_e_resolucoes.md`](desafios_e_resolucoes.md) | problemas técnicos com impacto arquitetural e soluções |
+| [`arquitetura/arquitetura.md`](arquitetura/arquitetura.md) | elementos físicos, domínios, associação e camadas de software |
+| [`protocolo/protocolo.md`](protocolo/protocolo.md) | CAN, Probe 00, BLE, associação, sensor, DTC e fragmentação |
+| [`interface/tui.md`](interface/tui.md) | especificação completa da TUI, telas, comandos, wireless, layout e cores |
+| [`modulo-can/modulo-can.md`](modulo-can/modulo-can.md) | firmware e comportamento dos Nodes CAN |
+| [`sensor-wireless/sensor-wireless.md`](sensor-wireless/sensor-wireless.md) | firmware, aquisição e comunicação do Pico W |
 
-- `build-and-test.md`: build do firmware e execução da TUI.
-- `security-model.md`: modelo de segurança operacional com YubiKey.
-- `integration-changelog.md`: mudanças de integração realizadas.
-- `project-structure.md`: estrutura original do pacote integrado.
-- `requirements-coverage.md`: cobertura dos requisitos da TUI.
+Capturas de referência da interface ficam em [`interface/img/`](interface/img/). As imagens `antes_*` documentam somente a densidade/truncamento que as regras atuais de layout evitam.
 
-## Protocolo
-
-- `protocol/serial-baseline-protocol.md`: protocolo ASCII atual do sensor.
-- `protocol/gateway-can-recommendations.md`: recomendações CAN/CAN FD.
-- `protocol/gateway-protocol-reference.md`: referência de gateway usada pela TUI.
-
-## Arquitetura
-
-- `architecture/tui-integration-notes.md`: notas de integração da TUI.
-
-- `protocol/dtc-catalog.md`: catálogo objetivo de DTCs e política de fallback.
-
-- `architecture/tui-network-console.md`: decisão de interface para console genérico da rede CAN.
-
-## Registro de engenharia
-
-- `development/challenges-and-resolutions.md`: tabela histórica de desafios observados, causas, soluções implementadas, estado e baseline correspondente. Também mantém os desafios deliberadamente abertos para as próximas etapas.
-
-## Releases
-
-- `release-v0.12.0.md`: escopo consolidado, validações executadas e limites da baseline v0.12.0.
-
-## Organização acadêmica
-
-A documentação está centralizada nesta pasta. O código executável está separado em:
-
-- `../Front/`: TUI.
-- `../Codigo/node-can/`: firmware dos módulos CAN.
-- `../Codigo/node-wifi/`: firmware do sensor IoT wireless.
-
-A descrição completa da organização está em `project-structure.md`.
+Arquivos de release e `Codigo/node-can/legacy/` podem existir localmente, mas não fazem parte da documentação pública nem do código operacional versionado.

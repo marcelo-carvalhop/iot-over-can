@@ -179,7 +179,7 @@ def test_acq_drdy_rejection_does_not_degrade_polling_sensor() -> None:
             "STALTA=4 GAIN=1 DTC=0 DTC_COUNT=0 MPU=YES SIM=NO TELEMETRY=OFF PERIOD_MS=1000 "
             "BATT_PCT=255 BATT_MV=65535 DRDY_IRQ=0 DRDY_MISSED=0"
         )
-        await router.decode("ERR DRDY disabled in polling baseline. Use ACQ POLLING.")
+        await router.decode("ERR DRDY disabled. Use ACQ POLLING.")
         sensor = state.snapshot().nodes[1].sensors[1]
         assert sensor.acquisition_mode.value == "POLLING"
         assert sensor.status.value == "ONLINE"

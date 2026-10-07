@@ -1,0 +1,12 @@
+diff --git a/Front/tests/test_app.py b/Front/tests/test_app.py
+index fb9b20d..7482f3f 100644
+--- a/Front/tests/test_app.py
++++ b/Front/tests/test_app.py
+@@ -141,6 +141,7 @@ async def test_restart_polling_and_stop_stream_shortcuts(fake_fw) -> None:
+         await asyncio.sleep(0.25)
+         await pilot.press("ctrl+t")
+         await asyncio.sleep(0.25)
++        await pilot.pause()
+         assert app.telemetry_on is True
+         await pilot.press("ctrl+c")
+         await asyncio.sleep(0.3)

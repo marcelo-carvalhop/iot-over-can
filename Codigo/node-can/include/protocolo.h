@@ -92,4 +92,20 @@
 #define STATUS_LEADER_CONFLICT       0x06
 #define STATUS_UNKNOWN               0xFF
 
+/* =========================================================
+ * ASSOCIACAO WIRELESS
+ * ========================================================= */
+
+#define WIRELESS_ASSOC_ACTION_BIND      0x01
+#define WIRELESS_ASSOC_ACTION_UNBIND    0x02
+
+#define WIRELESS_ASSOC_DISCOVERED       0x01
+#define WIRELESS_ASSOC_ASSOCIATING      0x02
+#define WIRELESS_ASSOC_BOUND            0x03
+#define WIRELESS_ASSOC_ONLINE           0x04
+#define WIRELESS_ASSOC_STALE            0x05
+#define WIRELESS_ASSOC_LOST             0x06
+#define WIRELESS_ASSOC_UNBOUND          0x07
+#define WIRELESS_ASSOC_REJECTED         0x7F
+
 #endif

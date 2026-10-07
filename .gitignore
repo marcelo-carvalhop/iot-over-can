@@ -45,3 +45,7 @@ yubikey_*.txt
 .pio/
 .pioenvs/
 .piolibdeps/
+
+# Conteúdo mantido apenas na estação local de desenvolvimento
+Codigo/node-can/legacy/
+Documentacao/release-v*.md

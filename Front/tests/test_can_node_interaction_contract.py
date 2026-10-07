@@ -30,20 +30,19 @@ def test_local_sensor_stream_updates_physical_node_live_state():
     asyncio.run(scenario())
 
 
-def test_node_click_opens_live_node_detail_contract():
+def test_open_target_contract_for_modules_and_sensors():
     from pathlib import Path
+
     source = (Path(__file__).resolve().parents[1] / "pico_tui" / "app.py").read_text()
-    assert "self.run_worker(self._open_can_node_detail(node_id))" in source
-    assert "CanNodeDetailScreen(node_id, self.state_store.find_node)" in source
+    assert "self.push_screen(NodeScreen(node_id))" in source
+    assert "self.push_screen(SensorScreen(ident))" in source
 
 
 def test_node_dtc_is_independent_from_wireless_sensor_dtc():
-    from pico_tui.core.models import DtcRecord, Severity
+    from pico_tui.core.models import DtcRecord, NodeStatus, Severity
 
     state = StateStore()
-    state.update_node(3, status=__import__(
-        "pico_tui.core.models", fromlist=["NodeStatus"]
-    ).NodeStatus.ONLINE)
+    state.update_node(3, status=NodeStatus.ONLINE)
     state.add_node_dtc(3, DtcRecord(code=0x4002, severity=Severity.WARNING))
     node = state.find_node(3)
     assert node is not None

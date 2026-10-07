@@ -30,7 +30,7 @@ from pico_tui.protocol.legacy_gateway import LegacyGatewayDecoder
 
 
 class GatewayTextDecoder:
-    """Protocolo textual de referência do gateway e compatibilidade Vr1."""
+    """Protocolo textual da Probe 00 e dos Nodes CAN."""
 
     def __init__(self, bus: EventBus) -> None:
         self.bus = bus
@@ -98,9 +98,9 @@ class GatewayTextDecoder:
                     detail=str(payload),
                 )
             )
-            await self.bus.publish(LogEvent("ERROR", f"CRC_ERROR {payload}", "GATEWAY"))
+            await self.bus.publish(LogEvent("ERROR", f"CRC_ERROR {payload}", "PROBE"))
         else:
-            await self.bus.publish(LogEvent("DEBUG", f"GW_UNPARSED: {line}", "GATEWAY"))
+            await self.bus.publish(LogEvent("DEBUG", f"GW_UNPARSED: {line}", "PROBE"))
 
     async def _telemetry(self, payload: dict[str, str]) -> None:
         parent = parse_int(first(payload, "NODE", "PARENT", "PARENT_NODE"), 0) or 0
@@ -171,7 +171,7 @@ class GatewayTextDecoder:
         try:
             data = bytes.fromhex(data_text)
         except ValueError:
-            await self.bus.publish(LogEvent("ERROR", f"Payload CAN hexadecimal inválido: {data_text}", "GATEWAY"))
+            await self.bus.publish(LogEvent("ERROR", f"Payload CAN hexadecimal inválido: {data_text}", "PROBE"))
             return
         await self.bus.publish(
             CanFrameReceived(
@@ -192,7 +192,7 @@ class GatewayTextDecoder:
         try:
             data = bytes.fromhex(raw_data)
         except ValueError:
-            await self.bus.publish(LogEvent("ERROR", "Fragmento com DATA inválido", "GATEWAY"))
+            await self.bus.publish(LogEvent("ERROR", "Fragmento com DATA inválido", "PROBE"))
             return
         await self.bus.publish(
             FragmentReceived(

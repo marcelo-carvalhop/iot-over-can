@@ -47,3 +47,19 @@ def test_wifi_provisioning_and_auth_unlock_are_mutating() -> None:
     assert sec.command_requires_auth("NET WIFI PROVISION node-2 secretpass") is True
     assert sec.command_requires_auth("NET WIFI CLEAR") is True
     assert sec.command_requires_auth("AUTH UNLOCK 0x1234") is True
+
+
+def test_can_administrative_commands_are_protected() -> None:
+    sec = SecurityManager("off", "/path/that/does/not/exist")
+    assert sec.command_requires_auth("22 00 FF 01") is True
+    assert sec.command_requires_auth("22 10 04 00") is True
+    assert sec.command_requires_auth("22 30 FF 03") is True
+    assert sec.command_requires_auth("22 20 FF 00") is False
+    assert sec.command_requires_auth("22   20 04 00") is False
+
+
+def test_presence_mode_blocks_election_without_yubikey(monkeypatch) -> None:
+    sec = SecurityManager("presence", "/path/that/does/not/exist")
+    monkeypatch.setattr(sec, "yubikey_present", lambda: False)
+    assert sec.authorize_command("22 00 FF 01").allowed is False
+    assert sec.authorize_command("22 20 FF 00").allowed is True

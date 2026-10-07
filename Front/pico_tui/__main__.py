@@ -8,18 +8,35 @@ from pico_tui.app import PicoTuiApp
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="iot-over-can-tui",
-        description="TUI de engenharia para sensor wireless, gateway ESP32 e rede CAN FD.",
+        description="Console de operação da rede iot-over-can (módulos CAN, Probe 00 e sensores sem fio).",
     )
     parser.add_argument("--port", "-p", default=None, help="Porta serial. Se omitida, a TUI abre o seletor de portas")
     parser.add_argument("--baud", "-b", type=int, default=115200, help="Baudrate nominal da USB serial")
     parser.add_argument(
         "--mode",
-        choices=("auto", "gateway", "sensor"),
+        choices=("auto", "probe", "gateway", "sensor"),
         default="auto",
-        help="Força o protocolo ou usa detecção automática",
+        help="Força o protocolo (probe/gateway ou sensor) ou usa detecção automática",
     )
     parser.add_argument("--demo", action="store_true", help="Inicia sem hardware com uma rede simulada")
     parser.add_argument("--no-file-log", action="store_true", help="Desativa o arquivo JSONL automático")
+    parser.add_argument(
+        "--messages",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Mostra (ou, com --no-messages, oculta) as mensagens recentes na tela inicial nesta sessão",
+    )
+    parser.add_argument(
+        "--ascii",
+        action="store_true",
+        default=None,
+        help="Usa símbolos ASCII em vez de ● ▲ ■ ○ (consoles sem Unicode)",
+    )
+    parser.add_argument(
+        "--preferences",
+        default=None,
+        help="Arquivo de preferências da interface (padrão: ~/.config/iot-over-can/tui.json)",
+    )
     parser.add_argument(
         "--security-mode",
         choices=("off", "presence", "otp"),
@@ -41,6 +58,9 @@ def main() -> None:
         enable_file_log=not args.no_file_log,
         security_mode=args.security_mode,
         security_config=args.security_config,
+        show_messages=args.messages,
+        ascii_symbols=args.ascii,
+        preferences_path=args.preferences,
     ).run()
 
 

@@ -5,6 +5,7 @@
 #include "node_types.h"
 #include "protocolo.h"
 #include "falhas.h"
+#include "wireless_discovery.h"
 
 /* =========================================================
  * VARIAVEIS EXTERNAS DO .ino
@@ -76,7 +77,7 @@ static void printHexByte(uint8_t value) {
 }
 
 static void printProbeVersion() {
-  Serial.println("PROBE_VERSION FIRMWARE=0.13.2 PROTOCOL=CAN_CLASSIC_V1 NODE=0");
+  Serial.println("PROBE_VERSION FIRMWARE=0.15.0 PROTOCOL=CAN_CLASSIC_V1 NODE=0");
 }
 
 static void printProbeStatus() {
@@ -260,6 +261,10 @@ void handleSerialCommands() {
       // que a TUI possa identificá-la sem injetar frames CAN. Os aliases GW_*
       // são mantidos por compatibilidade com versões anteriores da TUI.
       if (handleProbeIntrospectionCommand(buffer)) {
+        return;
+      }
+
+      if (wirelessAssociationHandleSerialCommand(buffer)) {
         return;
       }
 

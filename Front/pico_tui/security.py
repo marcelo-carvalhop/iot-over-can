@@ -39,7 +39,13 @@ MUTATING_PREFIXES = (
     "NET WIFI CLEAR",
     "AUTH UNLOCK ",
     "WIFI ",
+    "WIRELESS ",
     "CMD ",
+    # Comandos administrativos da rede CAN enviados pela Probe 00.
+    # "22 20" (solicitação de status) continua livre por ser somente leitura.
+    "22 00 ",  # eleição de líder
+    "22 10 ",  # desativar/reativar/limpar falha do sensor de um módulo
+    "22 30 ",  # intervalo de liveness da rede
 )
 
 
@@ -52,10 +58,9 @@ class SecurityDecision:
 class SecurityManager:
     """Operational authorization for the TUI, fail-closed on configuration errors.
 
-    ``presence`` remains an operational physical-presence policy. It is not
-    cryptographic proof of a specific YubiKey. ``otp`` is intentionally
-    fail-closed until a real OTP/FIDO verifier is integrated; the previous
-    prefix/length check was not authentication.
+    ``presence`` is an operational physical-presence policy, not cryptographic
+    proof of a specific YubiKey. ``otp`` remains fail-closed until a real
+    OTP/FIDO verifier is integrated.
     """
 
     def __init__(self, mode: str = "presence", config_path: str | Path | None = None, unlock_seconds: int = 300) -> None:
@@ -63,13 +68,7 @@ class SecurityManager:
         if self.mode not in {"off", "presence", "otp"}:
             self.mode = "presence"
         default_path = Path.home() / ".config" / "iot-over-can" / "security.json"
-        legacy_path = Path.home() / ".config" / "pico_tui" / "security.json"
-        if config_path:
-            self.config_path = Path(config_path)
-        elif default_path.exists() or not legacy_path.exists():
-            self.config_path = default_path
-        else:
-            self.config_path = legacy_path
+        self.config_path = Path(config_path) if config_path else default_path
         self.unlock_seconds = unlock_seconds
         self._otp_public_ids: set[str] = set()
         self._device_admin_token: str = ""

@@ -1,0 +1,1842 @@
+diff --git a/Codigo/node-can/include/can_ids.h b/Codigo/node-can/include/can_ids.h
+index b114a6b..730b65c 100644
+--- a/Codigo/node-can/include/can_ids.h
++++ b/Codigo/node-can/include/can_ids.h
+@@ -32,6 +32,17 @@
+ #define CAN_ID_WIRELESS_DISCOVERY_BASE  0x280
+ #define CAN_ID_WIRELESS_DISCOVERY_LAST  0x2BF
+ 
++/* =========================================================
++ * ASSOCIACAO WIRELESS
++ *
++ * Probe 00 envia o pedido em dois frames fixos. Cada Node
++ * publica o estado da associacao em dois IDs exclusivos.
++ * ========================================================= */
++#define CAN_ID_WIRELESS_ASSOC_CMD_A       0x300
++#define CAN_ID_WIRELESS_ASSOC_CMD_B       0x301
++#define CAN_ID_WIRELESS_ASSOC_STATUS_BASE 0x320
++#define CAN_ID_WIRELESS_ASSOC_STATUS_LAST 0x35F
++
+ /* =========================================================
+  * DADOS DOS SENSORES
+  * ========================================================= */
+diff --git a/Codigo/node-can/include/node_config.h b/Codigo/node-can/include/node_config.h
+index 92d0dce..4c2434d 100644
+--- a/Codigo/node-can/include/node_config.h
++++ b/Codigo/node-can/include/node_config.h
+@@ -9,7 +9,7 @@
+  * Deve ser definido no arquivo principal .ino.
+  *
+  * Regras:
+- *   NODE_ID = 0  -> Gateway
++ *   NODE_ID = 0  -> Probe 00
+  *   NODE_ID > 0  -> No funcional
+  *
+  * Cada no da rede deve possuir NODE_ID unico.
+diff --git a/Codigo/node-can/include/protocolo.h b/Codigo/node-can/include/protocolo.h
+index 4ba790e..6097239 100644
+--- a/Codigo/node-can/include/protocolo.h
++++ b/Codigo/node-can/include/protocolo.h
+@@ -92,4 +92,20 @@
+ #define STATUS_LEADER_CONFLICT       0x06
+ #define STATUS_UNKNOWN               0xFF
+ 
++/* =========================================================
++ * ASSOCIACAO WIRELESS
++ * ========================================================= */
++
++#define WIRELESS_ASSOC_ACTION_BIND      0x01
++#define WIRELESS_ASSOC_ACTION_UNBIND    0x02
++
++#define WIRELESS_ASSOC_DISCOVERED       0x01
++#define WIRELESS_ASSOC_ASSOCIATING      0x02
++#define WIRELESS_ASSOC_BOUND            0x03
++#define WIRELESS_ASSOC_ONLINE           0x04
++#define WIRELESS_ASSOC_STALE            0x05
++#define WIRELESS_ASSOC_LOST             0x06
++#define WIRELESS_ASSOC_UNBOUND          0x07
++#define WIRELESS_ASSOC_REJECTED         0x7F
++
+ #endif
+diff --git a/Codigo/node-can/include/wireless_discovery.h b/Codigo/node-can/include/wireless_discovery.h
+index 970bad9..1396022 100644
+--- a/Codigo/node-can/include/wireless_discovery.h
++++ b/Codigo/node-can/include/wireless_discovery.h
+@@ -1,4 +1,3 @@
+-\
+ #ifndef WIRELESS_DISCOVERY_H
+ #define WIRELESS_DISCOVERY_H
+ 
+@@ -9,4 +8,9 @@ void wirelessDiscoveryInit();
+ void wirelessDiscoveryPoll();
+ bool wirelessDiscoveryHandleCanMessage(const CANMessage& rx);
+ 
++// Comandos textuais aceitos apenas pela Probe 00:
++//   WIRELESS BIND <node> <uuid>
++//   WIRELESS UNBIND <node> <uuid>
++bool wirelessAssociationHandleSerialCommand(const char* command);
++
+ #endif
+diff --git a/Codigo/node-can/src/comandos.cpp b/Codigo/node-can/src/comandos.cpp
+index a86d54e..0918ae2 100644
+--- a/Codigo/node-can/src/comandos.cpp
++++ b/Codigo/node-can/src/comandos.cpp
+@@ -5,6 +5,7 @@
+ #include "node_types.h"
+ #include "protocolo.h"
+ #include "falhas.h"
++#include "wireless_discovery.h"
+ 
+ /* =========================================================
+  * VARIAVEIS EXTERNAS DO .ino
+@@ -76,7 +77,7 @@ static void printHexByte(uint8_t value) {
+ }
+ 
+ static void printProbeVersion() {
+-  Serial.println("PROBE_VERSION FIRMWARE=0.13.2 PROTOCOL=CAN_CLASSIC_V1 NODE=0");
++  Serial.println("PROBE_VERSION FIRMWARE=0.15.0 PROTOCOL=CAN_CLASSIC_V1 NODE=0");
+ }
+ 
+ static void printProbeStatus() {
+@@ -263,6 +264,10 @@ void handleSerialCommands() {
+         return;
+       }
+ 
++      if (wirelessAssociationHandleSerialCommand(buffer)) {
++        return;
++      }
++
+       uint8_t opcode;
+       uint8_t subcmd;
+       uint8_t targetId;
+diff --git a/Codigo/node-can/src/main.ino b/Codigo/node-can/src/main.ino
+index 3595531..b0f3d9a 100644
+--- a/Codigo/node-can/src/main.ino
++++ b/Codigo/node-can/src/main.ino
+@@ -18,7 +18,7 @@
+ #define IOT_NODE_ID 4
+ #endif
+ 
+-const uint8_t NODE_ID = (uint8_t) IOT_NODE_ID;   // NODE_ID 0 = GATEWAY; NODE_ID > 0 = no funcional
++const uint8_t NODE_ID = (uint8_t) IOT_NODE_ID;   // NODE_ID 0 = Probe 00; NODE_ID > 0 = no funcional
+ 
+ /* =========================================================
+  * PARAMETROS GERAIS
+diff --git a/Codigo/node-can/src/wireless_discovery.cpp b/Codigo/node-can/src/wireless_discovery.cpp
+index f21a19e..6be1126 100644
+--- a/Codigo/node-can/src/wireless_discovery.cpp
++++ b/Codigo/node-can/src/wireless_discovery.cpp
+@@ -1,10 +1,12 @@
+-\
+ #include "wireless_discovery.h"
+ 
+ #include <NimBLEDevice.h>
++#include <stdlib.h>
++#include <strings.h>
+ 
+ #include "can_ids.h"
+ #include "node_config.h"
++#include "protocolo.h"
+ 
+ extern ACAN2515 can;
+ 
+@@ -17,8 +19,13 @@ constexpr uint8_t BLE_MAGIC_1 = 0x43; // 'C'
+ constexpr uint8_t BLE_ADV_VERSION = 0x01;
+ constexpr uint8_t BLE_MANUFACTURER_LEN = 15;
+ constexpr uint8_t MAX_CANDIDATES = 8;
++constexpr uint8_t MAX_BINDINGS = 4;
+ constexpr int RSSI_REPORT_DELTA_DB = 4;
+ constexpr uint32_t REPORT_REFRESH_MS = 5000;
++constexpr uint32_t BIND_CANDIDATE_MAX_AGE_MS = 7000;
++constexpr uint32_t ASSOCIATING_MIN_MS = 250;
++constexpr uint32_t ONLINE_STALE_MS = 6500;
++constexpr uint32_t STALE_LOST_MS = 15000;
+ 
+ struct Candidate {
+   bool used = false;
+@@ -26,20 +33,55 @@ struct Candidate {
+   uint8_t profile = 0;
+   uint8_t protocol = 0;
+   int8_t rssi = -127;
++  uint32_t lastSeenMs = 0;
+   uint32_t lastReportMs = 0;
+   bool pending = false;
+ };
+ 
+-struct Assembly {
++struct DiscoveryAssembly {
+   bool havePartA = false;
+   uint8_t seq = 0;
+   uint8_t uuidFirst7[7] = {0};
+ };
+ 
++struct AssocCommandAssembly {
++  bool havePartA = false;
++  uint8_t seq = 0;
++  uint8_t target = 0;
++  uint8_t action = 0;
++  uint8_t uuidFirst5[5] = {0};
++};
++
++struct AssocStatusAssembly {
++  bool havePartA = false;
++  uint8_t seq = 0;
++  uint8_t childId = 0;
++  uint8_t state = WIRELESS_ASSOC_DISCOVERED;
++  uint8_t profile = 0;
++  uint8_t uuidFirst4[4] = {0};
++};
++
++struct Binding {
++  bool used = false;
++  uint64_t uuid = 0;
++  uint8_t childId = 0;
++  uint8_t profile = 0;
++  uint8_t protocol = 0;
++  int8_t rssi = -127;
++  uint8_t assocState = WIRELESS_ASSOC_DISCOVERED;
++  uint32_t lastSeenMs = 0;
++  uint32_t stateSinceMs = 0;
++};
++
+ Candidate candidates[MAX_CANDIDATES];
+-Assembly assemblies[32];
++DiscoveryAssembly discoveryAssemblies[32];
++AssocStatusAssembly assocStatusAssemblies[32];
++AssocCommandAssembly assocCommandAssembly;
++Binding bindings[MAX_BINDINGS];
+ portMUX_TYPE candidateMux = portMUX_INITIALIZER_UNLOCKED;
+ uint8_t reportSeq = 0;
++uint8_t assocCommandSeq = 0;
++uint8_t assocStatusSeq = 0;
+ bool scannerStarted = false;
+ 
+ const char* profileName(uint8_t profile) {
+@@ -51,6 +93,20 @@ const char* profileName(uint8_t profile) {
+   }
+ }
+ 
++const char* assocStateName(uint8_t state) {
++  switch (state) {
++    case WIRELESS_ASSOC_DISCOVERED: return "DISCOVERED";
++    case WIRELESS_ASSOC_ASSOCIATING: return "ASSOCIATING";
++    case WIRELESS_ASSOC_BOUND: return "BOUND";
++    case WIRELESS_ASSOC_ONLINE: return "ONLINE";
++    case WIRELESS_ASSOC_STALE: return "STALE";
++    case WIRELESS_ASSOC_LOST: return "LOST";
++    case WIRELESS_ASSOC_UNBOUND: return "UNBOUND";
++    case WIRELESS_ASSOC_REJECTED: return "REJECTED";
++    default: return "UNKNOWN";
++  }
++}
++
+ int findCandidate(uint64_t uuid) {
+   for (uint8_t i = 0; i < MAX_CANDIDATES; ++i) {
+     if (candidates[i].used && candidates[i].uuid == uuid) return i;
+@@ -62,7 +118,161 @@ int allocateCandidate() {
+   for (uint8_t i = 0; i < MAX_CANDIDATES; ++i) {
+     if (!candidates[i].used) return i;
+   }
+-  return 0; // bounded cache: replace slot 0 when the table is full
++  return 0; // cache limitada: substitui o slot 0 quando cheia
++}
++
++int findBindingByUuid(uint64_t uuid) {
++  for (uint8_t i = 0; i < MAX_BINDINGS; ++i) {
++    if (bindings[i].used && bindings[i].uuid == uuid) return i;
++  }
++  return -1;
++}
++
++int allocateBinding() {
++  for (uint8_t i = 0; i < MAX_BINDINGS; ++i) {
++    if (!bindings[i].used) return i;
++  }
++  return -1;
++}
++
++uint8_t allocateChildId() {
++  for (uint8_t candidate = 1; candidate <= MAX_BINDINGS; ++candidate) {
++    bool used = false;
++    for (uint8_t i = 0; i < MAX_BINDINGS; ++i) {
++      if (bindings[i].used && bindings[i].childId == candidate) {
++        used = true;
++        break;
++      }
++    }
++    if (!used) return candidate;
++  }
++  return 0;
++}
++
++void sendAssociationStatus(const Binding& binding, uint8_t stateOverride = 0) {
++  if (NODE_ID == 0) return;
++
++  const uint16_t baseId = CAN_ID_WIRELESS_ASSOC_STATUS_BASE + static_cast<uint16_t>(NODE_ID) * 2u;
++  const uint8_t seq = ++assocStatusSeq;
++  const uint8_t state = stateOverride ? stateOverride : binding.assocState;
++
++  CANMessage a;
++  a.id = baseId;
++  a.len = 8;
++  a.data[0] = seq;
++  a.data[1] = binding.childId;
++  a.data[2] = state;
++  a.data[3] = binding.profile;
++  for (uint8_t i = 0; i < 4; ++i) {
++    a.data[4 + i] = static_cast<uint8_t>((binding.uuid >> (56 - 8 * i)) & 0xFFu);
++  }
++
++  CANMessage b;
++  b.id = baseId + 1u;
++  b.len = 8;
++  b.data[0] = seq;
++  b.data[1] = binding.childId;
++  b.data[2] = static_cast<uint8_t>(binding.rssi);
++  b.data[3] = binding.protocol;
++  for (uint8_t i = 0; i < 4; ++i) {
++    b.data[4 + i] = static_cast<uint8_t>((binding.uuid >> (24 - 8 * i)) & 0xFFu);
++  }
++
++  can.tryToSend(a);
++  can.tryToSend(b);
++
++  Serial.printf("[NODE %u] [WIRELESS ASSOC] child=%u uuid=0x%016llX state=%s rssi=%d\n",
++                NODE_ID,
++                static_cast<unsigned>(binding.childId),
++                static_cast<unsigned long long>(binding.uuid),
++                assocStateName(state),
++                static_cast<int>(binding.rssi));
++}
++
++void sendRejectedAssociation(uint64_t uuid, uint8_t profile, uint8_t protocol, int8_t rssi) {
++  Binding rejected;
++  rejected.used = true;
++  rejected.uuid = uuid;
++  rejected.childId = 0;
++  rejected.profile = profile;
++  rejected.protocol = protocol;
++  rejected.rssi = rssi;
++  rejected.assocState = WIRELESS_ASSOC_REJECTED;
++  sendAssociationStatus(rejected, WIRELESS_ASSOC_REJECTED);
++}
++
++void processBindRequest(uint64_t uuid) {
++  if (NODE_ID == 0) return;
++  const uint32_t now = millis();
++
++  portENTER_CRITICAL(&candidateMux);
++  int existingIndex = findBindingByUuid(uuid);
++  if (existingIndex >= 0) {
++    Binding snapshot = bindings[existingIndex];
++    portEXIT_CRITICAL(&candidateMux);
++    sendAssociationStatus(snapshot);
++    return;
++  }
++
++  const int candidateIndex = findCandidate(uuid);
++  if (candidateIndex < 0 || now - candidates[candidateIndex].lastSeenMs > BIND_CANDIDATE_MAX_AGE_MS) {
++    portEXIT_CRITICAL(&candidateMux);
++    sendRejectedAssociation(uuid, 0, 0, -127);
++    return;
++  }
++
++  const int bindingIndex = allocateBinding();
++  const uint8_t childId = allocateChildId();
++  if (bindingIndex < 0 || childId == 0) {
++    Candidate c = candidates[candidateIndex];
++    portEXIT_CRITICAL(&candidateMux);
++    sendRejectedAssociation(uuid, c.profile, c.protocol, c.rssi);
++    return;
++  }
++
++  Candidate c = candidates[candidateIndex];
++  Binding& binding = bindings[bindingIndex];
++  binding = Binding{};
++  binding.used = true;
++  binding.uuid = uuid;
++  binding.childId = childId;
++  binding.profile = c.profile;
++  binding.protocol = c.protocol;
++  binding.rssi = c.rssi;
++  binding.assocState = WIRELESS_ASSOC_ASSOCIATING;
++  binding.lastSeenMs = c.lastSeenMs;
++  binding.stateSinceMs = now;
++  Binding snapshot = binding;
++  portEXIT_CRITICAL(&candidateMux);
++
++  sendAssociationStatus(snapshot);
++}
++
++void processUnbindRequest(uint64_t uuid) {
++  if (NODE_ID == 0) return;
++
++  portENTER_CRITICAL(&candidateMux);
++  const int bindingIndex = findBindingByUuid(uuid);
++  if (bindingIndex < 0) {
++    portEXIT_CRITICAL(&candidateMux);
++    sendRejectedAssociation(uuid, 0, 0, -127);
++    return;
++  }
++
++  Binding snapshot = bindings[bindingIndex];
++  snapshot.assocState = WIRELESS_ASSOC_UNBOUND;
++  bindings[bindingIndex] = Binding{};
++  portEXIT_CRITICAL(&candidateMux);
++
++  sendAssociationStatus(snapshot, WIRELESS_ASSOC_UNBOUND);
++}
++
++void processAssociationCommand(uint8_t action, uint64_t uuid) {
++  if (action == WIRELESS_ASSOC_ACTION_BIND) {
++    processBindRequest(uuid);
++  } else if (action == WIRELESS_ASSOC_ACTION_UNBIND) {
++    processUnbindRequest(uuid);
++  }
+ }
+ 
+ class DiscoveryScanCallbacks : public NimBLEScanCallbacks {
+@@ -104,6 +314,16 @@ class DiscoveryScanCallbacks : public NimBLEScanCallbacks {
+     c.profile = profile;
+     c.protocol = protocol;
+     c.rssi = rssi;
++    c.lastSeenMs = now;
++
++    const int bindingIndex = findBindingByUuid(uuid);
++    if (bindingIndex >= 0) {
++      Binding& binding = bindings[bindingIndex];
++      binding.profile = profile;
++      binding.protocol = protocol;
++      binding.rssi = rssi;
++      binding.lastSeenMs = now;
++    }
+     portEXIT_CRITICAL(&candidateMux);
+   }
+ };
+@@ -142,7 +362,7 @@ void sendCandidateReport(const Candidate& c) {
+                 static_cast<int>(c.rssi), static_cast<unsigned>(c.protocol));
+ }
+ 
+-void printGatewayCandidate(uint8_t reporter, const Assembly& as, const CANMessage& b) {
++void printProbeCandidate(uint8_t reporter, const DiscoveryAssembly& as, const CANMessage& b) {
+   uint64_t uuid = 0;
+   for (uint8_t i = 0; i < 7; ++i) uuid = (uuid << 8) | as.uuidFirst7[i];
+   uuid = (uuid << 8) | b.data[1];
+@@ -155,6 +375,126 @@ void printGatewayCandidate(uint8_t reporter, const Assembly& as, const CANMessag
+                 static_cast<int>(rssi), static_cast<unsigned>(protocol));
+ }
+ 
++void printProbeAssociation(uint8_t reporter, const AssocStatusAssembly& as, const CANMessage& b) {
++  uint64_t uuid = 0;
++  for (uint8_t i = 0; i < 4; ++i) uuid = (uuid << 8) | as.uuidFirst4[i];
++  for (uint8_t i = 0; i < 4; ++i) uuid = (uuid << 8) | b.data[4 + i];
++  const int8_t rssi = static_cast<int8_t>(b.data[2]);
++  const uint8_t protocol = b.data[3];
++
++  Serial.printf("[GW] WIRELESS_ASSOC node=%u child=%u uuid=0x%016llX profile=%s state=%s rssi=%d protocol=%u\n",
++                reporter,
++                static_cast<unsigned>(as.childId),
++                static_cast<unsigned long long>(uuid),
++                profileName(as.profile),
++                assocStateName(as.state),
++                static_cast<int>(rssi),
++                static_cast<unsigned>(protocol));
++}
++
++bool parseUuid(const char* text, uint64_t& uuid) {
++  if (!text || !*text) return false;
++  char* end = nullptr;
++  uuid = strtoull(text, &end, 0);
++  return end && *end == '\0' && uuid != 0;
++}
++
++void sendAssociationCommand(uint8_t target, uint8_t action, uint64_t uuid) {
++  const uint8_t seq = ++assocCommandSeq;
++
++  CANMessage a;
++  a.id = CAN_ID_WIRELESS_ASSOC_CMD_A;
++  a.len = 8;
++  a.data[0] = seq;
++  a.data[1] = target;
++  a.data[2] = action;
++  for (uint8_t i = 0; i < 5; ++i) {
++    a.data[3 + i] = static_cast<uint8_t>((uuid >> (56 - 8 * i)) & 0xFFu);
++  }
++
++  CANMessage b;
++  b.id = CAN_ID_WIRELESS_ASSOC_CMD_B;
++  b.len = 8;
++  b.data[0] = seq;
++  b.data[1] = target;
++  b.data[2] = action;
++  for (uint8_t i = 0; i < 3; ++i) {
++    b.data[3 + i] = static_cast<uint8_t>((uuid >> (16 - 8 * i)) & 0xFFu);
++  }
++  b.data[6] = 0;
++  b.data[7] = 0;
++
++  can.tryToSend(a);
++  can.tryToSend(b);
++
++  Serial.printf("[GW] WIRELESS_%s_TX node=%u uuid=0x%016llX seq=%u\n",
++                action == WIRELESS_ASSOC_ACTION_BIND ? "BIND" : "UNBIND",
++                static_cast<unsigned>(target),
++                static_cast<unsigned long long>(uuid),
++                static_cast<unsigned>(seq));
++}
++
++void pollBindings() {
++  if (NODE_ID == 0) return;
++  const uint32_t now = millis();
++
++  for (uint8_t i = 0; i < MAX_BINDINGS; ++i) {
++    Binding snapshot;
++    bool publish = false;
++
++    portENTER_CRITICAL(&candidateMux);
++    Binding& binding = bindings[i];
++    if (!binding.used) {
++      portEXIT_CRITICAL(&candidateMux);
++      continue;
++    }
++
++    const uint32_t age = now - binding.lastSeenMs;
++    if (binding.assocState == WIRELESS_ASSOC_ASSOCIATING &&
++        now - binding.stateSinceMs >= ASSOCIATING_MIN_MS &&
++        age <= BIND_CANDIDATE_MAX_AGE_MS) {
++      binding.assocState = WIRELESS_ASSOC_BOUND;
++      binding.stateSinceMs = now;
++      snapshot = binding;
++      publish = true;
++    } else if (binding.assocState == WIRELESS_ASSOC_BOUND &&
++               binding.lastSeenMs > binding.stateSinceMs) {
++      binding.assocState = WIRELESS_ASSOC_ONLINE;
++      binding.stateSinceMs = now;
++      snapshot = binding;
++      publish = true;
++    } else if (binding.assocState == WIRELESS_ASSOC_BOUND && age > ONLINE_STALE_MS) {
++      binding.assocState = WIRELESS_ASSOC_STALE;
++      binding.stateSinceMs = now;
++      snapshot = binding;
++      publish = true;
++    } else if (binding.assocState == WIRELESS_ASSOC_ONLINE && age > ONLINE_STALE_MS) {
++      binding.assocState = WIRELESS_ASSOC_STALE;
++      binding.stateSinceMs = now;
++      snapshot = binding;
++      publish = true;
++    } else if (binding.assocState == WIRELESS_ASSOC_STALE && age <= ONLINE_STALE_MS) {
++      binding.assocState = WIRELESS_ASSOC_ONLINE;
++      binding.stateSinceMs = now;
++      snapshot = binding;
++      publish = true;
++    } else if (binding.assocState == WIRELESS_ASSOC_STALE && age > STALE_LOST_MS) {
++      binding.assocState = WIRELESS_ASSOC_LOST;
++      binding.stateSinceMs = now;
++      snapshot = binding;
++      publish = true;
++    } else if (binding.assocState == WIRELESS_ASSOC_LOST && age <= ONLINE_STALE_MS) {
++      binding.assocState = WIRELESS_ASSOC_ONLINE;
++      binding.stateSinceMs = now;
++      snapshot = binding;
++      publish = true;
++    }
++    portEXIT_CRITICAL(&candidateMux);
++
++    if (publish) sendAssociationStatus(snapshot);
++  }
++}
++
+ } // namespace
+ 
+ void wirelessDiscoveryInit() {
+@@ -175,47 +515,140 @@ void wirelessDiscoveryInit() {
+ }
+ 
+ void wirelessDiscoveryPoll() {
+-  if (NODE_ID == 0 || !scannerStarted) return;
+-
+-  Candidate ready;
+-  bool haveReady = false;
+-  const uint32_t now = millis();
++  if (NODE_ID != 0 && scannerStarted) {
++    Candidate ready;
++    bool haveReady = false;
++    const uint32_t now = millis();
+ 
+-  portENTER_CRITICAL(&candidateMux);
+-  for (uint8_t i = 0; i < MAX_CANDIDATES; ++i) {
+-    if (candidates[i].used && candidates[i].pending) {
+-      ready = candidates[i];
+-      candidates[i].pending = false;
+-      candidates[i].lastReportMs = now;
+-      haveReady = true;
+-      break;
++    portENTER_CRITICAL(&candidateMux);
++    for (uint8_t i = 0; i < MAX_CANDIDATES; ++i) {
++      if (candidates[i].used && candidates[i].pending) {
++        ready = candidates[i];
++        candidates[i].pending = false;
++        candidates[i].lastReportMs = now;
++        haveReady = true;
++        break;
++      }
+     }
++    portEXIT_CRITICAL(&candidateMux);
++
++    if (haveReady) sendCandidateReport(ready);
+   }
+-  portEXIT_CRITICAL(&candidateMux);
+ 
+-  if (haveReady) sendCandidateReport(ready);
++  pollBindings();
+ }
+ 
+-bool wirelessDiscoveryHandleCanMessage(const CANMessage& rx) {
+-  if (rx.id < CAN_ID_WIRELESS_DISCOVERY_BASE || rx.id > CAN_ID_WIRELESS_DISCOVERY_LAST) return false;
+-  if (rx.len != 8) return true;
+-
+-  const uint16_t offset = static_cast<uint16_t>(rx.id - CAN_ID_WIRELESS_DISCOVERY_BASE);
+-  const uint8_t reporter = static_cast<uint8_t>(offset / 2u);
+-  const uint8_t part = static_cast<uint8_t>(offset & 1u);
+-  if (reporter == 0 || reporter >= 32) return true;
+-
+-  Assembly& as = assemblies[reporter];
+-  if (part == 0) {
+-    as.havePartA = true;
+-    as.seq = rx.data[0];
+-    memcpy(as.uuidFirst7, &rx.data[1], 7);
++bool wirelessAssociationHandleSerialCommand(const char* command) {
++  if (NODE_ID != 0 || !command) return false;
++
++  char verb[16] = {0};
++  unsigned int target = 0;
++  char uuidText[32] = {0};
++  if (sscanf(command, "WIRELESS %15s %u %31s", verb, &target, uuidText) != 3) {
++    return false;
++  }
++  if (target == 0 || target >= 32) {
++    Serial.println("[GW] WIRELESS_ERROR target invalido; use Node 1..31");
++    return true;
++  }
++
++  uint64_t uuid = 0;
++  if (!parseUuid(uuidText, uuid)) {
++    Serial.println("[GW] WIRELESS_ERROR UUID invalido");
+     return true;
+   }
+ 
+-  if (NODE_ID == 0 && as.havePartA && as.seq == rx.data[0]) {
+-    printGatewayCandidate(reporter, as, rx);
++  if (strcasecmp(verb, "BIND") == 0) {
++    sendAssociationCommand(static_cast<uint8_t>(target), WIRELESS_ASSOC_ACTION_BIND, uuid);
++    return true;
++  }
++  if (strcasecmp(verb, "UNBIND") == 0) {
++    sendAssociationCommand(static_cast<uint8_t>(target), WIRELESS_ASSOC_ACTION_UNBIND, uuid);
++    return true;
+   }
+-  as.havePartA = false;
++
++  Serial.println("[GW] WIRELESS_ERROR use: WIRELESS BIND|UNBIND <node> <uuid>");
+   return true;
+ }
++
++bool wirelessDiscoveryHandleCanMessage(const CANMessage& rx) {
++  if (rx.id >= CAN_ID_WIRELESS_DISCOVERY_BASE && rx.id <= CAN_ID_WIRELESS_DISCOVERY_LAST) {
++    if (rx.len != 8) return true;
++
++    const uint16_t offset = static_cast<uint16_t>(rx.id - CAN_ID_WIRELESS_DISCOVERY_BASE);
++    const uint8_t reporter = static_cast<uint8_t>(offset / 2u);
++    const uint8_t part = static_cast<uint8_t>(offset & 1u);
++    if (reporter == 0 || reporter >= 32) return true;
++
++    DiscoveryAssembly& as = discoveryAssemblies[reporter];
++    if (part == 0) {
++      as.havePartA = true;
++      as.seq = rx.data[0];
++      memcpy(as.uuidFirst7, &rx.data[1], 7);
++      return true;
++    }
++
++    if (NODE_ID == 0 && as.havePartA && as.seq == rx.data[0]) {
++      printProbeCandidate(reporter, as, rx);
++    }
++    as.havePartA = false;
++    return true;
++  }
++
++  if (rx.id == CAN_ID_WIRELESS_ASSOC_CMD_A) {
++    if (rx.len != 8 || NODE_ID == 0) return true;
++    if (rx.data[1] != NODE_ID) return true;
++    assocCommandAssembly.havePartA = true;
++    assocCommandAssembly.seq = rx.data[0];
++    assocCommandAssembly.target = rx.data[1];
++    assocCommandAssembly.action = rx.data[2];
++    memcpy(assocCommandAssembly.uuidFirst5, &rx.data[3], 5);
++    return true;
++  }
++
++  if (rx.id == CAN_ID_WIRELESS_ASSOC_CMD_B) {
++    if (rx.len != 8 || NODE_ID == 0) return true;
++    if (!assocCommandAssembly.havePartA ||
++        assocCommandAssembly.seq != rx.data[0] ||
++        assocCommandAssembly.target != rx.data[1] ||
++        assocCommandAssembly.action != rx.data[2]) {
++      assocCommandAssembly.havePartA = false;
++      return true;
++    }
++
++    uint64_t uuid = 0;
++    for (uint8_t i = 0; i < 5; ++i) uuid = (uuid << 8) | assocCommandAssembly.uuidFirst5[i];
++    for (uint8_t i = 0; i < 3; ++i) uuid = (uuid << 8) | rx.data[3 + i];
++    const uint8_t action = assocCommandAssembly.action;
++    assocCommandAssembly.havePartA = false;
++    processAssociationCommand(action, uuid);
++    return true;
++  }
++
++  if (rx.id >= CAN_ID_WIRELESS_ASSOC_STATUS_BASE && rx.id <= CAN_ID_WIRELESS_ASSOC_STATUS_LAST) {
++    if (rx.len != 8) return true;
++    const uint16_t offset = static_cast<uint16_t>(rx.id - CAN_ID_WIRELESS_ASSOC_STATUS_BASE);
++    const uint8_t reporter = static_cast<uint8_t>(offset / 2u);
++    const uint8_t part = static_cast<uint8_t>(offset & 1u);
++    if (reporter == 0 || reporter >= 32) return true;
++
++    AssocStatusAssembly& as = assocStatusAssemblies[reporter];
++    if (part == 0) {
++      as.havePartA = true;
++      as.seq = rx.data[0];
++      as.childId = rx.data[1];
++      as.state = rx.data[2];
++      as.profile = rx.data[3];
++      memcpy(as.uuidFirst4, &rx.data[4], 4);
++      return true;
++    }
++
++    if (NODE_ID == 0 && as.havePartA && as.seq == rx.data[0] && as.childId == rx.data[1]) {
++      printProbeAssociation(reporter, as, rx);
++    }
++    as.havePartA = false;
++    return true;
++  }
++
++  return false;
++}
+diff --git a/Documentacao/arquitetura/arquitetura.md b/Documentacao/arquitetura/arquitetura.md
+index 6d7ee10..11c4c34 100644
+--- a/Documentacao/arquitetura/arquitetura.md
++++ b/Documentacao/arquitetura/arquitetura.md
+@@ -4,7 +4,7 @@
+ 
+ A **Probe 00** é uma sonda de instrumentação conectada ao barramento CAN e à TUI por USB. Ela observa e injeta comandos de bancada, mas não participa da eleição, não é líder ou seguidor e não possui função sensorial local.
+ 
+-Os **Nodes CAN** são módulos ESP32 + MCP2515. O papel distribuído (`LEADER` ou `FOLLOWER`) é independente das capacidades físicas. Um Node pode possuir sensores ou atuadores locais, scanner BLE e, quando implementado, recursos de associação wireless.
++Os **Nodes CAN** são módulos ESP32 + MCP2515. O papel distribuído (`LEADER` ou `FOLLOWER`) é independente das capacidades físicas. Um Node pode possuir sensores ou atuadores locais, scanner BLE e recursos de associação wireless.
+ 
+ O **sensor wireless** é um Raspberry Pi Pico W com MPU6050. Ele executa aquisição, DSP, diagnóstico, BLE advertising e infraestrutura de rede local.
+ 
+@@ -22,7 +22,7 @@ Pico W  ────────────────────────
+                                         TUI
+ ```
+ 
+-O CAN é o domínio de coordenação entre os módulos. O BLE é usado para descoberta. O transporte de dados após a associação ainda será definido sobre a infraestrutura de rede local do Node selecionado.
++O CAN é o domínio de coordenação entre os módulos. O BLE é usado para descoberta e para o lease de presença do vínculo lógico. A associação atual não abre um canal BLE de dados: ela atribui identidade e responsabilidade a um Node CAN. O transporte de telemetria após o vínculo será estabelecido separadamente sobre a infraestrutura de rede local do Node selecionado.
+ 
+ ## Liveness e liderança
+ 
+@@ -38,15 +38,15 @@ A função local `DEMO_BYTE` produz atualmente `0xAA`. Ela não representa um se
+ 
+ O Pico W anuncia UUID64, perfil e versão de protocolo por BLE. Todos os Nodes funcionais ao alcance podem receber o advertisement. Cada observação é enviada em dois frames CAN clássicos e inclui o Node observador e o RSSI.
+ 
+-A TUI agrupa as observações pelo UUID. Isso permite comparar simultaneamente a qualidade do enlace em diferentes pontos da rede. O painel de estado indica o Node com maior RSSI observado, mas nenhuma associação é realizada automaticamente.
++A TUI agrupa as observações pelo UUID. Isso permite comparar simultaneamente a qualidade do enlace em diferentes pontos da rede. O painel de estado indica o Node com maior RSSI observado. O operador pode aceitar essa recomendação ou escolher explicitamente outro Node. O vínculo é sempre iniciado por uma ação do operador.
+ 
+-Estados previstos para o ciclo de associação:
++Estados do ciclo de associação:
+ 
+ ```text
+ DISCOVERED → ASSOCIATING → BOUND → ONLINE → STALE/LOST
+ ```
+ 
+-A decisão de vínculo deve ser explícita e confirmada. Depois do vínculo, o sensor recebe um identificador lógico no formato `parent.child`, por exemplo `01.01`.
++A decisão de vínculo é explícita. A Probe 00 envia o pedido de associação pelo CAN, o Node selecionado verifica se o UUID foi observado recentemente e aloca o menor `child_id` livre. O sensor recebe então um identificador lógico no formato `parent.child`, por exemplo `01.01`. Um novo advertisement após `BOUND` leva o vínculo a `ONLINE`; ausência prolongada altera o estado para `STALE` e depois `LOST`. O retorno dos advertisements recupera `ONLINE` sem criar um novo filho.
+ 
+ ## TUI
+ 
+diff --git a/Documentacao/desafios_e_resolucoes.md b/Documentacao/desafios_e_resolucoes.md
+index a119b9e..cb057dd 100644
+--- a/Documentacao/desafios_e_resolucoes.md
++++ b/Documentacao/desafios_e_resolucoes.md
+@@ -14,7 +14,7 @@ Este documento registra defeitos técnicos que ajudam a compreender decisões at
+ | CH-008 | Probe não respondia à autodetecção textual | parser aceitava apenas comandos CAN hexadecimais | `PROBE_VERSION` e `PROBE_STATUS` | Resolvido |
+ | CH-009 | EventLog era poluído por manutenção e telemetria | estado contínuo tratado como evento | classificação de manutenção e painel dedicado de Nodes | Resolvido |
+ | CH-010 | abertura serial podia produzir fragmentos e bytes NUL | dados residuais e handshake rápido demais | limpeza do buffer, atraso de estabilização e sanitização de entrada | Mitigado |
+-| CH-011 | associação wireless ainda não existe | descoberta foi implementada antes do vínculo | implementar seleção, autenticação, bind e recuperação persistente | Aberto |
++| CH-011 | associação wireless precisava preservar a escolha explícita do operador | um mesmo UUID pode ser visto por vários Nodes com RSSI diferente | vínculo lógico comandado pela TUI, confirmação pelo CAN e lease de presença por BLE; persistência permanece pendente | Parcial |
+ | CH-012 | CAN ainda usa MCP2515 clássico | hardware CAN FD ainda não integrado | migrar após estabilização do protocolo funcional | Aberto |
+ 
+ Novos problemas devem ser adicionados apenas quando houver impacto arquitetural, de protocolo, segurança, build ou operação. Logs transitórios de bancada não precisam gerar uma entrada permanente.
+diff --git a/Documentacao/interface/tui.md b/Documentacao/interface/tui.md
+index c9bdfe5..13490b7 100644
+--- a/Documentacao/interface/tui.md
++++ b/Documentacao/interface/tui.md
+@@ -8,7 +8,7 @@ A coluna esquerda contém a árvore funcional da rede. As etiquetas são deliber
+ 
+ A região central contém o resumo da rede, telas especializadas e o EventLog. O EventLog é reservado para mudanças de estado, comandos, DTCs, erros, descoberta inicial e eventos que exigem atenção. Tráfego periódico de manutenção e valores contínuos não devem ocupar esse espaço.
+ 
+-A coluna direita, identificada apenas como **NÓS**, mostra a função local de cada Node, último valor, rodada, idade da amostra, estado de scan BLE e melhor RSSI. Quando um mesmo UUID é observado por vários Nodes, a TUI apresenta também qual Node possui a melhor observação atual.
++A coluna direita, identificada apenas como **NÓS**, mostra a função local de cada Node, último valor, rodada, idade da amostra, estado de scan BLE e melhor RSSI. Quando um mesmo UUID é observado por vários Nodes, a TUI apresenta também qual Node possui a melhor observação atual. Depois do vínculo, a mesma região mostra o identificador lógico e o estado `ASSOCIATING`, `BOUND`, `ONLINE`, `STALE` ou `LOST`.
+ 
+ ## Navegação
+ 
+@@ -28,3 +28,17 @@ F3 abre a seleção/conexão serial. F4 abre configuração relacionada ao alvo
+ ## Logs
+ 
+ As sessões são gravadas em JSONL. Informações contínuas podem ser registradas de forma estruturada sem aparecer no EventLog. Isso preserva dados para análise posterior sem degradar a leitura da interface durante a operação.
++
++## Associação wireless
++
++`Ctrl+A` abre a tela de associação. Cada observação mostra UUID, perfil, Node e RSSI; a melhor observação de cada UUID recebe `★`, mas o operador pode escolher outro Node. Associações existentes aparecem na mesma tela e podem ser removidas.
++
++Comandos internos equivalentes:
++
++```text
++:wireless
++:bind [uuid] [node]
++:unbind [uuid] [node]
++```
++
++Ao confirmar um vínculo, a TUI não cria o filho por antecipação. O filho `parent.child` aparece apenas quando a Probe recebe do Node o estado de associação correspondente. Isso evita apresentar na interface uma associação que ainda não foi confirmada pelo barramento.
+diff --git a/Documentacao/modulo-can/modulo-can.md b/Documentacao/modulo-can/modulo-can.md
+index cdeee9d..4d0538b 100644
+--- a/Documentacao/modulo-can/modulo-can.md
++++ b/Documentacao/modulo-can/modulo-can.md
+@@ -14,3 +14,11 @@ O papel `LEADER` ou `FOLLOWER` é dinâmico e não define as capacidades do mód
+ A função local atual é `DEMO_BYTE`, com valor `0xAA`. Ela valida o transporte de um dado produzido pelo próprio Node. Futuras funções locais podem representar sensores ou atuadores reais e deverão declarar sua interface específica na TUI.
+ 
+ Nodes funcionais inicializam o scanner BLE passivo. O Node 0 é reservado à Probe 00 e não executa scan BLE.
++
++## Associação de sensores wireless
++
++Cada Node mantém uma tabela limitada de vínculos wireless. Um pedido de associação recebido pela Probe 00 contém o Node alvo e o UUID64 do sensor. O Node só aceita o vínculo quando o UUID foi observado recentemente pelo scanner BLE. O menor `child_id` livre é alocado e forma o identificador lógico `parent.child`.
++
++O vínculo não depende do papel de líder ou seguidor. Após a confirmação, novos advertisements do mesmo UUID atualizam o lease de presença. O estado passa a `STALE` quando os advertisements deixam de chegar dentro da janela esperada e a `LOST` após uma ausência prolongada. O reaparecimento do UUID recupera `ONLINE` sem recriar o vínculo.
++
++A associação ainda não é persistida em memória não volátil; uma reinicialização do Node remove a tabela local de vínculos. A persistência será adicionada antes de considerar o mecanismo de associação completo para implantação permanente.
+diff --git a/Documentacao/protocolo/protocolo.md b/Documentacao/protocolo/protocolo.md
+index 30b6acb..2557538 100644
+--- a/Documentacao/protocolo/protocolo.md
++++ b/Documentacao/protocolo/protocolo.md
+@@ -61,6 +61,48 @@ A Probe recompõe as duas partes quando a sequência coincide e emite:
+ WIRELESS_CANDIDATE reporter=N uuid=0x... profile=VIBRATION rssi=-55 protocol=5
+ ```
+ 
++
++## Associação wireless
++
++A associação é iniciada pela TUI e transmitida pela Probe 00 por um comando textual:
++
++```text
++WIRELESS BIND <node> <uuid>
++WIRELESS UNBIND <node> <uuid>
++```
++
++O UUID é transportado pelo CAN clássico em dois frames de comando:
++
++```text
++0x300  parte A: seq + target + action + primeiros 5 bytes do UUID
++0x301  parte B: seq + target + action + últimos 3 bytes do UUID
++```
++
++Cada Node publica o estado do vínculo em dois IDs exclusivos. Para o Node `N`:
++
++```text
++0x320 + 2*N      estado A: seq + child + state + profile + primeiros 4 bytes UUID
++0x320 + 2*N + 1  estado B: seq + child + RSSI + protocol + últimos 4 bytes UUID
++```
++
++Estados de associação:
++
++```text
++DISCOVERED → ASSOCIATING → BOUND → ONLINE → STALE → LOST
++                                      ↑         │       │
++                                      └─────────┴───────┘  novo advertisement
++```
++
++`UNBOUND` indica remoção explícita e `REJECTED` indica que o Node não pôde aceitar o vínculo, por exemplo porque o UUID não foi observado recentemente ou porque não há `child_id` livre.
++
++A Probe recompõe o estado e emite uma linha textual para a TUI:
++
++```text
++[GW] WIRELESS_ASSOC node=1 child=1 uuid=0xE6616408432B6F39 profile=VIBRATION state=ONLINE rssi=-48 protocol=5
++```
++
++A associação atual é um vínculo lógico de identidade e responsabilidade. A continuidade dos advertisements BLE funciona como lease de presença. O fluxo de telemetria do sensor associado ainda não usa esse vínculo como plano de dados.
++
+ ## Sensor wireless — console serial
+ 
+ Comandos de leitura principais:
+diff --git a/Documentacao/requisitos.md b/Documentacao/requisitos.md
+index 1fe35ab..0590c0a 100644
+--- a/Documentacao/requisitos.md
++++ b/Documentacao/requisitos.md
+@@ -16,7 +16,7 @@
+ | Descoberta BLE do mesmo UUID por múltiplos Nodes CAN | Implementado |
+ | Transporte de UUID, perfil, protocolo e RSSI pelo CAN | Implementado |
+ | Comparação do melhor RSSI na TUI | Implementado |
+-| Associação de candidato wireless a um Node CAN | Pendente |
++| Associação de candidato wireless a um Node CAN | Implementado |
+ | Criação de filho lógico `parent.child` | Pendente |
+ | Telemetria wireless através do Node CAN associado | Pendente |
+ | Persistência e recuperação da associação | Pendente |
+diff --git a/Documentacao/sensor-wireless/sensor-wireless.md b/Documentacao/sensor-wireless/sensor-wireless.md
+index 72c128e..70f048b 100644
+--- a/Documentacao/sensor-wireless/sensor-wireless.md
++++ b/Documentacao/sensor-wireless/sensor-wireless.md
+@@ -28,3 +28,7 @@ Wi-Fi permanece desabilitado até existir provisionamento válido e uma ação e
+ ## Segurança
+ 
+ Comandos mutáveis exigem uma sessão `AUTH UNLOCK`. O token de administração é fornecido no build a partir de `.env.local`. O procedimento de geração e renovação está em `../modelo_de_seguranca.md`.
++
++## Relação com a associação
++
++O sensor continua anunciando seu UUID64 e perfil por BLE. A associação atual é feita no lado dos Nodes CAN: o Pico W não precisa receber um comando BLE de bind para que a infraestrutura atribua sua identidade a um Node. Por isso, esta etapa não exige alteração ou nova gravação do firmware do Pico W. O canal de dados posterior ao vínculo será implementado separadamente.
+diff --git a/Front/pico_tui/__init__.py b/Front/pico_tui/__init__.py
+index 47e059c..bde246d 100644
+--- a/Front/pico_tui/__init__.py
++++ b/Front/pico_tui/__init__.py
+@@ -1,3 +1,3 @@
+ """iot-over-can TUI — console de rede CAN/CAN FD e sensores IoT."""
+ 
+-__version__ = "0.14.0"
++__version__ = "0.15.0"
+diff --git a/Front/pico_tui/app.py b/Front/pico_tui/app.py
+index 198b162..1367a24 100644
+--- a/Front/pico_tui/app.py
++++ b/Front/pico_tui/app.py
+@@ -64,6 +64,7 @@ from pico_tui.screens import (
+     SensorDetailScreen,
+     TelemetryCommandRequested,
+     TelemetryScreen,
++    WirelessAssociationScreen,
+ )
+ from pico_tui.serial_client import SerialClient
+ from pico_tui.security import SecurityManager
+@@ -133,6 +134,7 @@ class PicoTuiApp(App[None]):
+         Binding("ctrl+o", "restart_acquisition", "Reiniciar aquisição", show=False),
+         Binding("ctrl+w", "wifi_connect", "Wi-Fi ON", show=False),
+         Binding("ctrl+y", "security_status", "Segurança", show=False),
++        Binding("ctrl+a", "wireless_association", "Associar", show=False),
+         Binding("q", "exit_confirm", "Sair", show=False),
+     ]
+ 
+@@ -209,7 +211,7 @@ class PicoTuiApp(App[None]):
+                 vibration_config.display = False
+                 yield vibration_config
+         yield Input(
+-            placeholder="Comando direto ou :can, :node 04, :node 04.01, :connect, :status",
++            placeholder="Comando direto ou :wireless, :bind, :can, :node 04, :connect, :status",
+             id="command-input",
+         )
+         yield Footer()
+@@ -847,6 +849,12 @@ class PicoTuiApp(App[None]):
+             await self._send_network_command("Solicitar status global", "22 20 FF 00")
+         elif cmd == "can":
+             await self._command_can(args)
++        elif cmd in {"bind", "associar"}:
++            await self._command_wireless_bind(args)
++        elif cmd in {"unbind", "desassociar"}:
++            await self._command_wireless_unbind(args)
++        elif cmd == "wireless":
++            self.action_wireless_association()
+         elif cmd == "disconnect":
+             await self._disconnect()
+         elif cmd == "reconnect":
+@@ -897,6 +905,102 @@ class PicoTuiApp(App[None]):
+                 request.command,
+             )
+ 
++    def _best_wireless_observation(self, wireless_uuid: str | None = None) -> tuple[str, int] | None:
++        state = self.state_store.snapshot()
++        associated = {
++            sensor.wireless_uuid.lower()
++            for node in state.nodes.values()
++            for sensor in node.sensors.values()
++            if sensor.wireless_uuid
++        }
++        best: tuple[str, int, int] | None = None
++        for node_id, node in state.nodes.items():
++            for candidate in node.wireless_candidates.values():
++                if candidate.wireless_uuid.lower() in associated:
++                    continue
++                if wireless_uuid and candidate.wireless_uuid.lower() != wireless_uuid.lower():
++                    continue
++                if best is None or candidate.rssi_dbm > best[2]:
++                    best = (candidate.wireless_uuid, node_id, candidate.rssi_dbm)
++        if best is None:
++            return None
++        return best[0], best[1]
++
++    async def _command_wireless_bind(self, args: list[str]) -> None:
++        uuid_value: str | None = None
++        node_id: int | None = None
++        if args and args[0].lower() not in {"best", "auto"}:
++            uuid_value = args[0]
++        if len(args) > 1:
++            try:
++                node_id = int(args[1], 0)
++            except ValueError:
++                await self.bus.publish(LogEvent("ERROR", f"Node inválido: {args[1]}", "BLE"))
++                return
++        if uuid_value:
++            existing = next(
++                (
++                    sensor
++                    for node in self.state_store.snapshot().nodes.values()
++                    for sensor in node.sensors.values()
++                    if sensor.wireless_uuid.lower() == uuid_value.lower()
++                ),
++                None,
++            )
++            if existing is not None:
++                await self.bus.publish(
++                    LogEvent(
++                        "WARNING",
++                        f"{uuid_value} já está associado como {existing.logical_id}; remova o vínculo antes de migrar",
++                        "BLE",
++                    )
++                )
++                return
++        best = self._best_wireless_observation(uuid_value)
++        if best is None:
++            await self.bus.publish(LogEvent("WARNING", "Nenhum candidato wireless compatível foi observado", "BLE"))
++            return
++        resolved_uuid, recommended_node = best
++        target = node_id if node_id is not None else recommended_node
++        command = commands.wireless_association("BIND", target, resolved_uuid)
++        if self._send_raw(command):
++            await self.bus.publish(
++                LogEvent("INFO", f"Associação solicitada: {resolved_uuid} → Node {target:02d}", "BLE")
++            )
++
++    async def _command_wireless_unbind(self, args: list[str]) -> None:
++        if not args:
++            sensor = self._selected_sensor()
++            if sensor is None or not sensor.wireless_uuid:
++                await self.bus.publish(LogEvent("WARNING", "Uso: :unbind <uuid> [node] ou selecione um sensor", "BLE"))
++                return
++            uuid_value = sensor.wireless_uuid
++            node_id = sensor.parent_node_id
++        else:
++            uuid_value = args[0]
++            if len(args) > 1:
++                try:
++                    node_id = int(args[1], 0)
++                except ValueError:
++                    await self.bus.publish(LogEvent("ERROR", f"Node inválido: {args[1]}", "BLE"))
++                    return
++            else:
++                node_id = next(
++                    (
++                        node.parent_node_id
++                        for node in self.state_store.snapshot().nodes.values()
++                        for sensor in node.sensors.values()
++                        if sensor.wireless_uuid.lower() == uuid_value.lower()
++                    ),
++                    None,
++                )
++                if node_id is None:
++                    await self.bus.publish(LogEvent("WARNING", f"Associação não encontrada para {uuid_value}", "BLE"))
++                    return
++        command = commands.wireless_association("UNBIND", node_id, uuid_value)
++        if self._send_raw(command):
++            await self.bus.publish(LogEvent("INFO", f"Remoção solicitada: {uuid_value} do Node {node_id:02d}", "BLE"))
++
+     async def _command_tel(self, args: list[str]) -> None:
+         if not args:
+             await self.bus.publish(LogEvent("WARNING", "Uso: :tel on|off|once|fast|slow|period <ms>|rate", "COMMAND"))
+@@ -1257,6 +1361,7 @@ class PicoTuiApp(App[None]):
+             "config": self.action_configure_selected,
+             "network": self.action_show_network,
+             "can_commands": self.action_can_network_commands,
++            "wireless": self.action_wireless_association,
+             "wifi_on": self.action_wifi_connect,
+             "wifi_off": lambda: self.run_worker(self._set_wifi(False)),
+             "gateway": self.action_show_gateway,
+@@ -1508,6 +1613,23 @@ class PicoTuiApp(App[None]):
+     def action_wifi_connect(self) -> None:
+         self.run_worker(self._set_wifi(True))
+ 
++    @work
++    async def action_wireless_association(self) -> None:
++        state = self.state_store.snapshot()
++        request = await self.push_screen_wait(WirelessAssociationScreen(state))
++        if request is None:
++            return
++        command = commands.wireless_association(request.action, request.node_id, request.wireless_uuid)
++        if self._send_raw(command):
++            verb = "Associação" if request.action == "BIND" else "Remoção"
++            await self.bus.publish(
++                LogEvent(
++                    "INFO",
++                    f"{verb} solicitada: {request.wireless_uuid} / Node {request.node_id:02d}",
++                    "BLE",
++                )
++            )
++
+     def action_security_status(self) -> None:
+         self.notify(self.security.status_label(), title="Segurança", timeout=5)
+ 
+diff --git a/Front/pico_tui/commands.py b/Front/pico_tui/commands.py
+index da16c19..0f8eaaa 100644
+--- a/Front/pico_tui/commands.py
++++ b/Front/pico_tui/commands.py
+@@ -107,3 +107,10 @@ def gateway_command(target: str, action: str, *, tx: str | None = None, **fields
+             continue
+         items.append(f"{key.upper()}={value}")
+     return " ".join(items)
++
++
++def wireless_association(action: str, node_id: int, wireless_uuid: str) -> str:
++    action = action.upper()
++    if action not in {"BIND", "UNBIND"}:
++        raise ValueError(f"Ação wireless inválida: {action}")
++    return f"WIRELESS {action} {node_id} {wireless_uuid}"
+diff --git a/Front/pico_tui/core/events.py b/Front/pico_tui/core/events.py
+index c009d3e..42eccf1 100644
+--- a/Front/pico_tui/core/events.py
++++ b/Front/pico_tui/core/events.py
+@@ -76,6 +76,17 @@ class WirelessCandidateReceived(Event):
+     protocol_version: str = ""
+ 
+ 
++@dataclass(slots=True)
++class WirelessAssociationReceived(Event):
++    parent_node_id: int
++    child_id: int
++    wireless_uuid: str
++    profile_id: str
++    state: str
++    rssi_dbm: int
++    protocol_version: str = ""
++
++
+ @dataclass(slots=True)
+ class SensorStatusReceived(Event):
+     parent_node_id: int
+diff --git a/Front/pico_tui/core/models.py b/Front/pico_tui/core/models.py
+index 621b8fd..84da20b 100644
+--- a/Front/pico_tui/core/models.py
++++ b/Front/pico_tui/core/models.py
+@@ -193,6 +193,8 @@ class SensorNode:
+     firmware_version: str = ""
+     protocol_version: str = ""
+     status: NodeStatus = NodeStatus.UNKNOWN
++    association_state: str = "UNBOUND"
++    association_rssi_dbm: int | None = None
+     acquisition_mode: AcquisitionMode = AcquisitionMode.UNKNOWN
+     sensor_mode: SensorMode = SensorMode.UNKNOWN
+     quality: DataQuality = DataQuality.UNKNOWN
+diff --git a/Front/pico_tui/core/state_store.py b/Front/pico_tui/core/state_store.py
+index 029ad66..4815fe5 100644
+--- a/Front/pico_tui/core/state_store.py
++++ b/Front/pico_tui/core/state_store.py
+@@ -162,6 +162,18 @@ class StateStore:
+                     setattr(sensor, key, value)
+             sensor.last_seen_monotonic = time.monotonic()
+ 
++    def remove_sensor(self, parent_node_id: int, child_id: int) -> None:
++        with self._lock:
++            node = self._state.nodes.get(parent_node_id)
++            if node is None:
++                return
++            sensor = node.sensors.pop(child_id, None)
++            if sensor is None:
++                return
++            if self._state.selected_logical_id == sensor.logical_id:
++                self._state.selected_logical_id = None
++                self._state.selected_node_id = parent_node_id
++
+     def update_sensor_configuration(
+         self,
+         parent_node_id: int,
+diff --git a/Front/pico_tui/protocol/legacy_gateway.py b/Front/pico_tui/protocol/legacy_gateway.py
+index c1b8b99..f92ab01 100644
+--- a/Front/pico_tui/protocol/legacy_gateway.py
++++ b/Front/pico_tui/protocol/legacy_gateway.py
+@@ -11,6 +11,7 @@ from pico_tui.core.events import (
+     LocalNodeTelemetryReceived,
+     PhysicalNodeReceived,
+     WirelessCandidateReceived,
++    WirelessAssociationReceived,
+ )
+ 
+ 
+@@ -35,6 +36,11 @@ class LegacyGatewayDecoder:
+         r"uuid=(?P<uuid>0x[0-9A-Fa-f]{16})\s+profile=(?P<profile>[A-Z0-9_]+)\s+"
+         r"rssi=(?P<rssi>-?\d+)\s+protocol=(?P<protocol>\d+)"
+     )
++    WIRELESS_ASSOC = re.compile(
++        r"\[GW\]\s+WIRELESS_ASSOC\s+node=(?P<node>\d+)\s+child=(?P<child>\d+)\s+"
++        r"uuid=(?P<uuid>0x[0-9A-Fa-f]{16})\s+profile=(?P<profile>[A-Z0-9_]+)\s+"
++        r"state=(?P<state>[A-Z_]+)\s+rssi=(?P<rssi>-?\d+)\s+protocol=(?P<protocol>\d+)"
++    )
+     CONTROL_RX = re.compile(
+         r"\[GW\]\s+CONTROLE RX\s+(?P<b0>[0-9A-Fa-f]{1,2})\s+"
+         r"(?P<b1>[0-9A-Fa-f]{1,2})\s+(?P<b2>[0-9A-Fa-f]{1,2})\s+"
+@@ -114,6 +120,19 @@ class LegacyGatewayDecoder:
+                 )
+             )
+             return True
++        if match := self.WIRELESS_ASSOC.search(line):
++            await self.bus.publish(
++                WirelessAssociationReceived(
++                    parent_node_id=int(match.group("node")),
++                    child_id=int(match.group("child")),
++                    wireless_uuid=match.group("uuid").upper().replace("0X", "0x"),
++                    profile_id=match.group("profile").upper(),
++                    state=match.group("state").upper(),
++                    rssi_dbm=int(match.group("rssi")),
++                    protocol_version=match.group("protocol"),
++                )
++            )
++            return True
+         if match := self.COMMAND_ACK.search(line):
+             node = int(match.group("node"))
+             subcmd = int(match.group("subcmd"), 16)
+diff --git a/Front/pico_tui/screens.py b/Front/pico_tui/screens.py
+index 47d9f73..12b17e6 100644
+--- a/Front/pico_tui/screens.py
++++ b/Front/pico_tui/screens.py
+@@ -68,6 +68,13 @@ class CanNetworkCommandRequest:
+     command: str
+ 
+ 
++@dataclass(slots=True)
++class WirelessAssociationRequest:
++    action: str
++    node_id: int
++    wireless_uuid: str
++
++
+ class ConnectScreen(ModalScreen[ConnectionChoice | None]):
+     BINDINGS = [
+         Binding("r", "refresh_ports", "Atualizar portas", show=True),
+@@ -348,7 +355,7 @@ class HelpScreen(ModalScreen[None]):
+   Ctrl+N Focar árvore de nós          Ctrl+E Eventos
+   Ctrl+K Limpar DTC
+   Ctrl+O Reiniciar POLLING      Ctrl+W Wi-Fi ON
+-  Ctrl+Y Estado segurança       Ctrl+C Parar telemetria (0x03)
++  Ctrl+Y Estado segurança       Ctrl+A Associação wireless
+ 
+ [b]Comandos internos[/b]
+   :status                       :node 20.01
+@@ -359,6 +366,7 @@ class HelpScreen(ModalScreen[None]):
+   :tel once / fast / slow       :tel period 1000
+   :wifi on / off / status       :security / :lock / :unlock <otp>
+   :can [cmd]                    :election / :canstatus
++  :wireless                     :bind [uuid] [node] / :unbind [uuid] [node]
+   :connect / :disconnect / :reconnect
+ 
+ [b]Comandos diretos[/b]
+@@ -392,6 +400,7 @@ class MainMenuScreen(ModalScreen[str | None]):
+         ("Configuração do alvo", "config"),
+         ("Rede CAN / status", "network"),
+         ("Comandos da Rede CAN", "can_commands"),
++        ("Associação wireless", "wireless"),
+         ("Instrumentação / Probe 00", "gateway"),
+         ("Logs e exportação", "logs"),
+         ("Ajuda", "help"),
+@@ -524,6 +533,113 @@ class NodeNavigatorScreen(ModalScreen[str | None]):
+         self.dismiss(None)
+ 
+ 
++class WirelessAssociationScreen(ModalScreen[WirelessAssociationRequest | None]):
++    """Seleção explícita do Node responsável por um sensor BLE descoberto."""
++
++    BINDINGS = [Binding("escape", "cancel", "Cancelar", show=False)]
++
++    def __init__(self, state: AppState) -> None:
++        super().__init__()
++        self.state = state
++
++    def _options(self) -> list[Option]:
++        options: list[Option] = []
++        associated_uuids: set[str] = set()
++
++        for node_id, node in sorted(self.state.nodes.items()):
++            for child_id, sensor in sorted(node.sensors.items()):
++                if not sensor.wireless_uuid:
++                    continue
++                associated_uuids.add(sensor.wireless_uuid)
++                options.append(
++                    Option(
++                        f"ASSOC {sensor.logical_id}  {sensor.association_state}  "
++                        f"{sensor.profile_id or 'UNKNOWN'}  {sensor.wireless_uuid}",
++                        id=f"unbind:{node_id}:{child_id}:{sensor.wireless_uuid}",
++                    )
++                )
++
++        observations: dict[str, list[tuple[int, int, str]]] = {}
++        for node_id, node in self.state.nodes.items():
++            for candidate in node.wireless_candidates.values():
++                observations.setdefault(candidate.wireless_uuid, []).append(
++                    (node_id, candidate.rssi_dbm, candidate.profile_id)
++                )
++
++        for uuid, rows in sorted(observations.items()):
++            if uuid in associated_uuids:
++                continue
++            rows.sort(key=lambda item: item[1], reverse=True)
++            for index, (node_id, rssi, profile) in enumerate(rows):
++                recommended = "★" if index == 0 else " "
++                options.append(
++                    Option(
++                        f"{recommended} {uuid}  {profile}  Node {node_id:02d}  RSSI={rssi} dBm",
++                        id=f"bind:{node_id}:{uuid}",
++                    )
++                )
++
++        if not options:
++            options.append(Option("Nenhum candidato ou associação disponível", id="__empty__", disabled=True))
++        return options
++
++    def compose(self) -> ComposeResult:
++        with Vertical(id="wireless-association-dialog", classes="modal wide-modal"):
++            yield Static("ASSOCIAÇÃO WIRELESS", classes="modal-title")
++            yield Static(
++                "★ indica o Node com melhor RSSI para cada UUID. "
++                "Selecione uma observação para associar ou uma associação existente para remover.",
++                classes="modal-hint",
++            )
++            yield OptionList(*self._options(), id="wireless-association-list")
++            with Horizontal(classes="modal-buttons"):
++                yield Button("Executar", id="wireless-association-apply", variant="primary")
++                yield Button("Cancelar", id="wireless-association-cancel")
++
++    def on_mount(self) -> None:
++        widget = self.query_one("#wireless-association-list", OptionList)
++        for index in range(widget.option_count):
++            if not widget.get_option_at_index(index).disabled:
++                widget.highlighted = index
++                break
++        widget.focus()
++
++    def _selected_request(self) -> WirelessAssociationRequest | None:
++        widget = self.query_one("#wireless-association-list", OptionList)
++        if widget.highlighted is None:
++            return None
++        option = widget.get_option_at_index(widget.highlighted)
++        if option.disabled or not option.id or option.id == "__empty__":
++            return None
++        parts = str(option.id).split(":")
++        if parts[0] == "bind" and len(parts) == 3:
++            return WirelessAssociationRequest("BIND", int(parts[1]), parts[2])
++        if parts[0] == "unbind" and len(parts) == 4:
++            return WirelessAssociationRequest("UNBIND", int(parts[1]), parts[3])
++        return None
++
++    @on(OptionList.OptionSelected, "#wireless-association-list")
++    def _option_selected(self, event: OptionList.OptionSelected) -> None:
++        request = self._selected_request()
++        if request:
++            self.dismiss(request)
++
++    @on(Button.Pressed, "#wireless-association-apply")
++    def _apply(self) -> None:
++        request = self._selected_request()
++        if request:
++            self.dismiss(request)
++        else:
++            self.notify("Selecione um candidato ou associação", severity="warning")
++
++    @on(Button.Pressed, "#wireless-association-cancel")
++    def _cancel_button(self) -> None:
++        self.dismiss(None)
++
++    def action_cancel(self) -> None:
++        self.dismiss(None)
++
++
+ class ConfigScreen(ModalScreen[ConfigRequest | None]):
+     BINDINGS = [Binding("escape", "cancel", "Cancelar", show=False)]
+ 
+diff --git a/Front/pico_tui/security.py b/Front/pico_tui/security.py
+index 68d4f54..7f39c2d 100644
+--- a/Front/pico_tui/security.py
++++ b/Front/pico_tui/security.py
+@@ -39,6 +39,7 @@ MUTATING_PREFIXES = (
+     "NET WIFI CLEAR",
+     "AUTH UNLOCK ",
+     "WIFI ",
++    "WIRELESS ",
+     "CMD ",
+ )
+ 
+diff --git a/Front/pico_tui/services/controller.py b/Front/pico_tui/services/controller.py
+index 5bce04c..e37a260 100644
+--- a/Front/pico_tui/services/controller.py
++++ b/Front/pico_tui/services/controller.py
+@@ -28,6 +28,7 @@ from pico_tui.core.events import (
+     TransferCompleted,
+     TransferFailed,
+     WirelessCandidateReceived,
++    WirelessAssociationReceived,
+ )
+ from pico_tui.core.models import (
+     AcquisitionMode,
+@@ -68,6 +69,7 @@ class DomainController:
+             (GatewayStatusReceived, self._gateway_status),
+             (PhysicalNodeReceived, self._physical_node),
+             (WirelessCandidateReceived, self._wireless_candidate),
++            (WirelessAssociationReceived, self._wireless_association),
+             (SensorStatusReceived, self._sensor_status),
+             (DirectSensorVersionReceived, self._direct_version),
+             (DirectSensorStatusReceived, self._direct_status),
+@@ -182,6 +184,66 @@ class DomainController:
+                 )
+             )
+ 
++    async def _wireless_association(self, event: WirelessAssociationReceived) -> None:
++        state = event.state.upper()
++        if state == "REJECTED":
++            await self.bus.publish(
++                LogEvent(
++                    "WARNING",
++                    f"Node {event.parent_node_id:02d} rejeitou associação de {event.wireless_uuid}",
++                    "BLE",
++                )
++            )
++            return
++
++        if state == "UNBOUND":
++            if event.child_id > 0:
++                self.state.remove_sensor(event.parent_node_id, event.child_id)
++            await self.bus.publish(
++                LogEvent(
++                    "INFO",
++                    f"Associação removida: Node {event.parent_node_id:02d} / {event.wireless_uuid}",
++                    "BLE",
++                )
++            )
++            return
++
++        if event.child_id <= 0:
++            return
++
++        status_map = {
++            "ASSOCIATING": NodeStatus.AGING,
++            "BOUND": NodeStatus.AGING,
++            "ONLINE": NodeStatus.ONLINE,
++            "STALE": NodeStatus.STALE,
++            "LOST": NodeStatus.LOST,
++        }
++        sensor = self.state.ensure_sensor(
++            event.parent_node_id,
++            event.child_id,
++            wireless_uuid=event.wireless_uuid,
++        )
++        previous_assoc = sensor.association_state
++        self.state.update_sensor(
++            event.parent_node_id,
++            event.child_id,
++            wireless_uuid=event.wireless_uuid,
++            profile_id=event.profile_id,
++            protocol_version=event.protocol_version,
++            association_state=state,
++            association_rssi_dbm=event.rssi_dbm,
++            status=status_map.get(state, NodeStatus.UNKNOWN),
++        )
++        if previous_assoc != state:
++            await self.bus.publish(
++                LogEvent(
++                    "INFO" if state not in {"STALE", "LOST"} else "WARNING",
++                    f"{event.parent_node_id:02d}.{event.child_id:02d} {event.wireless_uuid}: {state} "
++                    f"(RSSI={event.rssi_dbm} dBm)",
++                    "BLE",
++                )
++            )
++
+     async def _sensor_status(self, event: SensorStatusReceived) -> None:
+         payload = event.payload
+         sensor = self.state.ensure_sensor(
+diff --git a/Front/pico_tui/services/log_manager.py b/Front/pico_tui/services/log_manager.py
+index 6bbfd6b..539a6f4 100644
+--- a/Front/pico_tui/services/log_manager.py
++++ b/Front/pico_tui/services/log_manager.py
+@@ -15,6 +15,7 @@ from pico_tui.core.events import (
+     LogEvent,
+     TelemetryReceived,
+     WirelessCandidateReceived,
++    WirelessAssociationReceived,
+ )
+ 
+ 
+@@ -52,6 +53,7 @@ class LogManager:
+         bus.subscribe(TelemetryReceived, self._on_telemetry)
+         bus.subscribe(LocalNodeTelemetryReceived, self._on_local_node_telemetry)
+         bus.subscribe(WirelessCandidateReceived, self._on_wireless_candidate)
++        bus.subscribe(WirelessAssociationReceived, self._on_wireless_association)
+ 
+     async def _on_log(self, event: LogEvent) -> None:
+         entry = LogEntry(
+@@ -115,6 +117,21 @@ class LogManager:
+             }
+         )
+ 
++    async def _on_wireless_association(self, event: WirelessAssociationReceived) -> None:
++        self._write_jsonl(
++            {
++                "type": "wireless_association",
++                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
++                "node": event.parent_node_id,
++                "child": event.child_id,
++                "uuid": event.wireless_uuid,
++                "profile": event.profile_id,
++                "state": event.state,
++                "rssi_dbm": event.rssi_dbm,
++                "protocol": event.protocol_version,
++            }
++        )
++
+     def _write_jsonl(self, data: dict[str, Any]) -> None:
+         if self._file is None:
+             return
+diff --git a/Front/pico_tui/widgets.py b/Front/pico_tui/widgets.py
+index 393d4d7..ab67eda 100644
+--- a/Front/pico_tui/widgets.py
++++ b/Front/pico_tui/widgets.py
+@@ -56,7 +56,7 @@ class NetworkTreePanel(Vertical):
+                 node.status.value,
+                 node.can_state,
+                 node.wifi_state,
+-                tuple((child, sensor.wireless_uuid, sensor.status.value) for child, sensor in sorted(node.sensors.items())),
++                tuple((child, sensor.wireless_uuid, sensor.status.value, sensor.association_state) for child, sensor in sorted(node.sensors.items())),
+             )
+             for parent, node in sorted(state.nodes.items())
+         )
+@@ -73,10 +73,10 @@ class NetworkTreePanel(Vertical):
+             label = f"{selected} {marker} Node {parent_id:02d}  {node.role}"
+             parent = tree.root.add(label, data=("node", parent_id), expand=True)
+             for child_id, sensor in sorted(node.sensors.items()):
+-                quality = palette.QUALITY_MARKERS.get(sensor.quality.value, "[N/A]")
++                marker = palette.STATUS_MARKERS.get(sensor.status.value, "[N/A]")
+                 selected = "▶" if state.selected_logical_id == sensor.logical_id else " "
+                 parent.add(
+-                    f"{selected} {quality} {sensor.logical_id}  {sensor.profile_id or 'UNKNOWN'}",
++                    f"{selected} {marker} {sensor.logical_id}  {sensor.profile_id or 'UNKNOWN'}",
+                     data=("sensor", parent_id, child_id),
+                     allow_expand=False,
+                 )
+@@ -100,9 +100,9 @@ class NetworkTreePanel(Vertical):
+                         sensor = state.nodes.get(child_data[1], None)
+                         sensor = sensor.sensors.get(child_data[2]) if sensor else None
+                         if sensor:
+-                            quality = palette.QUALITY_MARKERS.get(sensor.quality.value, "[N/A]")
++                            marker = palette.STATUS_MARKERS.get(sensor.status.value, "[N/A]")
+                             selected = "▶" if state.selected_logical_id == sensor.logical_id else " "
+-                            child_node.set_label(f"{selected} {quality} {sensor.logical_id}  {sensor.profile_id or 'UNKNOWN'}")
++                            child_node.set_label(f"{selected} {marker} {sensor.logical_id}  {sensor.profile_id or 'UNKNOWN'}")
+ 
+ 
+ 
+@@ -153,8 +153,9 @@ class CanNetworkDashboardPanel(Vertical):
+         if selected_sensor:
+             selected = f"Sensor {selected_sensor.logical_id} no Node {selected_sensor.parent_node_id:02d}"
+             selected_status = (
+-                f"{selected_sensor.status.value}; modo={selected_sensor.sensor_mode.value}; "
+-                f"aquisição={selected_sensor.acquisition_mode.value}; DTC={selected_sensor.active_dtc_count}"
++                f"{selected_sensor.status.value}; associação={selected_sensor.association_state}; "
++                f"modo={selected_sensor.sensor_mode.value}; aquisição={selected_sensor.acquisition_mode.value}; "
++                f"DTC={selected_sensor.active_dtc_count}"
+             )
+         elif selected_node:
+             selected = f"Node {selected_node.parent_node_id:02d} — {selected_node.node_type}"
+@@ -333,12 +334,31 @@ class NodeTelemetryPanel(Vertical):
+                         node_id, candidate.rssi_dbm, candidate.profile_id
+                     )
+ 
++        associated_by_uuid = {
++            sensor.wireless_uuid: sensor
++            for node in state.nodes.values()
++            for sensor in node.sensors.values()
++            if sensor.wireless_uuid
++        }
++
+         if best_by_uuid:
+             lines = []
+             for uuid, (node_id, rssi, profile) in sorted(best_by_uuid.items()):
+                 short_uuid = uuid.removeprefix("0x")[-8:]
+-                lines.append(f"BLE {short_uuid} {profile} → Node {node_id:02d} ({rssi} dBm)")
++                associated = associated_by_uuid.get(uuid)
++                if associated is not None:
++                    lines.append(
++                        f"BLE {short_uuid} {profile} → {associated.logical_id} "
++                        f"{associated.association_state} ({rssi} dBm)"
++                    )
++                else:
++                    lines.append(f"BLE {short_uuid} {profile} → Node {node_id:02d} ({rssi} dBm)")
+             best_text = "\n".join(lines)
++        elif associated_by_uuid:
++            best_text = "\n".join(
++                f"BLE {uuid.removeprefix('0x')[-8:]} → {sensor.logical_id} {sensor.association_state}"
++                for uuid, sensor in sorted(associated_by_uuid.items())
++            )
+         else:
+             best_text = "BLE: nenhum candidato"
+         self.query_one("#wireless-best", Static).update(best_text)
+@@ -360,10 +380,17 @@ class NodeTelemetryPanel(Vertical):
+                 best_rssi = max((candidate.rssi_dbm for candidate in candidates), default=None)
+                 rssi_text = f"{best_rssi} dBm" if best_rssi is not None else "—"
+                 profile = node.local_sensor_profile if node.local_sensor_profile not in {"", "NONE"} else "local"
++                child_text = ""
++                if node.sensors:
++                    child_text = "\n" + "\n".join(
++                        f"   ↳ {sensor.logical_id} {sensor.association_state}"
++                        for sensor in sorted(node.sensors.values(), key=lambda item: item.child_id)
++                    )
+                 blocks.append(
+                     f"[b]{selected} {node_id:02d}[/b]  {node.role}\n"
+                     f"   {profile}={value}  r={round_text}  {age_text}\n"
+                     f"   BLE {node.wireless_discovery_state}  cand={len(candidates)}  {rssi_text}"
++                    f"{child_text}"
+                 )
+             text = "\n\n".join(blocks)
+         self.query_one("#node-telemetry-live", Static).update(text)
+diff --git a/Front/pyproject.toml b/Front/pyproject.toml
+index 6b7f597..7e728ce 100644
+--- a/Front/pyproject.toml
++++ b/Front/pyproject.toml
+@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
+ 
+ [project]
+ name = "iot-over-can-tui"
+-version = "0.14.2"
++version = "0.15.0"
+ description = "Console TUI de engenharia para supervisão, diagnóstico e configuração de redes IoT sobre CAN/CAN FD"
+ readme = "README.md"
+ requires-python = ">=3.11"
+diff --git a/Front/tests/test_probe_handshake_v0132.py b/Front/tests/test_probe_handshake_v0132.py
+index 0e0f8fd..09b7872 100644
+--- a/Front/tests/test_probe_handshake_v0132.py
++++ b/Front/tests/test_probe_handshake_v0132.py
+@@ -8,7 +8,7 @@ def test_probe_firmware_accepts_textual_introspection_without_can_injection():
+     assert 'strcmp(command, "PROBE_VERSION") == 0' in source
+     assert 'strcmp(command, "PROBE_STATUS") == 0' in source
+     assert 'strcmp(command, "GW_VERSION") == 0' in source
+-    assert 'PROBE_VERSION FIRMWARE=0.13.2' in source
++    assert 'PROBE_VERSION FIRMWARE=' in source
+     assert 'PROBE_STATUS NODE=0 STATE=ONLINE CAN=CLASSIC' in source
+     assert source.index("handleProbeIntrospectionCommand(buffer)") < source.index("sscanf(")
+ 
+diff --git a/Front/tests/test_probe_observability_v0133.py b/Front/tests/test_probe_observability_v0133.py
+index 7d16933..42ee1de 100644
+--- a/Front/tests/test_probe_observability_v0133.py
++++ b/Front/tests/test_probe_observability_v0133.py
+@@ -18,14 +18,14 @@ def test_probe_version_and_status_are_visible_in_event_log():
+         bus.subscribe(GatewayStatusReceived, lambda event: statuses.append(event))
+ 
+         await decoder.decode(
+-            "PROBE_VERSION FIRMWARE=0.13.2 PROTOCOL=CAN_CLASSIC_V1 NODE=0"
++            "PROBE_VERSION FIRMWARE=0.15.0 PROTOCOL=CAN_CLASSIC_V1 NODE=0"
+         )
+         await decoder.decode(
+             "PROBE_STATUS NODE=0 STATE=ONLINE CAN=CLASSIC ARB=500000 DATA=0 "
+             "WIFI=OFF BLE_SCAN=OFF UPTIME_MS=1234"
+         )
+ 
+-        assert detected and detected[0].firmware_version == "0.13.2"
++        assert detected and detected[0].firmware_version == "0.15.0"
+         assert statuses and statuses[0].payload["CAN"] == "CLASSIC"
+         probe_logs = [event for event in logs if event.source == "PROBE"]
+         assert len(probe_logs) == 2
+diff --git a/Front/tests/test_wireless_association_v015.py b/Front/tests/test_wireless_association_v015.py
+new file mode 100644
+index 0000000..f927502
+--- /dev/null
++++ b/Front/tests/test_wireless_association_v015.py
+@@ -0,0 +1,93 @@
++from __future__ import annotations
++
++import asyncio
++from pathlib import Path
++
++from pico_tui import commands
++from pico_tui.core.event_bus import EventBus
++from pico_tui.core.state_store import StateStore
++from pico_tui.protocol.legacy_gateway import LegacyGatewayDecoder
++from pico_tui.security import SecurityManager
++from pico_tui.services.controller import DomainController
++
++ROOT = Path(__file__).resolve().parents[2]
++UUID = "0xE6616408432B6F39"
++
++
++def test_association_protocol_contract_uses_dedicated_can_ranges() -> None:
++    ids = (ROOT / "Codigo/node-can/include/can_ids.h").read_text()
++    protocol = (ROOT / "Codigo/node-can/include/protocolo.h").read_text()
++    source = (ROOT / "Codigo/node-can/src/wireless_discovery.cpp").read_text()
++
++    assert "CAN_ID_WIRELESS_ASSOC_CMD_A" in ids
++    assert "CAN_ID_WIRELESS_ASSOC_STATUS_BASE" in ids
++    assert "WIRELESS_ASSOC_ASSOCIATING" in protocol
++    assert "WIRELESS_ASSOC_ONLINE" in protocol
++    assert "WIRELESS_ASSOC_STALE" in protocol
++    assert "WIRELESS_ASSOC_LOST" in protocol
++    assert "WIRELESS BIND" in source
++    assert 'strcasecmp(verb, "UNBIND")' in source
++
++
++def test_tui_builds_probe_association_commands() -> None:
++    assert commands.wireless_association("BIND", 1, UUID) == f"WIRELESS BIND 1 {UUID}"
++    assert commands.wireless_association("UNBIND", 4, UUID) == f"WIRELESS UNBIND 4 {UUID}"
++
++
++def test_wireless_commands_are_mutating_security_operations(tmp_path: Path) -> None:
++    security = SecurityManager("off", tmp_path / "missing.json")
++    assert security.command_requires_auth(f"WIRELESS BIND 1 {UUID}") is True
++    assert security.command_requires_auth(f"WIRELESS UNBIND 1 {UUID}") is True
++
++
++def test_association_line_creates_logical_child_and_tracks_state() -> None:
++    async def scenario() -> None:
++        bus = EventBus()
++        state = StateStore()
++        DomainController(bus, state)
++        decoder = LegacyGatewayDecoder(bus)
++
++        assert await decoder.decode(
++            f"[GW] WIRELESS_ASSOC node=1 child=1 uuid={UUID} "
++            "profile=VIBRATION state=ASSOCIATING rssi=-48 protocol=5"
++        )
++        sensor = state.snapshot().nodes[1].sensors[1]
++        assert sensor.logical_id == "01.01"
++        assert sensor.wireless_uuid == UUID
++        assert sensor.association_state == "ASSOCIATING"
++        assert sensor.status.value == "AGING"
++
++        assert await decoder.decode(
++            f"[GW] WIRELESS_ASSOC node=1 child=1 uuid={UUID} "
++            "profile=VIBRATION state=ONLINE rssi=-45 protocol=5"
++        )
++        sensor = state.snapshot().nodes[1].sensors[1]
++        assert sensor.association_state == "ONLINE"
++        assert sensor.association_rssi_dbm == -45
++        assert sensor.status.value == "ONLINE"
++
++    asyncio.run(scenario())
++
++
++def test_unbound_line_removes_logical_child() -> None:
++    async def scenario() -> None:
++        bus = EventBus()
++        state = StateStore()
++        DomainController(bus, state)
++        decoder = LegacyGatewayDecoder(bus)
++
++        await decoder.decode(
++            f"[GW] WIRELESS_ASSOC node=2 child=1 uuid={UUID} "
++            "profile=VIBRATION state=ONLINE rssi=-50 protocol=5"
++        )
++        assert state.find_sensor("02.01") is not None
++
++        await decoder.decode(
++            f"[GW] WIRELESS_ASSOC node=2 child=1 uuid={UUID} "
++            "profile=VIBRATION state=UNBOUND rssi=-50 protocol=5"
++        )
++        assert state.find_sensor("02.01") is None
++        assert state.snapshot().selected_logical_id is None
++        assert state.snapshot().selected_node_id == 2
++
++    asyncio.run(scenario())
+diff --git a/MANIFEST.json b/MANIFEST.json
+index 0026e4f..e319a3d 100644
+--- a/MANIFEST.json
++++ b/MANIFEST.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "iot-over-can",
+-  "version": "0.14.0",
+-  "description": "Plataforma experimental de IoT embarcada sobre CAN/CAN FD com descoberta wireless distribuída, diagnóstico e supervisão local.",
++  "version": "0.15.0",
++  "description": "Plataforma experimental de IoT embarcada sobre CAN/CAN FD com descoberta e associação wireless distribuídas, diagnóstico e supervisão local.",
+   "paths": {
+     "tui": "Front",
+     "can_firmware": "Codigo/node-can",
+@@ -22,7 +22,8 @@
+     "can": "CAN clássico 500 kbit/s no hardware atual",
+     "wireless_discovery": "BLE advertisement no Pico W e scan distribuído nos Nodes CAN",
+     "candidate_transport": "dois frames CAN clássicos por observação",
+-    "probe_role": "observação e injeção de bancada; fora da lógica distribuída"
++    "probe_role": "observação e injeção de bancada; fora da lógica distribuída",
++    "wireless_association": "vínculo lógico explícito via Probe 00 e CAN; presença acompanhada por advertisements BLE"
+   },
+   "implemented": [
+     "eleição e liveness lease dos Nodes CAN",
+@@ -31,11 +32,11 @@
+     "autorização de comandos mutáveis no firmware",
+     "descoberta BLE distribuída",
+     "agrupamento de candidatos por UUID e RSSI na TUI",
+-    "separação visual entre eventos e telemetria contínua"
++    "separação visual entre eventos e telemetria contínua",
++    "associação lógica explícita de candidatos BLE a Nodes CAN",
++    "identificador lógico parent.child com estados ASSOCIATING, BOUND, ONLINE, STALE e LOST"
+   ],
+   "pending": [
+-    "associação DISCOVERED -> ASSOCIATING -> BOUND",
+-    "identificador lógico parent.child",
+     "telemetria do sensor associado através do Node CAN",
+     "persistência da associação",
+     "autenticação criptográfica de origem no CAN e no vínculo wireless",
+diff --git a/README.md b/README.md
+index b83c117..474adcc 100644
+--- a/README.md
++++ b/README.md
+@@ -2,7 +2,7 @@
+ 
+ **iot-over-can** é uma plataforma experimental de IoT embarcada sobre CAN/CAN FD para estudo de redes locais, integração entre eventos determinísticos e assíncronos, supervisão, diagnóstico distribuído e controle operacional seguro.
+ 
+-O sensor de vibração baseado em Raspberry Pi Pico W é uma das cargas experimentais da plataforma. O objetivo principal é a infraestrutura de comunicação: módulos CAN funcionais podem possuir sensores e atuadores próprios, detectar dispositivos wireless próximos e, futuramente, assumir o vínculo desses dispositivos como extensões lógicas do nó físico.
++O sensor de vibração baseado em Raspberry Pi Pico W é uma das cargas experimentais da plataforma. O objetivo principal é a infraestrutura de comunicação: módulos CAN funcionais podem possuir sensores e atuadores próprios, detectar dispositivos wireless próximos e assumir explicitamente o vínculo desses dispositivos como extensões lógicas do nó físico.
+ 
+ ## Arquitetura
+ 
+@@ -23,7 +23,7 @@ A Probe 00 não participa de eleição, não executa sensoriamento funcional e n
+ 
+ A rede CAN clássica opera a 500 kbit/s com eleição de líder, supervisão, replicação de estado, comandos administrativos e telemetria local de demonstração. O `liveness lease` é usado para indicar presença operacional e detectar perda do líder; ele não é tratado como sincronização lógica pesada.
+ 
+-A descoberta BLE distribuída está funcional. O Pico W anuncia UUID, perfil e versão de protocolo; múltiplos Nodes CAN recebem o mesmo advertisement, medem RSSI e enviam a observação pelo CAN. A Probe 00 recompõe os frames e a TUI mantém as observações por UUID e por nó. A associação do sensor a um Node CAN ainda não é executada.
++A descoberta BLE distribuída e a associação lógica estão funcionais. O Pico W anuncia UUID, perfil e versão de protocolo; múltiplos Nodes CAN recebem o mesmo advertisement, medem RSSI e enviam a observação pelo CAN. A TUI agrupa as observações, recomenda o Node com maior RSSI e permite que o operador confirme o vínculo. O Node selecionado passa pelos estados `ASSOCIATING`, `BOUND` e `ONLINE`, cria o identificador lógico `parent.child` e usa a continuidade dos advertisements BLE como lease de presença. Essa associação define identidade e responsabilidade do Node; o transporte de telemetria do Pico W após o vínculo ainda será implementado em um plano de dados separado.
+ 
+ O valor `LOCAL_SENSOR_DEMO_VALUE=0xAA` simula uma função local do próprio Node CAN. Ele representa o fato de que um módulo CAN pode possuir sensores, atuadores e lógica própria além das funções de integração wireless. Quando uma função local real for implementada, ela deverá possuir sua própria interface de configuração e obtenção de dados na TUI. Por enquanto, o valor de demonstração é mantido para validar esse caminho de dados.
+ 
+@@ -102,6 +102,8 @@ Rede CAN
+ 
+ A tela de cada módulo CAN apresenta estado, papel, capacidades, função local e informações wireless. Interfaces especializadas são orientadas por perfil; por exemplo, métricas de vibração só são apresentadas para sensores `PROFILE=VIBRATION`.
+ 
++A associação wireless pode ser aberta por `Ctrl+A` ou pelo comando interno `:wireless`. Também é possível solicitar diretamente `:bind [uuid] [node]` e remover um vínculo com `:unbind [uuid] [node]`. Quando UUID e Node são omitidos no `:bind`, a TUI usa o candidato com melhor RSSI observado. A escolha automática é apenas uma recomendação operacional; a tela de associação permite selecionar outro Node explicitamente.
++
+ ## Segurança operacional
+ 
+ Comandos de leitura permanecem disponíveis, enquanto ações mutáveis no sensor wireless exigem uma sessão de manutenção autorizada no firmware. A TUI utiliza `~/.config/iot-over-can/security.json`; o firmware recebe os segredos de build por `.env.local`. Ambos são arquivos locais e não devem ser versionados.
+@@ -144,6 +146,8 @@ Os contratos seriais, mensagens CAN, descoberta BLE, DTCs e regras de fragmenta
+ | 0.13.3 | observabilidade explícita das respostas da Probe e dos candidatos BLE |
+ | 0.13.4 | separação entre EventLog e telemetria contínua; saneamento do handshake serial |
+ | 0.14.0 | consolidação da documentação, reorganização dos scripts e simplificação visual da TUI |
++| 0.14.2 | estabilização dos testes da TUI e encerramento seguro da thread serial |
++| 0.15.0 | associação lógica de candidatos BLE a Nodes CAN e criação de filhos `parent.child` |
+ 
+ ## Documentação
+ 
+@@ -151,10 +155,8 @@ O índice completo está em [`Documentacao/README.md`](Documentacao/README.md).
+ 
+ ## Itens ainda a implementar
+ 
+-- Seleção explícita do Node CAN responsável por um candidato wireless e associação `DISCOVERED → ASSOCIATING → BOUND`.
+-- Criação do identificador lógico `parent.child` após associação.
+ - Provisionamento do enlace de dados entre Node CAN e sensor wireless sem acesso USB direto ao sensor implantado.
+ - Transporte da telemetria do sensor associado até a TUI por meio do Node CAN selecionado.
+-- Persistência da associação e recuperação após reinicialização.
++- Persistência da associação e recuperação após reinicialização dos Nodes CAN.
+ - Autenticação criptográfica de origem para comandos CAN e para o vínculo wireless.
+ - Migração experimental para CAN FD com MCP2518FD após estabilização do protocolo funcional.

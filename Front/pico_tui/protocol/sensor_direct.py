@@ -30,7 +30,7 @@ from pico_tui.protocol.common import parse_bool, parse_float, parse_int, parse_k
 
 
 class SensorDirectDecoder:
-    """Decoder do console ASCII do Pico 2 W na baseline POLLING."""
+    """Decoder do console ASCII do sensor wireless em aquisição POLLING."""
 
     DEFAULT_PARENT = 1
     DEFAULT_CHILD = 1
@@ -126,7 +126,7 @@ class SensorDirectDecoder:
         elif explicit_acq:
             self.acquisition_mode = _acquisition(explicit_acq)
         elif self.acquisition_mode == AcquisitionMode.UNKNOWN:
-            # A baseline final utiliza POLLING. Sem campo explícito, não inferimos DRDY.
+            # A aquisição operacional utiliza POLLING. Sem campo explícito, não inferimos DRDY.
             self.acquisition_mode = AcquisitionMode.POLLING if payload.get("MPU", "NO").upper() == "YES" else AcquisitionMode.IDLE
         payload["ACQUISITION"] = self.acquisition_mode.value
         await self.bus.publish(DirectSensorStatusReceived(payload))

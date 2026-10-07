@@ -28,6 +28,7 @@ from pico_tui.core.events import (
     TransferCompleted,
     TransferFailed,
     WirelessCandidateReceived,
+    WirelessAssociationReceived,
 )
 from pico_tui.core.models import (
     AcquisitionMode,
@@ -37,10 +38,11 @@ from pico_tui.core.models import (
     DtcRecord,
     NodeStatus,
     SensorMode,
+    Severity,
     SpectrumSample,
 )
 from pico_tui.core.state_store import StateStore
-from pico_tui.dtc_catalog import dtc_severity
+from pico_tui.dtc_catalog import dtc_description, dtc_severity
 from pico_tui.protocol.can_id import decode_can_id
 from pico_tui.protocol.common import parse_bool, parse_float, parse_int
 from pico_tui.protocol.fragments import FragmentReassembler
@@ -57,6 +59,9 @@ class DomainController:
         self.fragments = FragmentReassembler(timeout_seconds=5.0)
         self._fragment_meta: dict[tuple[object, ...], dict[str, object]] = {}
         self._direct_uuid = ""
+        # Últimos indicadores físicos por sensor, usados apenas para detectar
+        # transições (saturação, gatilho STA/LTA) sem copiar o estado inteiro.
+        self._last_flags: dict[tuple[int, int], tuple[bool | None, bool | None]] = {}
         self._subscribe()
 
     def _subscribe(self) -> None:
@@ -68,6 +73,7 @@ class DomainController:
             (GatewayStatusReceived, self._gateway_status),
             (PhysicalNodeReceived, self._physical_node),
             (WirelessCandidateReceived, self._wireless_candidate),
+            (WirelessAssociationReceived, self._wireless_association),
             (SensorStatusReceived, self._sensor_status),
             (DirectSensorVersionReceived, self._direct_version),
             (DirectSensorStatusReceived, self._direct_status),
@@ -182,6 +188,66 @@ class DomainController:
                 )
             )
 
+    async def _wireless_association(self, event: WirelessAssociationReceived) -> None:
+        state = event.state.upper()
+        if state == "REJECTED":
+            await self.bus.publish(
+                LogEvent(
+                    "WARNING",
+                    f"Node {event.parent_node_id:02d} rejeitou associação de {event.wireless_uuid}",
+                    "BLE",
+                )
+            )
+            return
+
+        if state == "UNBOUND":
+            if event.child_id > 0:
+                self.state.remove_sensor(event.parent_node_id, event.child_id)
+            await self.bus.publish(
+                LogEvent(
+                    "INFO",
+                    f"Associação removida: Node {event.parent_node_id:02d} / {event.wireless_uuid}",
+                    "BLE",
+                )
+            )
+            return
+
+        if event.child_id <= 0:
+            return
+
+        status_map = {
+            "ASSOCIATING": NodeStatus.AGING,
+            "BOUND": NodeStatus.AGING,
+            "ONLINE": NodeStatus.ONLINE,
+            "STALE": NodeStatus.STALE,
+            "LOST": NodeStatus.LOST,
+        }
+        sensor = self.state.ensure_sensor(
+            event.parent_node_id,
+            event.child_id,
+            wireless_uuid=event.wireless_uuid,
+        )
+        previous_assoc = sensor.association_state
+        self.state.update_sensor(
+            event.parent_node_id,
+            event.child_id,
+            wireless_uuid=event.wireless_uuid,
+            profile_id=event.profile_id,
+            protocol_version=event.protocol_version,
+            association_state=state,
+            association_rssi_dbm=event.rssi_dbm,
+            status=status_map.get(state, NodeStatus.UNKNOWN),
+        )
+        if previous_assoc != state:
+            await self.bus.publish(
+                LogEvent(
+                    "INFO" if state not in {"STALE", "LOST"} else "WARNING",
+                    f"{event.parent_node_id:02d}.{event.child_id:02d} {event.wireless_uuid}: {state} "
+                    f"(RSSI={event.rssi_dbm} dBm)",
+                    "BLE",
+                )
+            )
+
     async def _sensor_status(self, event: SensorStatusReceived) -> None:
         payload = event.payload
         sensor = self.state.ensure_sensor(
@@ -207,6 +273,13 @@ class DomainController:
         self.state.update_sensor(event.parent_node_id, event.child_id, **values)
         if "NET" in payload:
             self.state.update_sensor_health(event.parent_node_id, event.child_id, network_state=str(payload["NET"]))
+        if "TELEMETRY" in payload:
+            self.state.update_sensor_health(
+                event.parent_node_id,
+                event.child_id,
+                telemetry_enabled=str(payload["TELEMETRY"]).upper() == "ON",
+                telemetry_period_ms=parse_int(payload.get("PERIOD_MS")),
+            )
 
     async def _direct_version(self, event: DirectSensorVersionReceived) -> None:
         self._direct_uuid = event.wireless_uuid
@@ -260,6 +333,7 @@ class DomainController:
         if dtc_code == 0 and dtc_count == 0:
             self.state.clear_dtc(1, 1, None)
         elif dtc_code:
+            self._record_dtc_incident(1, 1, dtc_code, dtc_severity(dtc_code))
             self.state.add_dtc(1, 1, DtcRecord(dtc_code, dtc_severity(dtc_code), raw=payload))
 
     async def _configuration_applied(self, event: ConfigurationApplied) -> None:
@@ -310,6 +384,14 @@ class DomainController:
                 out_of_order=result.out_of_order,
             )
             if result.lost:
+                self.state.add_sensor_incident(
+                    sample.parent_node_id,
+                    sample.child_id,
+                    Severity.WARNING,
+                    "SEQUENCIA",
+                    f"Mensagens perdidas: {result.lost} na última lacuna de sequência",
+                    key="sequence:lost",
+                )
                 await self.bus.publish(
                     LogEvent("WARNING", f"{sample.logical_id}: perda estimada de {result.lost} mensagem(ns)", "SEQUENCE")
                 )
@@ -317,6 +399,7 @@ class DomainController:
                 await self.bus.publish(LogEvent("WARNING", f"{sample.logical_id}: sequência duplicada {sample.sequence}", "SEQUENCE"))
             elif result.out_of_order:
                 await self.bus.publish(LogEvent("WARNING", f"{sample.logical_id}: sequência fora de ordem {sample.sequence}", "SEQUENCE"))
+        self._record_physical_transitions(sample)
         self.state.update_telemetry(sample)
         telemetry_values: dict[str, object] = {
             "reported_dtc_count": sample.dtc_count,
@@ -342,19 +425,70 @@ class DomainController:
             self.state.clear_dtc(sample.parent_node_id, sample.child_id, None)
         elif sample.dtc_code not in {None, 0}:
             code = sample.dtc_code or 0
+            self._record_dtc_incident(sample.parent_node_id, sample.child_id, code, dtc_severity(code))
             self.state.add_dtc(
                 sample.parent_node_id,
                 sample.child_id,
                 DtcRecord(code, dtc_severity(code), raw=sample.raw),
             )
 
+    def _record_physical_transitions(self, sample) -> None:
+        key = (sample.parent_node_id, sample.child_id)
+        previous_clip, previous_trigger = self._last_flags.get(key, (None, None))
+        if sample.clipping is True and previous_clip is not True:
+            self.state.add_sensor_incident(
+                sample.parent_node_id,
+                sample.child_id,
+                Severity.WARNING,
+                "EVENTO",
+                "Saturação do acelerômetro detectada",
+                key="event:clipping",
+            )
+        if sample.stalta_triggered is True and previous_trigger is not True:
+            self.state.add_sensor_incident(
+                sample.parent_node_id,
+                sample.child_id,
+                Severity.INFO,
+                "EVENTO",
+                "Evento transitório detectado pelo gatilho STA/LTA",
+                key="event:stalta",
+            )
+        self._last_flags[key] = (sample.clipping, sample.stalta_triggered)
+
+    def _record_dtc_incident(self, parent_node_id: int, child_id: int, code: int, severity: Severity) -> None:
+        """Registra a intercorrência só quando o DTC passa de inativo para ativo."""
+
+        if code == 0 or self.state.sensor_dtc_is_active(parent_node_id, child_id, code):
+            return
+        self.state.add_sensor_incident(
+            parent_node_id,
+            child_id,
+            severity,
+            "DTC",
+            f"DTC 0x{code:04X} ativo: {dtc_description(code)}",
+            key=f"dtc:{code:04X}",
+        )
+
     async def _spectrum(self, event: SpectrumReceived) -> None:
         self.state.update_spectrum(event.sample)
 
     async def _dtc(self, event: DtcReceived) -> None:
+        self._record_dtc_incident(event.parent_node_id, event.child_id, event.record.code, event.record.severity)
         self.state.add_dtc(event.parent_node_id, event.child_id, event.record)
 
     async def _dtc_cleared(self, event: DtcCleared) -> None:
+        sensor_key = f"{event.parent_node_id:02d}.{event.child_id:02d}"
+        sensor = self.state.find_sensor_summary(sensor_key)
+        if sensor is not None and sensor[1] > 0:
+            what = "todos os DTCs" if event.code is None else f"DTC 0x{event.code:04X}"
+            self.state.add_sensor_incident(
+                event.parent_node_id,
+                event.child_id,
+                Severity.INFO,
+                "DTC",
+                f"Limpeza confirmada pelo firmware: {what}",
+                key="dtc:cleared",
+            )
         self.state.clear_dtc(event.parent_node_id, event.child_id, event.code)
 
     async def _crc_error(self, event: CrcErrorReceived) -> None:

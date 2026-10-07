@@ -63,7 +63,7 @@ pico_add_extra_outputs(edge_node_firmware)
 # cmake -DPICO_BOARD=pico_w -DEDGE_SERIAL_ADMIN_TOKEN=0x1122334455667788 \
 #       -DEDGE_NODE_PRESHARED_KEY=0xA1B2C3D4E5F60718 ..
 set(EDGE_SERIAL_ADMIN_TOKEN "0" CACHE STRING "64-bit maintenance token; 0 keeps mutating serial commands locked")
-set(EDGE_NODE_PRESHARED_KEY "0" CACHE STRING "64-bit legacy UDP claim key; 0 disables legacy claim")
+set(EDGE_NODE_PRESHARED_KEY "0" CACHE STRING "64-bit UDP claim key; 0 disables claim")
 set(EDGE_ALLOW_LEGACY_INSECURE_UDP_CONTROL "0" CACHE STRING "Enable old unauthenticated UDP mutation path for isolated bench only")
 
 target_compile_definitions(edge_node_firmware PRIVATE

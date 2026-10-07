@@ -9,7 +9,7 @@
  * Deve ser definido no arquivo principal .ino.
  *
  * Regras:
- *   NODE_ID = 0  -> Gateway
+ *   NODE_ID = 0  -> Probe 00
  *   NODE_ID > 0  -> No funcional
  *
  * Cada no da rede deve possuir NODE_ID unico.

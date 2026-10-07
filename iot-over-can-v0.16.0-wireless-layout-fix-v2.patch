@@ -1,0 +1,90 @@
+diff --git a/Documentacao/desafios_e_resolucoes.md b/Documentacao/desafios_e_resolucoes.md
+index d6dcbdb..b827ae0 100644
+--- a/Documentacao/desafios_e_resolucoes.md
++++ b/Documentacao/desafios_e_resolucoes.md
+@@ -19,6 +19,6 @@ Este documento registra defeitos técnicos que ajudam a compreender decisões at
+ | CH-013 | filho wireless aparecia `STALE/LOST` apesar de o Node continuar recebendo advertisements | TUI e Node CAN calculavam liveness de forma independente, e o lease BLE de 6,5 s era agressivo | Node CAN tornou-se autoridade de liveness, lease ajustado para 15/45 s, filtro de duplicatas desabilitado e watchdog de scan | Resolvido |
+ | CH-014 | TUI acumulava informação simultânea e dependia de atalhos/comandos pouco visíveis | topologia, telemetria, configuração, eventos e comandos disputavam a mesma tela; ações equivalentes existiam em vários caminhos | telas cheias por assunto, barra contextual, catálogo único de comandos, mensagens opcionais, layout responsivo e gerenciamento wireless visível em `F7/w` | Resolvido |
+ | CH-015 | ações de telemetria/configuração pareciam disponíveis para filho wireless associado sem existir canal Pico W ↔ Node | associação lógica foi confundida com plano de dados | a TUI distingue vínculo de plano de dados, mostra a limitação e oculta/bloqueia ações sem caminho de entrega real | Resolvido |
+-| CH-016 | lista de candidatos wireless podia manter uma linha maior que a coluna em 48, 60 e 100 colunas | o primeiro refresh da `OptionList` podia ocorrer antes da medição final do layout e montar o prompt com largura provisória excessiva | prompts wireless passam a usar largura provisória conservadora (máximo 40 células), preservando todo o texto com quebra antecipada | Resolvido |
++| CH-016 | lista de candidatos wireless podia manter uma linha maior que a coluna em 48, 60 e 100 colunas | o primeiro refresh da `OptionList` podia ocorrer antes da medição final do layout; limitar apenas a largura usada no empacotamento não eliminou de forma determinística o prompt já armazenado | itens wireless passaram a ser compostos por linhas semânticas curtas e independentes da medição transitória da `OptionList`; UUID, perfil, melhor módulo/RSSI e número de observadores permanecem integralmente visíveis | Resolvido |
+ 
+ Novos problemas devem ser adicionados apenas quando houver impacto arquitetural, de protocolo, segurança, build ou operação. Logs transitórios de bancada não precisam gerar uma entrada permanente.
+diff --git a/Documentacao/interface/tui.md b/Documentacao/interface/tui.md
+index 7aacf53..6b7a3b1 100644
+--- a/Documentacao/interface/tui.md
++++ b/Documentacao/interface/tui.md
+@@ -485,7 +485,7 @@ Opções de execução relevantes:
+ 
+ A suíte possui testes de protocolo, estado, segurança, catálogo de comandos, preferências, intercorrências, associação wireless e interface. `test_layout_no_truncation.py` percorre telas em diferentes tamanhos para verificar ausência de conteúdo horizontalmente oculto. `test_tui_redesign_v016_contract.py` mantém contratos específicos desta organização: tela wireless visível, associação/desassociação, bloqueio de ações sem plano de dados e consistência da versão.
+ 
+-Na tela **Sensores sem fio**, os prompts das listas usam largura provisória conservadora de até 40 células durante a montagem. O Textual pode executar o primeiro ciclo de atualização antes de a largura final de uma `OptionList` estar disponível; sem essa proteção, um item criado com a largura provisória podia permanecer com uma linha maior que a coluna real em terminais estreitos. O limite não trunca conteúdo: ele apenas antecipa a quebra de linha e mantém a mesma informação completa quando o layout definitivo é menor.
++Na tela **Sensores sem fio**, os itens das listas não dependem da largura transitória informada pela `OptionList` durante o primeiro ciclo de layout. Cada candidato é apresentado em linhas semânticas curtas — UUID, perfil, melhor módulo/RSSI e número de módulos observadores — e cada vínculo associado usa linhas separadas para identificação, perfil/estado, UUID e módulo/RSSI. Essa composição determinística evita que um prompt criado antes da medição final da coluna retenha uma linha maior que a área visível, sem remover nenhuma informação.
+ 
+ Execução:
+ 
+diff --git a/Front/pico_tui/screens.py b/Front/pico_tui/screens.py
+index e17ef08..4ddfcd1 100644
+--- a/Front/pico_tui/screens.py
++++ b/Front/pico_tui/screens.py
+@@ -956,36 +956,38 @@ class WirelessScreen(BaseScreen):
+         self._state = state
+         self._available, self._associated = self._inventory(state)
+         available_list = self.query_one("#wireless-available", StableOptionList)
+-        # OptionList pode receber o primeiro refresh antes de o layout final estar
+-        # medido. Nesse instante ``prompt_width`` usa uma largura provisória ampla;
+-        # se o prompt for armazenado já nessa forma, uma linha longa pode sobreviver
+-        # até o teste/render seguinte. Limitar a largura provisória torna o item
+-        # seguro também no menor terminal oficialmente suportado (48 colunas).
+-        width = min(available_list.prompt_width, 40)
+         available_items: list[tuple[str, Text]] = []
+         for key, observations in sorted(self._available.items(), key=lambda item: item[1][0][1].rssi_dbm, reverse=True):
+             best_node, best = observations[0]
+-            first = Text(best.wireless_uuid, style=f"bold {palette.TEXT_PRIMARY}")
+-            first.append(f"  {pres.profile_label(best.profile_id)}", style=palette.TEXT_SECONDARY)
+-            second = Text(
+-                f"Melhor recepção: Módulo {best_node:02d}, {best.rssi_dbm} dBm ({_rssi_label(best.rssi_dbm)}); "
+-                f"observado por {len(observations)} módulo(s)",
+-                style=palette.TEXT_SECONDARY,
+-            )
+-            available_items.append((f"candidate:{key}", Text("\n").join(hanging_lines([first, second], width, indent=2))))
++            # A lista wireless não depende da largura transitória da OptionList.
++            # Cada informação ocupa uma linha semântica curta; assim o primeiro
++            # refresh já é seguro no terminal mínimo suportado (48 colunas).
++            lines = [
++                Text(f"  {best.wireless_uuid}", style=f"bold {palette.TEXT_PRIMARY}"),
++                Text(f"  {pres.profile_label(best.profile_id)}", style=palette.TEXT_SECONDARY),
++                Text(
++                    f"  Melhor: Módulo {best_node:02d} · {best.rssi_dbm} dBm ({_rssi_label(best.rssi_dbm)})",
++                    style=palette.TEXT_SECONDARY,
++                ),
++                Text(f"  Observado por {len(observations)} módulo(s)", style=palette.TEXT_MUTED),
++            ]
++            available_items.append((f"candidate:{key}", Text("\n").join(lines)))
+         available_list.set_items(available_items)
+ 
+         assoc_list = self.query_one("#wireless-associated", StableOptionList)
+-        # Mesma regra dos candidatos: o conteúdo inicial não pode depender de uma
+-        # medição transitória maior que a coluna realmente disponível.
+-        assoc_width = min(assoc_list.prompt_width, 40)
+         assoc_items: list[tuple[str, Text]] = []
+         for key, sensor in sorted(self._associated.items(), key=lambda item: item[1].logical_id):
+-            first = Text(f"Sensor {sensor.logical_id}", style=f"bold {palette.TEXT_PRIMARY}")
+-            first.append(f"  {pres.profile_label(sensor.profile_id)}  {sensor.association_state.upper()}", style=palette.TEXT_SECONDARY)
+-            rssi = f", {sensor.association_rssi_dbm} dBm" if sensor.association_rssi_dbm is not None else ""
+-            second = Text(f"{sensor.wireless_uuid} · Módulo {sensor.parent_node_id:02d}{rssi}", style=palette.TEXT_SECONDARY)
+-            assoc_items.append((f"sensor:{sensor.logical_id}", Text("\n").join(hanging_lines([first, second], assoc_width, indent=2))))
++            rssi = f"{sensor.association_rssi_dbm} dBm" if sensor.association_rssi_dbm is not None else pres.MISSING
++            lines = [
++                Text(f"  Sensor {sensor.logical_id}", style=f"bold {palette.TEXT_PRIMARY}"),
++                Text(
++                    f"  {pres.profile_label(sensor.profile_id)} · {sensor.association_state.upper()}",
++                    style=palette.TEXT_SECONDARY,
++                ),
++                Text(f"  {sensor.wireless_uuid}", style=palette.TEXT_MUTED),
++                Text(f"  Módulo {sensor.parent_node_id:02d} · {rssi}", style=palette.TEXT_SECONDARY),
++            ]
++            assoc_items.append((f"sensor:{sensor.logical_id}", Text("\n").join(lines)))
+         assoc_list.set_items(assoc_items)
+         self._show_current_details()
+ 

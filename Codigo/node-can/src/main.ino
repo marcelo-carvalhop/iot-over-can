@@ -18,7 +18,7 @@
 #define IOT_NODE_ID 4
 #endif
 
-const uint8_t NODE_ID = (uint8_t) IOT_NODE_ID;   // NODE_ID 0 = GATEWAY; NODE_ID > 0 = no funcional
+const uint8_t NODE_ID = (uint8_t) IOT_NODE_ID;   // NODE_ID 0 = Probe 00; NODE_ID > 0 = no funcional
 
 /* =========================================================
  * PARAMETROS GERAIS

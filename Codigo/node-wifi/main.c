@@ -334,7 +334,7 @@ int main(void) {
                     if (g_mpu_present) mpu6050_stop_acquisition();
                     g_acq_mode = ACQ_MODE_IDLE;
                 } else if (g_mpu_present) {
-                    // Baseline polling-only: não tenta religar DRDY.
+                    // Aquisição em polling: não tenta religar DRDY.
                     mpu6050_start_polling_acquisition(requested_rate_u32);
                     g_acq_mode = ACQ_MODE_POLLING;
                 }

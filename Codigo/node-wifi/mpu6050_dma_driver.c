@@ -40,7 +40,7 @@ static volatile uint16_t g_active_buffer_size = 512;
 static volatile bool     g_buffer_ready = false;
 static volatile bool     g_acquisition_active = false;
 
-// Contadores legados de DRDY. Na baseline polling-only devem permanecer em zero.
+// Contadores de DRDY permanecem em zero enquanto a aquisição estiver em POLLING.
 static volatile uint32_t g_drdy_pending = 0;
 static volatile uint32_t g_drdy_irq_count = 0;
 static volatile uint32_t g_drdy_missed_count = 0;
@@ -318,7 +318,7 @@ static void mpu_service_drdy_until_buffer_or_empty(void) {
 }
 
 void mpu6050_init_dma_driver(void) {
-    // Nome mantido por compatibilidade. Baseline atual: polling I2C sem DMA e sem DRDY.
+    // Nome mantido por compatibilidade da API. A aquisição operacional usa polling I2C sem DMA e sem DRDY.
     i2c_init(i2c0, 400 * 1000);
     gpio_set_function(PIN_I2C0_SDA, GPIO_FUNC_I2C);
     gpio_set_function(PIN_I2C0_SCL, GPIO_FUNC_I2C);
@@ -394,7 +394,7 @@ void mpu6050_start_acquisition(uint32_t sample_rate_hz) {
 }
 
 void mpu6050_start_polling_acquisition(uint32_t sample_rate_hz) {
-    // Baseline polling-only:
+    // Aquisição em polling:
     // - Não habilita INT/DRDY.
     // - Mantém o MPU6050 configurado para amostragem contínua.
     // - A coleta é feita por leituras I2C bloqueantes espaçadas no tempo.

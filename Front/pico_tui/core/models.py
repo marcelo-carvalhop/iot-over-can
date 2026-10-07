@@ -36,7 +36,7 @@ class NodeStatus(str, Enum):
 
 
 class AcquisitionMode(str, Enum):
-    """Estados de aquisição aceitos pela baseline atual.
+    """Estados de aquisição aceitos pelo protocolo atual.
 
     POLLING é o modo oficial e saudável. DRDY permanece apenas para
     compatibilidade com logs antigos e experimentos futuros.
@@ -160,6 +160,28 @@ class DtcRecord:
 
 
 @dataclass(slots=True)
+class Incident:
+    """Intercorrência registrada para um sensor ou módulo CAN.
+
+    ``key`` agrupa repetições do mesmo fenômeno: ocorrências com a mesma chave
+    dentro da janela de coalescência atualizam ``count`` e ``last_wall_time``
+    em vez de criar novas linhas, evitando que uma falha persistente inunde a
+    lista exibida ao operador.
+    """
+
+    severity: Severity
+    kind: str
+    message: str
+    key: str = ""
+    first_wall_time: float = field(default_factory=time.time)
+    last_wall_time: float = field(default_factory=time.time)
+    count: int = 1
+
+
+INCIDENT_HISTORY = 60
+
+
+@dataclass(slots=True)
 class SensorConfiguration:
     mode: SensorMode = SensorMode.UNKNOWN
     sample_rate_requested_hz: float | None = None
@@ -193,6 +215,8 @@ class SensorNode:
     firmware_version: str = ""
     protocol_version: str = ""
     status: NodeStatus = NodeStatus.UNKNOWN
+    association_state: str = "UNBOUND"
+    association_rssi_dbm: int | None = None
     acquisition_mode: AcquisitionMode = AcquisitionMode.UNKNOWN
     sensor_mode: SensorMode = SensorMode.UNKNOWN
     quality: DataQuality = DataQuality.UNKNOWN
@@ -211,6 +235,7 @@ class SensorNode:
     telemetry_history: deque[TelemetrySample] = field(
         default_factory=lambda: deque(maxlen=2000),
     )
+    incidents: deque[Incident] = field(default_factory=lambda: deque(maxlen=INCIDENT_HISTORY))
 
     @property
     def logical_id(self) -> str:
@@ -281,6 +306,9 @@ class PhysicalNode:
 
     # Sensores wireless associados ao nó.
     sensors: dict[int, SensorNode] = field(default_factory=dict)
+
+    # Intercorrências do próprio módulo (comunicação, DTC de módulo, comandos).
+    incidents: deque[Incident] = field(default_factory=lambda: deque(maxlen=INCIDENT_HISTORY))
 
     # Campos legados mantidos para compatibilidade de logs antigos.
     legacy_last_value: str = "-"

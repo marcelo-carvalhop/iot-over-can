@@ -11,6 +11,7 @@ from pico_tui.core.events import (
     LocalNodeTelemetryReceived,
     PhysicalNodeReceived,
     WirelessCandidateReceived,
+    WirelessAssociationReceived,
 )
 
 
@@ -34,6 +35,11 @@ class LegacyGatewayDecoder:
         r"\[GW\]\s+WIRELESS_CANDIDATE\s+reporter=(?P<reporter>\d+)\s+"
         r"uuid=(?P<uuid>0x[0-9A-Fa-f]{16})\s+profile=(?P<profile>[A-Z0-9_]+)\s+"
         r"rssi=(?P<rssi>-?\d+)\s+protocol=(?P<protocol>\d+)"
+    )
+    WIRELESS_ASSOC = re.compile(
+        r"\[GW\]\s+WIRELESS_ASSOC\s+node=(?P<node>\d+)\s+child=(?P<child>\d+)\s+"
+        r"uuid=(?P<uuid>0x[0-9A-Fa-f]{16})\s+profile=(?P<profile>[A-Z0-9_]+)\s+"
+        r"state=(?P<state>[A-Z_]+)\s+rssi=(?P<rssi>-?\d+)\s+protocol=(?P<protocol>\d+)"
     )
     CONTROL_RX = re.compile(
         r"\[GW\]\s+CONTROLE RX\s+(?P<b0>[0-9A-Fa-f]{1,2})\s+"
@@ -109,6 +115,19 @@ class LegacyGatewayDecoder:
                     reporter_node_id=int(match.group("reporter")),
                     wireless_uuid=match.group("uuid").upper().replace("0X", "0x"),
                     profile_id=match.group("profile").upper(),
+                    rssi_dbm=int(match.group("rssi")),
+                    protocol_version=match.group("protocol"),
+                )
+            )
+            return True
+        if match := self.WIRELESS_ASSOC.search(line):
+            await self.bus.publish(
+                WirelessAssociationReceived(
+                    parent_node_id=int(match.group("node")),
+                    child_id=int(match.group("child")),
+                    wireless_uuid=match.group("uuid").upper().replace("0X", "0x"),
+                    profile_id=match.group("profile").upper(),
+                    state=match.group("state").upper(),
                     rssi_dbm=int(match.group("rssi")),
                     protocol_version=match.group("protocol"),
                 )

@@ -33,6 +33,17 @@
 #define CAN_ID_WIRELESS_DISCOVERY_LAST  0x2BF
 
 /* =========================================================
+ * ASSOCIACAO WIRELESS
+ *
+ * Probe 00 envia o pedido em dois frames fixos. Cada Node
+ * publica o estado da associacao em dois IDs exclusivos.
+ * ========================================================= */
+#define CAN_ID_WIRELESS_ASSOC_CMD_A       0x300
+#define CAN_ID_WIRELESS_ASSOC_CMD_B       0x301
+#define CAN_ID_WIRELESS_ASSOC_STATUS_BASE 0x320
+#define CAN_ID_WIRELESS_ASSOC_STATUS_LAST 0x35F
+
+/* =========================================================
  * DADOS DOS SENSORES
  * ========================================================= */
 
