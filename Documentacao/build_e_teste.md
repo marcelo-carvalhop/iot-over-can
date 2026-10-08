@@ -2,6 +2,110 @@
 
 Os scripts operacionais ficam em `Codigo/scripts/` e são executados a partir da raiz do repositório.
 
+## Primeira instalação, do zero
+
+Sequência completa para colocar a bancada em funcionamento a partir de um computador sem nada configurado. As seções seguintes detalham cada parte.
+
+### 1. Ferramentas no computador
+
+| Para | Ferramenta |
+|---|---|
+| TUI | Python 3.11 ou superior |
+| ESP32 (Probe 00 e Nodes) | PlatformIO Core: `python3 -m pip install platformio` (comando `pio`) |
+| Pico W | Pico SDK 2.3.1 com submódulos, `PICO_SDK_PATH` apontando para ele, CMake 3.13 ou superior e o compilador `arm-none-eabi-gcc` |
+
+### 2. Código
+
+```bash
+git clone https://github.com/marcelo-carvalhop/iot-over-can.git
+cd iot-over-can
+git switch feat/network-metrics-v0.18      # ou o branch que será gravado
+git status                                 # "working tree clean"
+```
+
+### 3. Credenciais (uma única vez)
+
+```bash
+./Codigo/scripts/provision_sensor_security.sh
+./Codigo/scripts/provision_sensor_security.sh --check
+```
+
+O primeiro comando gera, com permissão 600 e fora do Git:
+
+| Arquivo | Conteúdo | Usado por |
+|---|---|---|
+| `.env.local` | token de manutenção e chave mestra do enlace (`EDGE_LINK_MASTER_KEY`) | build dos Nodes e do Pico W |
+| `~/.config/iot-over-can/security.json` | token de manutenção | TUI |
+
+**Nenhum outro script gera chaves.** Os scripts de build e de gravação apenas leem `.env.local`. Sem ele, o Node é compilado sem chave e só emite um aviso.
+
+Se as credenciais já existem, o script não altera nada. `--add-link-key` acrescenta a chave mestra a um `.env.local` antigo. `--renew` troca todos os segredos e obriga a gravar de novo todos os Nodes e sensores. Para compilar em outro computador, copie `.env.local` e `security.json` para ele por um meio seguro; chaves geradas separadamente não conversam entre si.
+
+### 4. Probe 00 e Nodes CAN
+
+Um ESP32 por vez, cada um com seu identificador:
+
+```bash
+pio device list                                           # descobre a porta
+./Codigo/scripts/upload_esp32_can_node.sh 0 /dev/ttyUSB0  # Probe 00
+./Codigo/scripts/upload_esp32_can_node.sh 1 /dev/ttyUSB0  # Node 1
+./Codigo/scripts/upload_esp32_can_node.sh 2 /dev/ttyUSB0  # Node 2
+./Codigo/scripts/upload_esp32_can_node.sh 3 /dev/ttyUSB0  # Node 3
+```
+
+Use sempre o script. O botão de gravar do PlatformIO no editor não fornece identificador nem chave: todas as placas sairiam com o identificador 4 e sem chave de enlace.
+
+Confira no monitor serial (`pio device monitor -b 115200`), logo após ligar:
+
+- Probe 00: `[PROBE 00] FIRMWARE=...`;
+- Nodes: `[WLINK] LINK_KEY=PROVISIONED`. `MISSING` significa que o Node foi gravado sem chave.
+
+Durante a gravação, o script não deve mostrar `AVISO: chave de enlace ausente`.
+
+### 5. Sensor Pico W
+
+Na bancada, a forma mais simples usa a chave mestra:
+
+```bash
+./Codigo/scripts/build_pico.sh
+```
+
+O script deve informar `Enlace: chave mestra (bancada)`. Para gravar, segure o botão BOOTSEL do Pico W, conecte o USB e copie `Codigo/node-wifi/build/edge_node_firmware.uf2` para a unidade `RPI-RP2` que aparece.
+
+Para um sensor de uso permanente, que não deve guardar a chave mestra, gere as chaves só dele. O UUID aparece no console serial do sensor com o comando `VERSION` (`NODE_UUID=0x...`) ou na tela Sensores sem fio:
+
+```bash
+./Codigo/scripts/provision_sensor_security.sh --sensor E6616408432B6F39
+./Codigo/scripts/build_pico.sh --sensor E6616408432B6F39
+```
+
+e grave o novo `.uf2` da mesma forma.
+
+### 6. TUI
+
+```bash
+./Codigo/scripts/setup_tui.sh                  # uma vez
+./Codigo/scripts/run_tui.sh /dev/ttyUSB0       # porta da Probe 00
+```
+
+No modo padrão, comandos que alteram a rede (associação, eleição, ensaios) exigem a YubiKey conectada. Sem ela, na bancada: `SECURITY_MODE=off ./Codigo/scripts/run_tui.sh /dev/ttyUSB0`.
+
+### 7. Colocar a rede no ar
+
+1. Alimente os Nodes com uma fonte de 5 V capaz de 3 A ou mais (ver `modulo-can/modulo-can.md`, seção Alimentação), com o barramento terminado em 120 Ω nas duas pontas.
+2. Na TUI, confira em **Início** os três Nodes e o líder. Sem líder, peça a eleição em **Comandos**.
+3. Ligue o sensor. Em **Sensores sem fio** (`F7`/`w`), associe-o a um Node e escolha a política de reassociação.
+4. Na tela do sensor, acompanhe o campo **Plano de dados** até "sessão autenticada ativa". Na serial do Node aparece `[WLINK] child=1 uuid=0x... SECURE`.
+
+### Quando gravar de novo
+
+| O que mudou | O que gravar |
+|---|---|
+| código do Node (troca de branch, correção) | todos os Nodes e a Probe 00, com a mesma versão |
+| `.env.local` (`--renew`) | todos os Nodes e todos os sensores |
+| código do sensor | os sensores |
+| só a TUI | nada; basta reiniciá-la |
+
 ## TUI
 
 Instalação/atualização do ambiente virtual:
