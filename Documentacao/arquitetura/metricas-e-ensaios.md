@@ -2,7 +2,7 @@
 
 Este documento descreve o que a versão 0.18 acrescenta ao projeto: a medição do barramento pela Probe 00, a análise de tempo de resposta, a reassociação automática de sensores sem fio, a vigilância do líder pelos próprios seguidores, os ensaios de injeção de falhas e a bancada virtual usada para verificar tudo isso sem hardware.
 
-**Estado de validação.** O firmware do Node CAN e o da Probe 00 compilam para o ESP32 (arduino-esp32 2.0.17, ACAN2515, NimBLE-Arduino 2.5.1). Toda a lógica foi exercitada na bancada virtual, que executa o código real do firmware em vários Nodes simulados. **Nada desta versão foi validado em hardware.** Os tempos citados neste documento são os da bancada virtual; os de bancada física dependem do rádio e precisam ser medidos (seção 9).
+**Estado de validação.** O firmware do Node CAN e o da Probe 00 compilam para o ESP32 (arduino-esp32 2.0.17, ACAN2515, NimBLE-Arduino 2.5.1). Toda a lógica foi exercitada na bancada virtual, que executa o código real do firmware em vários Nodes simulados. Na primeira bancada física (08/10/2026) funcionaram o plano de dados e uma reassociação automática; o restante desta versão ainda não foi exercitado em hardware (ver [`../validacao-em-bancada.md`](../validacao-em-bancada.md)). Os tempos citados neste documento são os da bancada virtual; os de bancada física dependem do rádio e precisam ser medidos (seção 9).
 
 ## 1. Visão geral
 
@@ -66,7 +66,7 @@ Duas linhas são emitidas:
 | Amostras perdidas | saltos no número de sequência das linhas `TEL` | telas Métricas e Ensaios |
 | Intervalo sem sinal de presença | a TUI mede o intervalo entre linhas `HEARTBEAT` | telas Métricas e Ensaios |
 
-A ida e volta inclui o processamento no sensor e o tempo até o Node ler o datagrama no laço principal. O firmware do sensor não foi alterado: ele já devolvia o contador do `PING`.
+A ida e volta inclui o processamento no sensor e o tempo até o Node ler o datagrama no laço principal. O protocolo do sensor não foi alterado: ele já devolvia o contador do `PING`.
 
 **O que conta como amostra perdida.** O Node encaminha ao barramento uma amostra a cada período configurado (1 s por padrão), mesmo que o sensor produza mais. O número de sequência da linha `TEL` é atribuído pelo Node a cada amostra encaminhada, e não o do sensor. Um salto, portanto, é uma amostra que o Node enviou e a Probe não remontou: perda no barramento ou na remontagem. As amostras que o Node deixa de encaminhar por causa do período não contam, e as que se perdem no Wi-Fi aparecem em `lost` na linha `WIRELESS_LINK`. Na versão 0.17 a linha trazia a sequência do sensor, e toda amostra não encaminhada aparecia como perda.
 
@@ -190,7 +190,7 @@ Na bancada virtual, com o Node responsável desligado:
 
 Quando o sensor sai do alcance do responsável (`SENSOR_LOST`), a decisão depende de o responsável declarar o vínculo `STALE`: 10 s para a sessão expirar e mais 15 s sem ouvir anúncios. Na bancada virtual a telemetria volta pelo novo Node em 26,9 s. Se o Node escolhido não assumir, a segunda tentativa só ocorre depois do intervalo mínimo de 30 s, e a telemetria volta em 56,9 s (cenários `failover_retry` e `failover_dead_target`).
 
-A rede decide em cerca de 5 s quando o responsável cai. O restante é espera do sensor, definida por duas constantes do firmware do Pico W que esta versão não alterou. Reduzi-las é o caminho para uma reassociação mais rápida, e deve ser feito com medição em bancada: a espera de 15 s existe para que uma oferta antiga repetida por um terceiro não faça o rádio alternar de ponto de acesso.
+A rede decide em cerca de 5 s quando o responsável cai. O restante é espera do sensor, definida por duas constantes do firmware do Pico W que esta versão não alterou (a única mudança no sensor são as mensagens de diagnóstico no console). Reduzi-las é o caminho para uma reassociação mais rápida, e deve ser feito com medição em bancada: a espera de 15 s existe para que uma oferta antiga repetida por um terceiro não faça o rádio alternar de ponto de acesso.
 
 ### 5.5 Limites
 

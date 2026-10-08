@@ -133,10 +133,10 @@ Essa distinção é obrigatória para interpretar o estado atual:
 | escolher Node responsável | implementado |
 | criar/remover filho lógico | implementado |
 | liveness do vínculo | implementado |
-| oferta de vínculo e sessão autenticada Pico ↔ Node | implementado; validação em bancada pendente |
-| telemetria Pico → Node → CAN → TUI | implementado; validação em bancada pendente |
+| oferta de vínculo e sessão autenticada Pico ↔ Node | funcionou em bancada física (08/10/2026); falha em aberto com um dos Nodes |
+| telemetria Pico → Node → CAN → TUI | funcionou em bancada física (08/10/2026), inclusive espectro sob pedido |
 | comando TUI → CAN → Node → Pico | implementado; validação em bancada pendente |
-| reassociação automática a outro Node, quando autorizada | implementado; validação em bancada pendente |
+| reassociação automática a outro Node, quando autorizada | funcionou uma vez em bancada física (08/10/2026) |
 | persistência do vínculo após reinício do Node | pendente |
 
 A interface filtra ações conforme o estado informado pelo Node. Um filho associado aparece e pode ser desassociado; telemetria, FFT e configuração via Node só são oferecidas enquanto o plano de dados está em `SECURE`.

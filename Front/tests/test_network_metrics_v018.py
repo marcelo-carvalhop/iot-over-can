@@ -988,3 +988,18 @@ async def test_replay_measurements_use_the_recorded_time_base(tmp_path: Path) ->
         assert 0.0 <= app.metrics.started < 1.0
         assert 0.0 <= snapshot.now - snapshot.started < 60.0
         assert all(0.0 <= snapshot.now - event.t < 60.0 for event in app.metrics.timeline)
+
+
+def test_sensor_network_diagnostics_are_shown_as_messages() -> None:
+    """As linhas "[NET] ..." do console do sensor chegam a Mensagens como INFO."""
+
+    from pico_tui.core.events import LogEvent
+    from pico_tui.core.models import ConnectionMode
+
+    bus = EventBus()
+    logs: list[LogEvent] = []
+    bus.subscribe(LogEvent, logs.append)
+    router = DecoderRouter(bus, requested_mode="auto")
+    _feed(router, "[NET] Wi-Fi IOC-02: conectado, ip=192.168.4.2 gateway=192.168.4.1")
+    assert router.mode == ConnectionMode.SENSOR_DIRECT
+    assert any(item.level == "INFO" and item.source == "REDE" and "IOC-02" in item.message for item in logs)

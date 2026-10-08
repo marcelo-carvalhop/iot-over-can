@@ -42,6 +42,7 @@ class DecoderRouter:
         "OK ",
         "NOTE ",
         "PONG ",
+        "[NET] ",
         "EDGE>",
     )
 

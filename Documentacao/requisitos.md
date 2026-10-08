@@ -20,18 +20,19 @@
 | Criação do filho lógico `parent.child` após confirmação do Node | Implementado |
 | Desassociação explícita com confirmação `UNBOUND` | Implementado |
 | Liveness do vínculo autoritativo no Node CAN | Implementado |
-| Oferta de vínculo e sessão autenticada entre sensor e Node | Implementado; validação em bancada pendente |
-| Telemetria e espectro wireless através do Node CAN associado | Implementado; validação em bancada pendente |
+| Oferta de vínculo e sessão autenticada entre sensor e Node | Funcionou em bancada física (08/10/2026) com um sensor; falha em aberto com um dos Nodes |
+| Telemetria e espectro wireless através do Node CAN associado | Funcionou em bancada física (08/10/2026) |
 | Comandos/configuração do Pico W através do Node associado | Implementado; validação em bancada pendente |
 | Medição de ocupação do barramento e de período por identificador pela Probe 00 | Implementado; validação em bancada pendente |
 | Tempo de ida e volta do enlace sem fio e tempo de resposta de comandos | Implementado; validação em bancada pendente |
 | Análise de tempo de resposta e estimativa de capacidade a partir do tráfego observado | Implementado |
-| Reassociação automática de sensores, autorizada por sensor | Implementado; validação em bancada pendente |
+| Reassociação automática de sensores, autorizada por sensor | Funcionou uma vez em bancada física (08/10/2026); tempos não medidos |
 | Recuperação da falta do líder sem depender da Probe 00 | Implementado; validação em bancada pendente |
 | Ensaios de injeção de falhas com medição do resultado | Implementado; validação em bancada pendente |
 | Verificação do firmware do Node CAN em bancada virtual | Implementado |
 | Persistência e recuperação da associação | Pendente |
 | Monitoramento da alimentação dos Nodes, com aviso na TUI | Pendente; proposta em `modulo-can/modulo-can.md` |
+| Registro, no monitor serial, de cada passo do enlace sensor ↔ Node | Implementado no Node (`[WLINK]`) e no sensor (`[NET]`) |
 | CAN FD no hardware final | Pendente; predisposição em biblioteca |
 
 ## Requisitos da interface

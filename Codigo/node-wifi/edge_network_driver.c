@@ -25,6 +25,7 @@
 #include "edge_link.h"
 #include "ioc_link.h"
 #include "ioc_sha256.h"
+#include <stdio.h>
 #include <string.h>
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
@@ -34,6 +35,7 @@
 #include "lwip/pbuf.h"
 #include "lwip/dhcp.h"
 #include "lwip/netif.h"
+#include "lwip/ip_addr.h"
 #include "mpu6050_dma_driver.h"
 
 // Definido em main.c — segue o mesmo padrão já usado para
@@ -104,6 +106,30 @@ static uint16_t        g_net_tx_consecutive_fail = 0;
 #define NET_MAX_INNER_BYTES (NET_MAX_SAFE_PAYLOAD_BYTES - IOC_ENV_OVERHEAD)
 static uint8_t g_tx_inner[NET_MAX_INNER_BYTES];
 static uint8_t g_rx_datagram[256]; // comandos do Node são curtos; o maior tem ~50 bytes
+
+// ---------------------------------------------------------------------------
+// Diagnóstico no console USB
+// ---------------------------------------------------------------------------
+// Uma linha "[NET] ..." por mudança no caminho até a sessão com o Node:
+// oferta recebida, estado do Wi-Fi, endereço obtido, HELLO enviado,
+// datagramas recebidos, recusas e sessão. Tudo é impresso pelo laço
+// principal, nunca pelos callbacks do lwIP ou da pilha Bluetooth, e só
+// quando algo muda, para não inundar o console.
+#define DIAG_WIFI_UNSEEN  0x7FFF
+#define DIAG_OFFER_REPEAT_MS 10000u
+#define DIAG_RX_REPEAT_MS     5000u
+static int         g_diag_wifi = DIAG_WIFI_UNSEEN;
+static NetworkMode g_diag_mode = NET_STATE_DISABLED;
+static uint16_t    g_diag_auth = 0;
+static uint16_t    g_diag_protocol = 0;
+static uint16_t    g_diag_replay = 0;
+static uint8_t     g_diag_offer_node = 0;
+static int         g_diag_offer_decision = -1;
+static uint32_t    g_diag_offer_ms = 0;
+static uint32_t    g_diag_hello_count = 0;
+static volatile uint32_t g_diag_rx_count = 0;   // incrementado no callback de recepção
+static uint32_t    g_diag_rx_printed = 0;
+static uint32_t    g_diag_rx_ms = 0;
 
 static uint32_t now_ms(void) {
     return to_ms_since_boot(get_absolute_time());
@@ -376,6 +402,7 @@ static void handle_session_command(struct udp_pcb *pcb, const uint8_t *inner, si
 static void udp_rx_callback(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port) {
     (void)arg;
     if (p == NULL) return;
+    g_diag_rx_count++;
 
     // Tamanho inesperado é descartado antes de qualquer interpretação.
     if (p->tot_len < IOC_ENV_OVERHEAD || p->tot_len > sizeof(g_rx_datagram)) {
@@ -587,6 +614,93 @@ uint8_t edge_net_child_id(void) { return g_child_id; }
 uint16_t edge_net_auth_reject_count(void) { return g_auth_reject_count; }
 uint16_t edge_net_replay_reject_count(void) { return g_replay_reject_count; }
 
+static const char *diag_wifi_name(int status) {
+    switch (status) {
+        case CYW43_LINK_DOWN:    return "desligado";
+        case CYW43_LINK_JOIN:    return "associando ao ponto de acesso";
+        case CYW43_LINK_NOIP:    return "associado, aguardando endereco (DHCP)";
+        case CYW43_LINK_UP:      return "conectado";
+        case CYW43_LINK_FAIL:    return "falha na conexao";
+        case CYW43_LINK_NONET:   return "rede nao encontrada";
+        case CYW43_LINK_BADAUTH: return "senha recusada";
+        default:                 return "estado desconhecido";
+    }
+}
+
+// Decisão tomada diante de uma oferta: 0 ignorada (sessão ativa), 1 aceita,
+// 2 aguardando (tentativa com outro Node ainda dentro do prazo).
+static void diag_offer(uint8_t node, int decision, uint32_t now) {
+    if (node == g_diag_offer_node && decision == g_diag_offer_decision &&
+        now - g_diag_offer_ms < DIAG_OFFER_REPEAT_MS) return;
+    g_diag_offer_node = node;
+    g_diag_offer_decision = decision;
+    g_diag_offer_ms = now;
+    switch (decision) {
+        case 1:
+            printf("[NET] oferta do Node %u conferida: entrando no Wi-Fi IOC-%02u\n", (unsigned)node, (unsigned)node);
+            break;
+        case 2:
+            printf("[NET] oferta do Node %u conferida: aguardando, tentativa com o Node %u em andamento\n",
+                   (unsigned)node, (unsigned)g_parent_node_id);
+            break;
+        default:
+            printf("[NET] oferta do Node %u ignorada: sessao ativa com o Node %u\n",
+                   (unsigned)node, (unsigned)g_parent_node_id);
+            break;
+    }
+}
+
+static void diag_poll(uint32_t now) {
+    if (g_wifi_enabled) {
+        const int status = cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA);
+        if (status != g_diag_wifi) {
+            g_diag_wifi = status;
+            if (status == CYW43_LINK_UP && netif_default) {
+                char ip[IP4ADDR_STRLEN_MAX];
+                char gw[IP4ADDR_STRLEN_MAX];
+                cyw43_arch_lwip_begin();
+                ip4addr_ntoa_r(netif_ip4_addr(netif_default), ip, sizeof(ip));
+                ip4addr_ntoa_r(netif_ip4_gw(netif_default), gw, sizeof(gw));
+                cyw43_arch_lwip_end();
+                printf("[NET] Wi-Fi %s: conectado, ip=%s gateway=%s\n", g_wifi_ssid, ip, gw);
+            } else {
+                printf("[NET] Wi-Fi %s: %s (%d)\n", g_wifi_ssid, diag_wifi_name(status), status);
+            }
+        }
+    } else if (g_diag_wifi != DIAG_WIFI_UNSEEN) {
+        g_diag_wifi = DIAG_WIFI_UNSEEN;
+        printf("[NET] Wi-Fi desligado\n");
+    }
+
+    if (g_net_mode != g_diag_mode) {
+        if (g_net_mode == NET_STATE_BOUND) {
+            printf("[NET] sessao autenticada com o Node %u, filho %u\n", (unsigned)g_parent_node_id,
+                   (unsigned)g_child_id);
+        } else if (g_diag_mode == NET_STATE_BOUND) {
+            printf("[NET] sessao encerrada\n");
+        }
+        g_diag_mode = g_net_mode;
+        g_diag_hello_count = 0;
+    }
+
+    if (g_auth_reject_count != g_diag_auth || g_protocol_reject_count != g_diag_protocol ||
+        g_replay_reject_count != g_diag_replay) {
+        g_diag_auth = g_auth_reject_count;
+        g_diag_protocol = g_protocol_reject_count;
+        g_diag_replay = g_replay_reject_count;
+        printf("[NET] recusados: autenticacao=%u protocolo=%u repeticao=%u\n", (unsigned)g_diag_auth,
+               (unsigned)g_diag_protocol, (unsigned)g_diag_replay);
+    }
+
+    const uint32_t rx = g_diag_rx_count;
+    if (rx != g_diag_rx_printed && g_net_mode != NET_STATE_BOUND &&
+        (g_diag_rx_printed == 0 || now - g_diag_rx_ms >= DIAG_RX_REPEAT_MS)) {
+        printf("[NET] datagramas recebidos do Node: %lu\n", (unsigned long)rx);
+        g_diag_rx_printed = rx;
+        g_diag_rx_ms = now;
+    }
+}
+
 // Entra no ponto de acesso do Node indicado por uma oferta autenticada.
 // `keep_discovery_timer` preserva o início da tentativa quando a associação
 // ao mesmo Node está apenas sendo refeita, para que o limite de desistência
@@ -638,7 +752,14 @@ void edge_net_poll_timeout(void) {
             // terceiro faria o rádio alternar de AP indefinidamente.
             const bool may_switch = offer_node != g_parent_node_id &&
                                     now - g_discovery_since_ms > NET_OFFER_SWITCH_HOLD_MS;
-            if (idle || may_switch) join_node_access_point(offer_node, false);
+            if (idle || may_switch) {
+                diag_offer(offer_node, 1, now);
+                join_node_access_point(offer_node, false);
+            } else if (offer_node != g_parent_node_id) {
+                diag_offer(offer_node, 2, now);
+            }
+        } else {
+            diag_offer(offer_node, 0, now);
         }
     }
 
@@ -696,6 +817,8 @@ void edge_net_poll_timeout(void) {
         bool want_scan = (g_net_mode != NET_STATE_BOUND);
         if (want_scan != edge_ble_offer_scan_is_active()) edge_ble_offer_scan_enable(want_scan);
     }
+
+    diag_poll(now_ms());
 }
 
 // Mantém o nome da v0x05 para não alterar main.c: em DISCOVERY, o "beacon"
@@ -740,6 +863,15 @@ void edge_net_send_discovery_beacon(uint8_t bite_status) {
                                         raw, sizeof(raw), &dst, NET_UDP_PORT_DISCOVERY);
     cyw43_arch_lwip_end();
     net_note_tx_result(result);
+
+    // As três primeiras tentativas e depois uma a cada dez.
+    g_diag_hello_count++;
+    if (g_diag_hello_count <= 3u || g_diag_hello_count % 10u == 0u) {
+        char addr[IPADDR_STRLEN_MAX];
+        ipaddr_ntoa_r(&dst, addr, sizeof(addr));
+        printf("[NET] HELLO %lu enviado ao Node em %s:%u (%s)\n", (unsigned long)g_diag_hello_count, addr,
+               (unsigned)NET_UDP_PORT_DISCOVERY, result == ERR_OK ? "ok" : "erro de envio");
+    }
 }
 
 void edge_net_send_telemetry(const DSP_AnalysisResult *res, OperationModeFSM mode,

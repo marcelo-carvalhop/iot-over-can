@@ -8,6 +8,7 @@ A documentação oficial é organizada por assunto, sem cópias paralelas ou rel
 | [`estrutura-do-projeto.md`](estrutura-do-projeto.md) | organização do repositório |
 | [`requisitos.md`](requisitos.md) | requisitos funcionais, de interface, software e segurança |
 | [`build_e_teste.md`](build_e_teste.md) | instalação, execução, build, upload e validação |
+| [`validacao-em-bancada.md`](validacao-em-bancada.md) | registro das sessões de teste com o hardware real |
 | [`modelo_de_seguranca.md`](modelo_de_seguranca.md) | autorização, arquivos locais, provisionamento e renovação |
 | [`desafios_e_resolucoes.md`](desafios_e_resolucoes.md) | problemas técnicos com impacto arquitetural e soluções |
 | [`arquitetura/arquitetura.md`](arquitetura/arquitetura.md) | elementos físicos, domínios, associação e camadas de software |

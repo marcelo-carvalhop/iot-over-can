@@ -53,7 +53,7 @@ pio device list                                           # descobre a porta
 ./Codigo/scripts/upload_esp32_can_node.sh 3 /dev/ttyUSB0  # Node 3
 ```
 
-Use sempre o script. O botão de gravar do PlatformIO no editor não fornece identificador nem chave: todas as placas sairiam com o identificador 4 e sem chave de enlace.
+Use sempre o script. O botão de gravar do PlatformIO no editor não fornece identificador nem chave; desde a versão 0.18 a compilação sem `IOT_NODE_ID` para com erro, em vez de gravar a placa com um número qualquer.
 
 Confira no monitor serial (`pio device monitor -b 115200`), logo após ligar:
 

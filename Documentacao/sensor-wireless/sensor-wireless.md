@@ -50,7 +50,22 @@ O sensor continua anunciando seu UUID64 e perfil por BLE, inclusive com sessão 
 
 ## Reassociação a outro Node
 
-O firmware do sensor não foi alterado na versão 0.18; a reassociação automática usa o comportamento que ele já tinha. Com sessão ativa o sensor ignora ofertas. Quando o Node responsável deixa de responder, ele desiste da sessão depois de 10 s sem tráfego (`NET_SESSION_TIMEOUT_MS`) e volta a procurar ofertas; a de outro Node só é aceita depois de 15 s nesse estado (`NET_OFFER_SWITCH_HOLD_MS`), para que uma oferta antiga repetida por um terceiro não faça o rádio alternar de ponto de acesso. Uma desassociação explícita (`CMD_RELEASE`) dispensa essa espera.
+Na versão 0.18 o protocolo do sensor não mudou; a reassociação automática usa o comportamento que ele já tinha. A única mudança no firmware do sensor são as mensagens de diagnóstico descritas abaixo. Com sessão ativa o sensor ignora ofertas. Quando o Node responsável deixa de responder, ele desiste da sessão depois de 10 s sem tráfego (`NET_SESSION_TIMEOUT_MS`) e volta a procurar ofertas; a de outro Node só é aceita depois de 15 s nesse estado (`NET_OFFER_SWITCH_HOLD_MS`), para que uma oferta antiga repetida por um terceiro não faça o rádio alternar de ponto de acesso. Uma desassociação explícita (`CMD_RELEASE`) dispensa essa espera.
+
+### Diagnóstico no console USB
+
+O sensor escreve no console (`EDGE>`) uma linha `[NET]` para cada mudança no caminho até a sessão com o Node:
+
+```text
+[NET] oferta do Node 2 conferida: entrando no Wi-Fi IOC-02
+[NET] Wi-Fi IOC-02: associando ao ponto de acesso (1)
+[NET] Wi-Fi IOC-02: conectado, ip=192.168.4.2 gateway=192.168.4.1
+[NET] HELLO 1 enviado ao Node em 192.168.4.1:4242 (ok)
+[NET] datagramas recebidos do Node: 1
+[NET] sessao autenticada com o Node 2, filho 1
+```
+
+Onde a sequência para indica a etapa com problema: sem `conectado`, o sensor não entra no Wi-Fi do Node (`senha recusada` aponta chaves diferentes; `rede nao encontrada`, ponto de acesso fora do ar ou fora de alcance); com `HELLO` enviado e nenhum datagrama recebido, o Node não está respondendo; `recusados: autenticacao=...` crescendo indica chaves diferentes. O comando `NET` mostra o estado atual a qualquer momento. As linhas aparecem também na tela Mensagens da TUI quando o sensor está ligado a ela por USB. Do lado do Node, as linhas correspondentes são as `[WLINK]` descritas em `modulo-can/modulo-can.md`.
 
 Essas duas constantes respondem pela maior parte do tempo de uma reassociação, cerca de 25 s na bancada virtual, enquanto a rede decide em cerca de 5 s. Reduzi-las é possível e deve ser feito com medição em bancada. Ver [`../arquitetura/metricas-e-ensaios.md`](../arquitetura/metricas-e-ensaios.md).
 

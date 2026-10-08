@@ -3,7 +3,14 @@ import os
 
 raw_node_id = os.environ.get("IOT_NODE_ID", "").strip()
 if not raw_node_id:
-    raw_node_id = "4"
+    # Sem identificador explícito a placa sairia com um número qualquer, e
+    # duas placas com o mesmo número disputam os mesmos identificadores CAN
+    # e o mesmo ponto de acesso. O botão de compilar do editor não informa o
+    # número; use os scripts, que também entregam a chave do enlace.
+    raise ValueError(
+        "IOT_NODE_ID não informado. Grave com ./Codigo/scripts/upload_esp32_can_node.sh <ID> <porta> "
+        "(0 = Probe 00, 1..31 = Nodes) ou defina IOT_NODE_ID antes de chamar o PlatformIO."
+    )
 
 try:
     value = int(raw_node_id, 0)
