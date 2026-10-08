@@ -1,6 +1,6 @@
 {
   "name": "ioc_link",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "description": "iot-over-can: autenticacao do enlace sensor wireless <-> Node CAN e plano de dados sobre CAN classico",
   "frameworks": "*",
   "platforms": "*",

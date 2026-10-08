@@ -52,3 +52,5 @@ jobs:
         run: python -m pip install platformio
       - name: Build CAN node
         run: ./Codigo/scripts/build_esp32_can_node.sh 1
+      - name: Build Probe 00
+        run: ./Codigo/scripts/build_esp32_can_node.sh 0

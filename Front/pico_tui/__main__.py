@@ -19,6 +19,19 @@ def main() -> None:
         help="Força o protocolo (probe/gateway ou sensor) ou usa detecção automática",
     )
     parser.add_argument("--demo", action="store_true", help="Inicia sem hardware com uma rede simulada")
+    parser.add_argument(
+        "--replay",
+        default=None,
+        metavar="ARQUIVO",
+        help="Reproduz uma gravação das linhas da Probe 00 (por exemplo, Front/replays/owner_failover.log)",
+    )
+    parser.add_argument(
+        "--replay-speed",
+        type=float,
+        default=1.0,
+        metavar="FATOR",
+        help="Velocidade da reprodução (2 = duas vezes mais rápido)",
+    )
     parser.add_argument("--no-file-log", action="store_true", help="Desativa o arquivo JSONL automático")
     parser.add_argument(
         "--messages",
@@ -61,6 +74,8 @@ def main() -> None:
         show_messages=args.messages,
         ascii_symbols=args.ascii,
         preferences_path=args.preferences,
+        replay=args.replay,
+        replay_speed=args.replay_speed,
     ).run()
 
 

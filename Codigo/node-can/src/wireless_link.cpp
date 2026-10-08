@@ -16,6 +16,7 @@
 #endif
 
 #include "can_ids.h"
+#include "net_metrics.h"
 #include "node_config.h"
 
 #include "ioc_link.h"
@@ -63,6 +64,7 @@ constexpr uint8_t  TX_DRIVER_WATERMARK = 4;
 // para escrever a linha correspondente na serial.
 constexpr uint32_t SPECTRUM_GAP_MS = 40;
 constexpr uint32_t AP_STOP_DELAY_MS = 400;      // tempo para o CMD_RELEASE sair antes de desligar o AP
+constexpr uint32_t AP_RETRY_MS = 5000;          // nova tentativa quando o ponto de acesso não sobe
 constexpr uint32_t HELLO_GUARD_MS = 1000;       // um handshake recente não é substituído por outro HELLO
 constexpr uint16_t ACK_DETAIL_TIMEOUT = 0xFFFF;
 constexpr uint16_t ACK_DETAIL_CONFIG_UNKNOWN = 0xFFFE;
@@ -112,6 +114,12 @@ struct Link {
   uint32_t lastPingMs = 0;
   uint32_t sessionStartMs = 0;
   uint32_t configCounter = 0;
+  // Tempo de ida e volta Node <-> sensor, medido pelo par PING/PONG.
+  bool pingPending = false;
+  uint32_t pingCounter = 0;
+  uint32_t pingSentUs = 0;
+  uint16_t rtt100us = IOC_WD_RTT_UNKNOWN;
+  uint16_t rttMax100us = IOC_WD_RTT_UNKNOWN;
   uint8_t sessionSensorNonce[IOC_LINK_NONCE_LEN] = {0}; // nonce do HELLO que originou a sessão
 
   // Um HELLO recebido durante uma sessão não a derruba: a troca só ocorre
@@ -125,6 +133,10 @@ struct Link {
   uint16_t lostDatagrams = 0;
   bool haveSeq = false;
   uint16_t lastSeq = 0;
+  // Numeração das amostras encaminhadas ao CAN. O Node encaminha uma amostra
+  // por período e descarta as demais; a sequência do sensor teria lacunas
+  // que não são perdas. A perda no Wi-Fi é contada em lostDatagrams.
+  uint16_t forwardSeq = 0;
   uint32_t lastLinkReportMs = 0;
   uint8_t lastReportedState = 0xFF;
 
@@ -168,6 +180,12 @@ bool haveKey = false;
 bool apRunning = false;
 bool apStopPending = false;
 uint32_t apStopAtMs = 0;
+// Ensaios: ponto de acesso mantido desligado até este instante.
+bool apOutageActive = false;
+uint32_t apOutageStartMs = 0;
+uint32_t apOutageDurationMs = 0;
+bool radioOff = false;
+uint32_t lastApAttemptMs = 0;
 uint32_t txNextTransferAtMs = 0;
 bool offerAdvertising = false;
 uint8_t offerCursor = 0;
@@ -317,6 +335,8 @@ void publishLink(Link& link, bool force = false) {
   report.lost_datagrams = link.lostDatagrams;
   report.stream_enabled = link.streamEnabled ? 1 : 0;
   report.stream_period_ms = link.streamPeriodMs;
+  report.rtt_100us = link.secure ? link.rtt100us : IOC_WD_RTT_UNKNOWN;
+  report.rtt_max_100us = link.secure ? link.rttMax100us : IOC_WD_RTT_UNKNOWN;
   uint8_t raw[IOC_WD_LINK_LEN];
   ioc_wd_link_encode(&report, raw);
   queueTransfer(link.childId, IOC_WD_KIND_LINK, raw, sizeof(raw));
@@ -342,7 +362,8 @@ void publishConfig(const Link& link, uint8_t status) {
 
 void startAccessPoint() {
   apStopPending = false; // um novo vínculo cancela o desligamento agendado
-  if (apRunning || !haveKey) return;
+  if (apRunning || !haveKey || apOutageActive || radioOff) return;
+  lastApAttemptMs = millis();
   char ssid[IOC_LINK_SSID_LEN];
   char psk[IOC_LINK_PSK_LEN];
   ioc_link_wifi_ssid(NODE_ID, ssid);
@@ -381,6 +402,10 @@ void stopOfferAdvertising() {
 // alterna entre eles.
 void updateOfferAdvertising() {
   if (!haveKey) return;
+  if (apOutageActive || radioOff) {
+    stopOfferAdvertising(); // sem ponto de acesso não há para onde chamar o sensor
+    return;
+  }
   const uint32_t now = millis();
   bool anyWaiting = false;
   for (uint8_t i = 0; i < MAX_LINKS; ++i) {
@@ -450,8 +475,25 @@ void sendPing(Link& link) {
   ping.magic_header = NET_MAGIC_HEADER;
   ping.cmd_type = CMD_PING;
   ping.request_counter = link.txCounter + 1u;
-  sendToSensor(link, &ping, sizeof(ping));
+  link.pingCounter = ping.request_counter;
+  link.pingSentUs = micros();
+  link.pingPending = sendToSensor(link, &ping, sizeof(ping));
   link.lastPingMs = millis();
+}
+
+// O sensor devolve no PONG o contador do PING. A medida inclui o tempo de
+// processamento do sensor e o intervalo até este Node ler o datagrama.
+void handlePong(Link& link, const uint8_t* inner, size_t len) {
+  if (!link.pingPending || len < sizeof(Payload_Heartbeat)) return;
+  Payload_Heartbeat pong;
+  memcpy(&pong, inner, sizeof(pong));
+  if (pong.request_counter != link.pingCounter) return;
+  link.pingPending = false;
+  const uint32_t elapsed100us = (micros() - link.pingSentUs) / 100u;
+  const uint16_t rtt = elapsed100us >= IOC_WD_RTT_UNKNOWN ? static_cast<uint16_t>(IOC_WD_RTT_UNKNOWN - 1u)
+                                                          : static_cast<uint16_t>(elapsed100us);
+  link.rtt100us = rtt;
+  if (link.rttMax100us == IOC_WD_RTT_UNKNOWN || rtt > link.rttMax100us) link.rttMax100us = rtt;
 }
 
 void sendSimpleCommand(Link& link, uint8_t cmdType) {
@@ -474,6 +516,9 @@ void dropSession(Link& link) {
   link.clearPending = false;
   link.staged = link.current;
   link.stagedDirty = false;
+  link.pingPending = false;
+  link.rtt100us = IOC_WD_RTT_UNKNOWN;
+  link.rttMax100us = IOC_WD_RTT_UNKNOWN;
 }
 
 /* ------------------------------------------------ dados vindos do sensor */
@@ -542,7 +587,7 @@ void handleTelemetry(Link& link, const uint8_t* inner, size_t len) {
   const uint32_t now = millis();
   if (link.streamOnce || (link.streamEnabled && now - link.lastForwardMs >= link.streamPeriodMs)) {
     ioc_wd_telemetry out;
-    out.seq = t.seq_num;
+    out.seq = link.forwardSeq++;
     out.mode = t.fsm_mode;
     out.acquisition = t.acquisition_mode;
     out.axis_mask = t.axis_mask;
@@ -661,6 +706,8 @@ void handleSensorPayload(Link& link, const uint8_t* inner, size_t len) {
       handleUrgentDtc(link, inner, len);
       break;
     case CMD_PONG:
+      handlePong(link, inner, len);
+      break;
     default:
       break;
   }
@@ -740,6 +787,9 @@ void promotePending(Link& link, const IPAddress& ip, uint16_t port, uint32_t cou
   link.applyPending = false;
   link.clearPending = false;
   link.fftBinsWanted = 0;
+  link.pingPending = false;
+  link.rtt100us = IOC_WD_RTT_UNKNOWN;
+  link.rttMax100us = IOC_WD_RTT_UNKNOWN;
   // Uma sessão nova pode ser um sensor que reiniciou com outra configuração:
   // o que se sabia deixa de valer até o menu chegar.
   link.current.known = false;
@@ -1029,6 +1079,7 @@ struct ProbePending {
   uint8_t node = 0;
   uint8_t child = 0;
   bool report = false;       // false para os SET intermediários de um CONFIG
+  uint32_t sentMs = 0;       // envio do comando, para o tempo de resposta
   char tx[12] = {0};
   char action[20] = {0};
 };
@@ -1150,10 +1201,12 @@ void probePrintAck(uint8_t node, uint8_t child, const ioc_wd_ack& ack) {
     // Um SET intermediário só interessa ao operador quando falha.
     if (pending.report || (final && ack.status != IOC_WD_ACK_APPLIED)) {
       const char* reason = ackReason(ack);
-      Serial.printf("ACK COMMAND=%s STATE=%s TX=%s NODE=%u CHILD=%u DETAIL=%u%s%s\n",
+      // RTT_MS: do envio do comando pela Probe até a chegada desta confirmação.
+      Serial.printf("ACK COMMAND=%s STATE=%s TX=%s NODE=%u CHILD=%u DETAIL=%u%s%s RTT_MS=%lu\n",
                     pending.action, ackStateName(ack.status), pending.tx,
                     static_cast<unsigned>(node), static_cast<unsigned>(child),
-                    static_cast<unsigned>(ack.detail), reason[0] ? " REASON=" : "", reason);
+                    static_cast<unsigned>(ack.detail), reason[0] ? " REASON=" : "", reason,
+                    static_cast<unsigned long>(millis() - pending.sentMs));
     }
     // Um SET fica concluído ao ser aceito pelo Node; os demais aguardam o resultado final.
     if (final || !pending.report) pending.used = false;
@@ -1195,14 +1248,25 @@ void probeHandleTransfer(uint8_t node, const ioc_wd_rx_slot& slot) {
     case IOC_WD_KIND_LINK: {
       ioc_wd_link link;
       if (ioc_wd_link_decode(slot.data, slot.total_len, &link)) {
+        // Tempo de ida e volta Node <-> sensor em décimos de milissegundo; -1 = sem medida.
+        char rtt[12] = "-1";
+        char rttMax[12] = "-1";
+        if (link.rtt_100us != IOC_WD_RTT_UNKNOWN) {
+          snprintf(rtt, sizeof(rtt), "%u.%u", static_cast<unsigned>(link.rtt_100us / 10u),
+                   static_cast<unsigned>(link.rtt_100us % 10u));
+        }
+        if (link.rtt_max_100us != IOC_WD_RTT_UNKNOWN) {
+          snprintf(rttMax, sizeof(rttMax), "%u.%u", static_cast<unsigned>(link.rtt_max_100us / 10u),
+                   static_cast<unsigned>(link.rtt_max_100us % 10u));
+        }
         Serial.printf("[GW] WIRELESS_LINK node=%u child=%u state=%s rssi=%d age_s=%u rx=%u "
-                      "auth_fail=%u replay=%u lost=%u stream=%s period_ms=%u\n",
+                      "auth_fail=%u replay=%u lost=%u stream=%s period_ms=%u rtt_ms=%s rtt_max_ms=%s\n",
                       static_cast<unsigned>(node), static_cast<unsigned>(child),
                       linkStateName(link.state), static_cast<int>(link.wifi_rssi),
                       static_cast<unsigned>(link.session_age_s), static_cast<unsigned>(link.rx_datagrams),
                       static_cast<unsigned>(link.auth_failures), static_cast<unsigned>(link.replay_drops),
                       static_cast<unsigned>(link.lost_datagrams), link.stream_enabled ? "ON" : "OFF",
-                      static_cast<unsigned>(link.stream_period_ms));
+                      static_cast<unsigned>(link.stream_period_ms), rtt, rttMax);
       }
       break;
     }
@@ -1241,6 +1305,7 @@ uint8_t probeSendCommand(uint8_t node, uint8_t child, uint8_t opcode, const uint
   pending.node = node;
   pending.child = child;
   pending.report = report;
+  pending.sentMs = millis();
   strncpy(pending.tx, tx, sizeof(pending.tx) - 1);
   pending.tx[sizeof(pending.tx) - 1] = '\0';
   strncpy(pending.action, action, sizeof(pending.action) - 1);
@@ -1250,7 +1315,7 @@ uint8_t probeSendCommand(uint8_t node, uint8_t child, uint8_t opcode, const uint
   msg.id = CAN_ID_WIRELESS_DATA_CMD;
   msg.len = IOC_WD_FRAME_LEN;
   ioc_wd_command_encode(&cmd, msg.data);
-  can.tryToSend(msg);
+  if (can.tryToSend(msg)) netMetricsOnTransmit(msg);
   return cmd.seq;
 }
 
@@ -1467,8 +1532,69 @@ void wirelessLinkOnUnbound(uint64_t uuid, uint8_t childId) {
   }
 }
 
+bool wirelessLinkIsSecure(uint64_t uuid) {
+  if (NODE_ID == 0) return false;
+  const Link* link = findLinkByUuid(uuid);
+  return link && link->secure;
+}
+
+/* ------------------------------------------------ ensaios (fault_injection) */
+
+void wirelessLinkInjectDropSessions() {
+  if (NODE_ID == 0) return;
+  for (uint8_t i = 0; i < MAX_LINKS; ++i) {
+    Link& link = links[i];
+    if (!link.used) continue;
+    if (link.pending.active) {
+      ioc_secure_zero(link.pending.sessionKey, IOC_LINK_KEY_LEN);
+      link.pending.active = false;
+    }
+    if (!link.secure) continue;
+    Serial.printf("[NODE %u] [WLINK] child=%u sessao descartada (ensaio)\n", NODE_ID,
+                  static_cast<unsigned>(link.childId));
+    dropSession(link);
+    publishLink(link, true);
+  }
+}
+
+void wirelessLinkInjectApOutage(uint32_t durationMs) {
+  if (NODE_ID == 0) return;
+  if (durationMs == 0) {
+    if (apOutageActive) {
+      apOutageActive = false;
+      if (usedLinkCount() > 0) startAccessPoint();
+    }
+    return;
+  }
+  wirelessLinkInjectDropSessions();
+  stopOfferAdvertising();
+  stopAccessPoint();
+  apOutageActive = true;
+  apOutageStartMs = millis();
+  apOutageDurationMs = durationMs;
+}
+
+void wirelessLinkRadioOff() {
+  if (NODE_ID == 0) return;
+  for (uint8_t i = 0; i < MAX_LINKS; ++i) {
+    if (links[i].used && links[i].secure) dropSession(links[i]);
+  }
+  stopOfferAdvertising();
+  stopAccessPoint();
+  radioOff = true;
+}
+
 void wirelessLinkPoll() {
   if (NODE_ID == 0) return;
+  if (apOutageActive && millis() - apOutageStartMs >= apOutageDurationMs) {
+    wirelessLinkInjectApOutage(0);
+  }
+  // Há vínculos, mas o ponto de acesso não está no ar (a ativação falhou):
+  // sem nova tentativa os sensores ficariam sem caminho até o próximo vínculo.
+  if (!apRunning && haveKey && !apOutageActive && !radioOff && !apStopPending && usedLinkCount() > 0 &&
+      millis() - lastApAttemptMs >= AP_RETRY_MS) {
+    startAccessPoint();
+  }
   receiveDatagrams();
   maintainLinks();
   updateOfferAdvertising();
@@ -1492,8 +1618,12 @@ bool wirelessLinkHandleCanMessage(const CANMessage& rx) {
     if (rx.len != IOC_WD_FRAME_LEN || NODE_ID != 0) return true;
     const uint8_t node = static_cast<uint8_t>(rx.id - CAN_ID_WIRELESS_DATA_BASE);
     const ioc_wd_rx_slot* done = nullptr;
-    if (ioc_wd_rx_push(&probeRx[node], rx.data, millis(), &done) == IOC_WD_RX_COMPLETE && done) {
+    const ioc_wd_rx_result result = ioc_wd_rx_push(&probeRx[node], rx.data, millis(), &done);
+    if (result == IOC_WD_RX_COMPLETE && done) {
+      netMetricsOnTransfer(true);
       probeHandleTransfer(node, *done);
+    } else if (result == IOC_WD_RX_ERROR) {
+      netMetricsOnTransfer(false);
     }
     return true;
   }

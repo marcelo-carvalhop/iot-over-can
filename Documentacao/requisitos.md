@@ -23,14 +23,23 @@
 | Oferta de vínculo e sessão autenticada entre sensor e Node | Implementado; validação em bancada pendente |
 | Telemetria e espectro wireless através do Node CAN associado | Implementado; validação em bancada pendente |
 | Comandos/configuração do Pico W através do Node associado | Implementado; validação em bancada pendente |
+| Medição de ocupação do barramento e de período por identificador pela Probe 00 | Implementado; validação em bancada pendente |
+| Tempo de ida e volta do enlace sem fio e tempo de resposta de comandos | Implementado; validação em bancada pendente |
+| Análise de tempo de resposta e estimativa de capacidade a partir do tráfego observado | Implementado |
+| Reassociação automática de sensores, autorizada por sensor | Implementado; validação em bancada pendente |
+| Recuperação da falta do líder sem depender da Probe 00 | Implementado; validação em bancada pendente |
+| Ensaios de injeção de falhas com medição do resultado | Implementado; validação em bancada pendente |
+| Verificação do firmware do Node CAN em bancada virtual | Implementado |
 | Persistência e recuperação da associação | Pendente |
-| CAN FD no hardware final | Pendente |
+| CAN FD no hardware final | Pendente; predisposição em biblioteca |
 
 ## Requisitos da interface
 
 A TUI deve ser operável sem depender de comandos ocultos ou de memorização de atalhos especiais. A tela inicial deve indicar condição geral, itens que exigem atenção, equipamentos, rede e conexão. Cada equipamento deve possuir uma tela própria, e comandos operacionais devem estar centralizados em uma única tela com linguagem de operador, parâmetros guiados e confirmação para ações críticas.
 
 A navegação normal deve exigir apenas setas, `Enter`, `Esc` e a barra de teclas visível. Ações globais devem possuir tecla de função e letra equivalente. Gerenciamento wireless deve ter uma tela de primeiro nível visível por `F7`/`w`; comandos internos permanecem somente como recurso avançado.
+
+As métricas da rede e os ensaios de falha devem ter telas próprias (`F8`/`b` e `F9`/`e`). O resultado de um ensaio deve ser medido pela TUI a partir das mensagens da rede, sem anotação manual, e poder ser exportado. Toda medida deve indicar de onde vem; uma estimativa (análise de tempo de resposta, capacidade) deve vir acompanhada de sua ressalva.
 
 A interface deve funcionar em terminais estreitos sem depender de rolagem horizontal. Texto essencial não pode ser truncado. Em largura inferior a 100 colunas, as seções passam para uma coluna; abaixo de 60 colunas, bordas laterais são removidas para recuperar espaço útil. A altura curta também reduz espaçamentos e a faixa de estado.
 
@@ -63,7 +72,9 @@ O firmware ESP32 usa PlatformIO com framework Arduino, ACAN2515, NimBLE-Arduino 
 
 Segredos não podem ser versionados. `security.json` e `.env.local` devem usar permissão `0600` em POSIX. O modo OTP permanece fail-closed enquanto não houver verificação criptográfica real.
 
-A TUI deve tratar como mutáveis, entre outros, os comandos administrativos CAN `22 00`, `22 10`, `22 30`, comandos `CMD ...` e `WIRELESS BIND/UNBIND`. A ausência de autorização deve bloquear o envio, não apenas ocultar a ação.
+A TUI deve tratar como mutáveis, entre outros, os comandos administrativos CAN `22 00`, `22 10`, `22 30`, comandos `CMD ...`, `WIRELESS BIND/UNBIND/POLICY` e `FAULT ...`. A ausência de autorização deve bloquear o envio, não apenas ocultar a ação.
+
+A reassociação automática de um sensor só pode ocorrer quando o operador a autorizou para aquele sensor. O tratamento dos comandos de ensaio nos Nodes deve poder ser removido na compilação.
 
 O firmware do sensor direto mantém sua própria autorização. A TUI não é a única barreira de segurança.
 

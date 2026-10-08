@@ -226,6 +226,11 @@ class SensorNode:
     data_link_auth_failures: int = 0
     data_link_replay_drops: int = 0
     data_link_lost_datagrams: int = 0
+    data_link_rtt_ms: float | None = None
+    data_link_rtt_max_ms: float | None = None
+    # Reassociação automática: AUTO (o líder pode mover o sensor para outro
+    # módulo), MANUAL ou UNKNOWN (firmware que não informa a política).
+    failover_policy: str = "UNKNOWN"
     acquisition_mode: AcquisitionMode = AcquisitionMode.UNKNOWN
     sensor_mode: SensorMode = SensorMode.UNKNOWN
     quality: DataQuality = DataQuality.UNKNOWN

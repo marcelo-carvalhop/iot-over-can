@@ -33,4 +33,17 @@ void wirelessLinkOnUnbound(uint64_t uuid, uint8_t childId);
 /* true quando o Node possui a chave de enlace e pode oferecer o plano de dados. */
 bool wirelessLinkHasKey();
 
+/* true quando há sessão de dados autenticada com o sensor. */
+bool wirelessLinkIsSecure(uint64_t uuid);
+
+/*
+ * Ganchos dos ensaios de injeção de falhas (fault_injection.cpp).
+ *   DropSessions  descarta as sessões; os sensores precisam se reautenticar.
+ *   ApOutage      desliga o ponto de acesso por durationMs (0 = religa agora).
+ *   RadioOff      desliga ponto de acesso e anúncio até o reinício do Node.
+ */
+void wirelessLinkInjectDropSessions();
+void wirelessLinkInjectApOutage(uint32_t durationMs);
+void wirelessLinkRadioOff();
+
 #endif

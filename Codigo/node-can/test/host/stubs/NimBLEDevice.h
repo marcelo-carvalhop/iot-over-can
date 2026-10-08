@@ -23,10 +23,44 @@ class NimBLEAdvertising {
   bool stop() { advertising = false; return true; }
 };
 
+class NimBLEAdvertisedDevice {
+ public:
+  std::string manufacturer;
+  int rssi = -127;
+  bool haveManufacturerData() const { return !manufacturer.empty(); }
+  std::string getManufacturerData() const { return manufacturer; }
+  int getRSSI() const { return rssi; }
+};
+
+class NimBLEScanCallbacks {
+ public:
+  virtual ~NimBLEScanCallbacks() {}
+  virtual void onResult(const NimBLEAdvertisedDevice*) {}
+};
+
+class NimBLEScan {
+ public:
+  NimBLEScanCallbacks* callbacks = nullptr;
+  bool scanning = false;
+  void setScanCallbacks(NimBLEScanCallbacks* cb, bool) { callbacks = cb; }
+  void setDuplicateFilter(int) {}
+  void setActiveScan(bool) {}
+  void setInterval(uint16_t) {}
+  void setWindow(uint16_t) {}
+  void setMaxResults(uint8_t) {}
+  bool start(uint32_t, bool, bool) { scanning = true; return true; }
+  bool isScanning() const { return scanning; }
+};
+
 class NimBLEDevice {
  public:
+  static void init(const std::string&) {}
   static NimBLEAdvertising* getAdvertising() {
     static NimBLEAdvertising instance;
+    return &instance;
+  }
+  static NimBLEScan* getScan() {
+    static NimBLEScan instance;
     return &instance;
   }
 };

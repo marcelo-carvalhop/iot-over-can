@@ -48,6 +48,12 @@ Comandos mutáveis pelo console USB exigem uma sessão `AUTH UNLOCK`. O token de
 
 O sensor continua anunciando seu UUID64 e perfil por BLE, inclusive com sessão ativa, o que mantém o liveness do vínculo no Node. A associação é decidida no lado dos Nodes CAN; o sensor toma conhecimento dela pela oferta autenticada e então estabelece o plano de dados. O firmware do protocolo `0x06` é necessário: sensores com o firmware anterior continuam sendo descobertos e associados, mas não abrem sessão.
 
+## Reassociação a outro Node
+
+O firmware do sensor não foi alterado na versão 0.18; a reassociação automática usa o comportamento que ele já tinha. Com sessão ativa o sensor ignora ofertas. Quando o Node responsável deixa de responder, ele desiste da sessão depois de 10 s sem tráfego (`NET_SESSION_TIMEOUT_MS`) e volta a procurar ofertas; a de outro Node só é aceita depois de 15 s nesse estado (`NET_OFFER_SWITCH_HOLD_MS`), para que uma oferta antiga repetida por um terceiro não faça o rádio alternar de ponto de acesso. Uma desassociação explícita (`CMD_RELEASE`) dispensa essa espera.
+
+Essas duas constantes respondem pela maior parte do tempo de uma reassociação, cerca de 25 s na bancada virtual, enquanto a rede decide em cerca de 5 s. Reduzi-las é possível e deve ser feito com medição em bancada. Ver [`../arquitetura/metricas-e-ensaios.md`](../arquitetura/metricas-e-ensaios.md).
+
 ## Operação na TUI
 
 A operação normal do vínculo não depende de comandos internos. `F7` ou `w` abre a tela **Sensores sem fio**, na qual cada UUID é apresentado uma única vez mesmo quando vários Nodes o observam. A tela mostra o perfil anunciado, o melhor Node observado por RSSI e as demais observações recentes. O operador pode aceitar o Node sugerido ou selecionar explicitamente outro observador antes de confirmar a associação.

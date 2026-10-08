@@ -4,17 +4,24 @@ import re
 
 from pico_tui.core.event_bus import EventBus
 from pico_tui.core.events import (
+    BusStatsReceived,
     CanFrameReceived,
     CommandAck,
+    FaultCommandSent,
+    FaultEventReceived,
+    IdStatsReceived,
     LegacyHeartbeatReceived,
     LogEvent,
     LocalNodeTelemetryReceived,
+    NetworkEventReceived,
     PhysicalNodeReceived,
     WirelessCandidateReceived,
     WirelessAssociationReceived,
     WirelessConfigReceived,
+    WirelessFailoverReceived,
     WirelessLinkReceived,
 )
+from pico_tui.protocol.common import parse_key_values
 
 
 class LegacyGatewayDecoder:
@@ -42,12 +49,38 @@ class LegacyGatewayDecoder:
         r"\[GW\]\s+WIRELESS_ASSOC\s+node=(?P<node>\d+)\s+child=(?P<child>\d+)\s+"
         r"uuid=(?P<uuid>0x[0-9A-Fa-f]{16})\s+profile=(?P<profile>[A-Z0-9_]+)\s+"
         r"state=(?P<state>[A-Z_]+)\s+rssi=(?P<rssi>-?\d+)\s+protocol=(?P<protocol>\d+)"
+        r"(?:\s+failover=(?P<failover>AUTO|MANUAL))?(?:\s+session=(?P<session>SECURE|NONE))?"
+    )
+    WIRELESS_FAILOVER = re.compile(
+        r"\[GW\]\s+WIRELESS_FAILOVER\s+uuid=(?P<uuid>0x[0-9A-Fa-f]{16})\s+from=(?P<from>\d+)\s+"
+        r"to=(?P<to>\d+)\s+reason=(?P<reason>[A-Z_]+)(?:\s+rssi=(?P<rssi>-?\d+))?"
+    )
+    BUS_STATS = re.compile(r"\[GW\]\s+BUS_STATS\s+")
+    ID_STATS = re.compile(r"\[GW\]\s+ID_STATS\s+")
+    FAULT_TX = re.compile(r"\[GW\]\s+FAULT_TX\s+")
+    FAULT_EVENT = re.compile(r"\[GW\]\s+FAULT_EVENT\s+")
+    FAULT_ERROR = re.compile(r"\[GW\]\s+(?:FAULT_ERROR|METRICS_ERROR)\s+(?P<detail>.*)")
+    # Fatos da coordenação da rede relatados pela Probe 00.
+    NETWORK_EVENTS = (
+        (re.compile(r"\[GW\]\s+Falha detectada no lider NODE\s+(?P<node>\d+)"), "LEADER_FAILURE_DETECTED", "WARNING",
+         "Probe 00: líder Node {node:02d} sem sinal de presença; nova eleição solicitada"),
+        (re.compile(r"\[GW\]\s+Requisicao de eleicao observada"), "ELECTION_REQUESTED", "INFO",
+         "Eleição solicitada por um módulo da rede"),
+        (re.compile(r"\[GW\]\s+Comando enviado:\s+22 00 "), "ELECTION_REQUESTED", "INFO",
+         "Eleição solicitada pela Probe 00"),
+        (re.compile(r"\[GW\]\s+ELEICAO recebida de NODE\s+(?P<node>\d+)"), "ELECTION_ANNOUNCE", "DEBUG",
+         "Node {node:02d} participa da eleição"),
+        (re.compile(r"\[GW\]\s+Lider anunciado:\s+NODE\s+(?P<node>\d+)"), "LEADER_ANNOUNCED", "INFO",
+         "Node {node:02d} anunciou a liderança"),
+        (re.compile(r"\[GW\]\s+JOIN observado de NODE\s+(?P<node>\d+)"), "JOIN_OBSERVED", "INFO",
+         "Node {node:02d} pediu para entrar na rede"),
     )
     WIRELESS_LINK = re.compile(
         r"\[GW\]\s+WIRELESS_LINK\s+node=(?P<node>\d+)\s+child=(?P<child>\d+)\s+"
         r"state=(?P<state>[A-Z_]+)\s+rssi=(?P<rssi>-?\d+)\s+age_s=(?P<age>\d+)\s+rx=(?P<rx>\d+)\s+"
         r"auth_fail=(?P<auth>\d+)\s+replay=(?P<replay>\d+)\s+lost=(?P<lost>\d+)\s+"
         r"stream=(?P<stream>ON|OFF)\s+period_ms=(?P<period>\d+)"
+        r"(?:\s+rtt_ms=(?P<rtt>-?[0-9.]+)\s+rtt_max_ms=(?P<rtt_max>-?[0-9.]+))?"
     )
     WIRELESS_CONFIG = re.compile(
         r"\[GW\]\s+WIRELESS_CONFIG\s+node=(?P<node>\d+)\s+child=(?P<child>\d+)\s+"
@@ -91,6 +124,10 @@ class LegacyGatewayDecoder:
         self.bus = bus
 
     async def decode(self, line: str) -> bool:
+        if self.BUS_STATS.search(line):
+            return await self._bus_stats(line)
+        if self.ID_STATS.search(line):
+            return await self._id_stats(line)
         if match := self.HEARTBEAT.search(line):
             leader = int(match.group("leader") or match.group("leader_node") or 0)
             await self.bus.publish(
@@ -144,11 +181,61 @@ class LegacyGatewayDecoder:
                     state=match.group("state").upper(),
                     rssi_dbm=int(match.group("rssi")),
                     protocol_version=match.group("protocol"),
+                    failover_auto=(match.group("failover") == "AUTO") if match.group("failover") else None,
+                    session_secure=(match.group("session") == "SECURE") if match.group("session") else None,
                 )
             )
             return True
+        if match := self.WIRELESS_FAILOVER.search(line):
+            await self.bus.publish(
+                WirelessFailoverReceived(
+                    wireless_uuid=match.group("uuid").upper().replace("0X", "0x"),
+                    from_node_id=int(match.group("from")),
+                    to_node_id=int(match.group("to")),
+                    reason=match.group("reason").upper(),
+                    rssi_dbm=int(match.group("rssi")) if match.group("rssi") else None,
+                )
+            )
+            return True
+        if self.FAULT_TX.search(line):
+            payload = parse_key_values(line)
+            await self.bus.publish(
+                FaultCommandSent(
+                    kind=payload.get("KIND", "UNKNOWN").upper(),
+                    node_id=_int(payload.get("NODE")),
+                    duration_ms=_int(payload.get("DURATION_MS")),
+                    seq=_int(payload.get("SEQ")),
+                )
+            )
+            return True
+        if self.FAULT_EVENT.search(line):
+            payload = parse_key_values(line)
+            await self.bus.publish(
+                FaultEventReceived(
+                    node_id=_int(payload.get("NODE")),
+                    kind=payload.get("KIND", "UNKNOWN").upper(),
+                    state=payload.get("STATE", "UNKNOWN").upper(),
+                    duration_ms=_int(payload.get("DURATION_MS")),
+                    seq=_int(payload.get("SEQ")),
+                    payload=payload,
+                )
+            )
+            return True
+        if match := self.FAULT_ERROR.search(line):
+            await self.bus.publish(LogEvent("WARNING", f"Probe 00 recusou o comando: {match.group('detail')}", "ENSAIO"))
+            return True
+        for pattern, kind, level, template in self.NETWORK_EVENTS:
+            if match := pattern.search(line):
+                node = int(match.groupdict().get("node") or 0)
+                await self.bus.publish(NetworkEventReceived(kind=kind, node_id=node, detail=line))
+                await self.bus.publish(LogEvent(level, template.format(node=node), "REDE"))
+                if kind == "LEADER_ANNOUNCED":
+                    await self.bus.publish(PhysicalNodeReceived(node, {"STATE": "LEADER"}))
+                return True
         if match := self.WIRELESS_LINK.search(line):
             rssi = int(match.group("rssi"))
+            rtt = float(match.group("rtt")) if match.group("rtt") else -1.0
+            rtt_max = float(match.group("rtt_max")) if match.group("rtt_max") else -1.0
             await self.bus.publish(
                 WirelessLinkReceived(
                     parent_node_id=int(match.group("node")),
@@ -162,6 +249,8 @@ class LegacyGatewayDecoder:
                     lost_datagrams=int(match.group("lost")),
                     stream_enabled=match.group("stream") == "ON",
                     stream_period_ms=int(match.group("period")) or None,
+                    rtt_ms=rtt if rtt >= 0 else None,
+                    rtt_max_ms=rtt_max if rtt_max >= 0 else None,
                 )
             )
             return True
@@ -245,6 +334,49 @@ class LegacyGatewayDecoder:
         return False
 
 
+    async def _bus_stats(self, line: str) -> bool:
+        payload = parse_key_values(line)
+        try:
+            event = BusStatsReceived(
+                probe_ms=int(payload["T_MS"]),
+                window_ms=int(payload["WIN_MS"]),
+                frames=int(payload["FRAMES"]),
+                bits=int(payload["BITS"]),
+                load_percent=float(payload["LOAD"]),
+                peak_percent=float(payload["PEAK"]),
+                rx_errors=_int(payload.get("RX_ERR")),
+                tx_errors=_int(payload.get("TX_ERR")),
+                error_flags=_int(payload.get("EFLG")),
+                rx_queue_peak=_int(payload.get("RX_PEAK")),
+                ids=_int(payload.get("IDS")),
+                transfers_ok=_int(payload.get("XFER_OK")),
+                transfers_err=_int(payload.get("XFER_ERR")),
+                own_frames=_int(payload.get("OWN")),
+                untracked=_int(payload.get("UNTRACKED")),
+            )
+        except (KeyError, ValueError):
+            return False
+        await self.bus.publish(event)
+        return True
+
+    async def _id_stats(self, line: str) -> bool:
+        payload = parse_key_values(line)
+        try:
+            event = IdStatsReceived(
+                can_id=int(payload["ID"], 0),
+                window_ms=int(payload["WIN_MS"]),
+                count=int(payload["N"]),
+                dlc=int(payload["DLC"]),
+                bits=int(payload["BITS"]),
+                dt_min_us=int(payload["DT_MIN_US"]),
+                dt_avg_us=int(payload["DT_AVG_US"]),
+                dt_max_us=int(payload["DT_MAX_US"]),
+            )
+        except (KeyError, ValueError):
+            return False
+        await self.bus.publish(event)
+        return True
+
     async def _decode_legacy_payload(self, data: bytes) -> None:
         if len(data) < 4:
             return
@@ -294,3 +426,10 @@ class LegacyGatewayDecoder:
                 profile_id="DEMO_BYTE",
             )
         )
+
+
+def _int(value: object, default: int = 0) -> int:
+    try:
+        return int(str(value), 0)
+    except (TypeError, ValueError):
+        return default

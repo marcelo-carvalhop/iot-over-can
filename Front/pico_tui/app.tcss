@@ -485,3 +485,19 @@ Toast {
     max-height: 12;
     background: $bg-widget;
 }
+
+/* ---------------------------------------------------------------- métricas e ensaios */
+
+#exp-list {
+    max-height: 18;
+    min-height: 6;
+}
+
+#exp-timeline {
+    margin-top: 1;
+}
+
+#choice-list {
+    max-height: 12;
+    background: $bg-widget;
+}

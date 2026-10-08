@@ -1,0 +1,846 @@
+# cenario=silence_leader_with_sensor: lider retoma de uma parada longa sem reassociar
+@301 ========================================
+@301 Iniciando NODE 0
+@301 ========================================
+@301 [LEDS] IDLE: todos acesos. Logica invertida: LOW=ligado, HIGH=desligado
+@301 [PROBE 00] CAPS=CAN_MONITOR,SERIAL_INSTRUMENTATION LOCAL_PROFILE=NONE
+@301 [NODE 0] [FALHA] Modulo de falha real inicializado; simulacao por software removida
+@301 [NODE 0] [HB] modo=3 periodo=1000 ms
+@301 [GW] BLE scanner disabled on Probe 00
+@301 [GW] Plano de dados wireless: CMD TARGET=NN.CC ACTION=... TX=...
+@301 [GW] Metricas do barramento: METRICS ON|OFF|RESET
+@301 [GW] Ensaios: FAULT POWER_CYCLE|SILENCE|AP_OUTAGE|DROP_SESSION|LOAD|CANCEL
+@301 [GW] Probe 00 ativada
+@301 [GW] Instrumentacao externa: nao participa da eleicao, TDMA ou sensoriamento
+@301 [GW] Interface serial da Probe 00 pronta
+@301 [GW] Iniciar eleicao: 22 00 FF 01
+@301 [GW] Solicitar status: 22 20 FF 00
+@301 [GW] Velocidade heartbeat: 22 30 FF 01..05
+@301 [PROBE 00] FIRMWARE=0.18.0 FEATURES=WIRELESS_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER
+# t=601 node=1 ligado
+# t=901 node=2 ligado
+# t=1201 node=3 ligado
+# t=1201 comando: 22 00 FF 01
+@1201 [GW] Comando enviado: 22 00 FF 01
+@1201 [GW] Gateway nao participa da eleicao
+@1202 [GW] No descoberto: NODE 1
+@1202 [GW] ELEICAO recebida de NODE 1
+@1202 [GW] No descoberto: NODE 2
+@1202 [GW] ELEICAO recebida de NODE 2
+@1202 [GW] No descoberto: NODE 3
+@1202 [GW] ELEICAO recebida de NODE 3
+@1301 [GW] BUS_STATS t_ms=1300 win_ms=1000 frames=4 bits=264 load=0.05 peak=0.52 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=2 xfer_ok=0 xfer_err=0 own=1 untracked=0
+@2301 [GW] BUS_STATS t_ms=2300 win_ms=1000 frames=0 bits=0 load=0.00 peak=0.00 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=2 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@3301 [GW] BUS_STATS t_ms=3300 win_ms=1000 frames=0 bits=0 load=0.00 peak=0.00 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=2 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@4301 [GW] BUS_STATS t_ms=4300 win_ms=1000 frames=0 bits=0 load=0.00 peak=0.00 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=2 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@5301 [GW] BUS_STATS t_ms=5300 win_ms=1000 frames=0 bits=0 load=0.00 peak=0.00 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=2 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@6201 [GW] ID_STATS id=0x080 win_ms=5000 n=1 dlc=4 bits=84 dt_min_us=0 dt_avg_us=0 dt_max_us=0
+@6201 [GW] CONTROLE RX 23 50 1 1
+@6201 [GW] Atualizacao de status recebida: [STATUS] NODE 1 estado=ATIVO
+@6201 [GW] CONTROLE RX 23 50 2 1
+@6201 [GW] Atualizacao de status recebida: [STATUS] NODE 2 estado=ATIVO
+@6201 [GW] CONTROLE RX 23 50 3 0
+@6201 [GW] Atualizacao de status recebida: [STATUS] NODE 3 estado=LIDER
+@6202 [GW] CONTROLE RX 22 20 FF 0
+@6202 [NODE 0] [STATUS TX] codigo=4
+@6202 [GW] CONTROLE RX 23 21 1 1
+@6202 [NODE 0] [STATUS RX] NODE 1 estado=ATIVO
+@6202 [GW] CONTROLE RX 23 21 2 1
+@6202 [NODE 0] [STATUS RX] NODE 2 estado=ATIVO
+@6241 [GW] ID_STATS id=0x050 win_ms=5039 n=3 dlc=1 bits=180 dt_min_us=37 dt_avg_us=37 dt_max_us=37
+@6301 [GW] BUS_STATS t_ms=6300 win_ms=1000 frames=7 bits=588 load=0.11 peak=1.17 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=2 xfer_ok=0 xfer_err=0 own=1 untracked=0
+@7301 [GW] BUS_STATS t_ms=7300 win_ms=1000 frames=0 bits=0 load=0.00 peak=0.00 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=2 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@7701 [GW] Lider anunciado: NODE 3
+@7701 [GW] CONTROLE RX 23 50 3 0
+@7701 [GW] Atualizacao de status recebida: [STATUS] NODE 3 estado=LIDER
+@8301 [GW] BUS_STATS t_ms=8300 win_ms=1000 frames=2 bits=144 load=0.02 peak=0.28 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=3 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@8701 [GW] CONTROLE RX 23 50 3 0
+@8701 [GW] Atualizacao de status recebida: [STATUS] NODE 3 estado=LIDER
+@8701 [GW] HEARTBEAT lider=3 rodada=0 sensores_ativos=2 modo=3 periodo=1000 ms
+@8702 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@8703 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+# t=8703 comando: WIRELESS BIND 1 0xE6616408432B6F39 AUTO
+@8703 [GW] WIRELESS_BIND_TX node=1 uuid=0xE6616408432B6F39 seq=1 failover=AUTO
+@8704 [GW] WIRELESS_ASSOC node=1 child=1 uuid=0xE6616408432B6F39 profile=VIBRATION state=ASSOCIATING rssi=-50 protocol=6 failover=AUTO session=NONE
+@8705 [GW] WIRELESS_LINK node=1 child=1 state=OFFERING rssi=0 age_s=0 rx=0 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=-1 rtt_max_ms=-1
+@8954 [GW] WIRELESS_ASSOC node=1 child=1 uuid=0xE6616408432B6F39 profile=VIBRATION state=BOUND rssi=-50 protocol=6 failover=AUTO session=NONE
+# t=9002 sensor=0xE6616408432B6F39 entrando no ponto de acesso do node=1
+@9212 [GW] WIRELESS_ASSOC node=1 child=1 uuid=0xE6616408432B6F39 profile=VIBRATION state=ONLINE rssi=-50 protocol=6 failover=AUTO session=NONE
+@9301 [GW] BUS_STATS t_ms=9300 win_ms=1000 frames=18 bits=2075 load=0.41 peak=3.22 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=13 xfer_ok=1 xfer_err=0 own=2 untracked=0
+@9701 [GW] HEARTBEAT lider=3 rodada=1 sensores_ativos=2 modo=3 periodo=1000 ms
+@9702 [GW] SENSOR sensor=2 rodada=1 valor=0xAA ativo=1
+@10002 [STATUS TX] Requisicao global de status enviada
+@10003 [GW] CONTROLE RX 23 21 1 1
+@10003 [NODE 0] [STATUS RX] NODE 1 estado=ATIVO
+@10003 [GW] CONTROLE RX 23 21 2 1
+@10003 [NODE 0] [STATUS RX] NODE 2 estado=ATIVO
+@10003 [GW] CONTROLE RX 23 21 3 0
+@10003 [NODE 0] [STATUS RX] NODE 3 estado=LIDER
+@10301 [GW] BUS_STATS t_ms=10300 win_ms=1000 frames=6 bits=523 load=0.10 peak=0.66 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=14 xfer_ok=1 xfer_err=0 own=1 untracked=0
+# t=10502 sensor=0xE6616408432B6F39 sessao com node=1 filho=1
+@10503 [GW] WIRELESS_LINK node=1 child=1 state=HANDSHAKE rssi=0 age_s=0 rx=0 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=-1 rtt_max_ms=-1
+@10504 [GW] WIRELESS_ASSOC node=1 child=1 uuid=0xE6616408432B6F39 profile=VIBRATION state=ONLINE rssi=-50 protocol=6 failover=AUTO session=SECURE
+@10504 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=0 rx=0 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=-1 rtt_max_ms=-1
+@10505 [GW] WIRELESS_CONFIG node=1 child=1 status=CURRENT mode=ROTATING rate_req_hz=1000.00 rate_eff_hz=1000.00 window=HANN window_size=512 stalta=4.000 gain=1.0000
+@10506 [GW] WIRELESS_CONFIG node=1 child=1 status=CURRENT mode=ROTATING rate_req_hz=1000.00 rate_eff_hz=1000.00 window=HANN window_size=512 stalta=4.000 gain=1.0000
+@10701 [GW] HEARTBEAT lider=3 rodada=2 sensores_ativos=2 modo=3 periodo=1000 ms
+@10702 [GW] SENSOR sensor=1 rodada=2 valor=0xAA ativo=1
+@10704 TEL NODE=1 CHILD=1 SEQ=0 GW_TS_MS=10703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@10772 [GW] WIRELESS_CANDIDATE reporter=3 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-40 protocol=6
+@11201 [GW] ID_STATS id=0x080 win_ms=5000 n=13 dlc=4 bits=1090 dt_min_us=37 dt_avg_us=677082 dt_max_us=5000500
+@11301 [GW] BUS_STATS t_ms=11300 win_ms=1000 frames=31 bits=3645 load=0.72 peak=4.32 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=6 xfer_err=0 own=0 untracked=0
+@11701 [GW] HEARTBEAT lider=3 rodada=3 sensores_ativos=2 modo=3 periodo=1000 ms
+@11702 [GW] SENSOR sensor=2 rodada=3 valor=0xAA ativo=1
+@11704 TEL NODE=1 CHILD=1 SEQ=1 GW_TS_MS=11703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@12301 [GW] BUS_STATS t_ms=12300 win_ms=1000 frames=11 bits=1245 load=0.24 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=7 xfer_err=0 own=0 untracked=0
+@12701 [GW] ID_STATS id=0x060 win_ms=5000 n=1 dlc=1 bits=60 dt_min_us=0 dt_avg_us=0 dt_max_us=0
+@12701 [GW] HEARTBEAT lider=3 rodada=4 sensores_ativos=2 modo=3 periodo=1000 ms
+@12702 [GW] SENSOR sensor=1 rodada=4 valor=0xAA ativo=1
+@12704 TEL NODE=1 CHILD=1 SEQ=2 GW_TS_MS=12703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@13301 [GW] BUS_STATS t_ms=13300 win_ms=1000 frames=11 bits=1248 load=0.24 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=8 xfer_err=0 own=0 untracked=0
+@13701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=472 dt_min_us=999963 dt_avg_us=999990 dt_max_us=1000000
+@13701 [GW] HEARTBEAT lider=3 rodada=5 sensores_ativos=2 modo=3 periodo=1000 ms
+@13702 [GW] SENSOR sensor=2 rodada=5 valor=0xAA ativo=1
+@13704 TEL NODE=1 CHILD=1 SEQ=3 GW_TS_MS=13703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@13741 [GW] ID_STATS id=0x282 win_ms=5039 n=1 dlc=8 bits=117 dt_min_us=0 dt_avg_us=0 dt_max_us=0
+@13781 [GW] ID_STATS id=0x283 win_ms=5079 n=1 dlc=8 bits=120 dt_min_us=0 dt_avg_us=0 dt_max_us=0
+@13821 [GW] ID_STATS id=0x284 win_ms=5119 n=1 dlc=8 bits=117 dt_min_us=0 dt_avg_us=0 dt_max_us=0
+@13861 [GW] ID_STATS id=0x285 win_ms=5158 n=1 dlc=8 bits=119 dt_min_us=0 dt_avg_us=0 dt_max_us=0
+@13901 [GW] ID_STATS id=0x300 win_ms=5198 n=1 dlc=8 bits=120 dt_min_us=0 dt_avg_us=0 dt_max_us=0
+@13935 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@13936 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+@13941 [GW] ID_STATS id=0x301 win_ms=5238 n=1 dlc=8 bits=119 dt_min_us=0 dt_avg_us=0 dt_max_us=0
+@13981 [GW] ID_STATS id=0x322 win_ms=5277 n=4 dlc=8 bits=467 dt_min_us=250000 dt_avg_us=599833 dt_max_us=1291500
+@14021 [GW] ID_STATS id=0x323 win_ms=5317 n=4 dlc=8 bits=457 dt_min_us=250000 dt_avg_us=599833 dt_max_us=1291500
+@14061 [GW] ID_STATS id=0x381 win_ms=5356 n=56 dlc=8 bits=6668 dt_min_us=37 dt_avg_us=90891 dt_max_us=1797000
+@14301 [GW] BUS_STATS t_ms=14300 win_ms=1000 frames=15 bits=1724 load=0.34 peak=2.51 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=9 xfer_err=0 own=0 untracked=0
+@14701 [GW] HEARTBEAT lider=3 rodada=6 sensores_ativos=2 modo=3 periodo=1000 ms
+@14702 [GW] SENSOR sensor=1 rodada=6 valor=0xAA ativo=1
+@14702 [GW] ID_STATS id=0x200 win_ms=5000 n=6 dlc=5 bits=561 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@14704 TEL NODE=1 CHILD=1 SEQ=4 GW_TS_MS=14703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@15301 [GW] BUS_STATS t_ms=15300 win_ms=1000 frames=11 bits=1246 load=0.24 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=10 xfer_err=0 own=0 untracked=0
+@15503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=5 rx=13 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@15701 [GW] HEARTBEAT lider=3 rodada=7 sensores_ativos=2 modo=3 periodo=1000 ms
+@15702 [GW] SENSOR sensor=2 rodada=7 valor=0xAA ativo=1
+@15704 TEL NODE=1 CHILD=1 SEQ=5 GW_TS_MS=15703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@15772 [GW] ID_STATS id=0x286 win_ms=5000 n=1 dlc=8 bits=116 dt_min_us=0 dt_avg_us=0 dt_max_us=0
+@15812 [GW] ID_STATS id=0x287 win_ms=5040 n=1 dlc=8 bits=120 dt_min_us=0 dt_avg_us=0 dt_max_us=0
+@15989 [GW] WIRELESS_CANDIDATE reporter=3 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-40 protocol=6
+@16301 [GW] BUS_STATS t_ms=16300 win_ms=1000 frames=17 bits=1961 load=0.39 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=12 xfer_err=0 own=0 untracked=0
+@16701 [GW] HEARTBEAT lider=3 rodada=8 sensores_ativos=2 modo=3 periodo=1000 ms
+@16702 [GW] SENSOR sensor=1 rodada=8 valor=0xAA ativo=1
+@16704 TEL NODE=1 CHILD=1 SEQ=6 GW_TS_MS=16703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@17301 [GW] BUS_STATS t_ms=17300 win_ms=1000 frames=11 bits=1248 load=0.24 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=13 xfer_err=0 own=0 untracked=0
+@17701 [GW] HEARTBEAT lider=3 rodada=9 sensores_ativos=2 modo=3 periodo=1000 ms
+@17702 [GW] SENSOR sensor=2 rodada=9 valor=0xAA ativo=1
+@17704 TEL NODE=1 CHILD=1 SEQ=7 GW_TS_MS=17703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@18301 [GW] BUS_STATS t_ms=18300 win_ms=1000 frames=11 bits=1241 load=0.24 peak=2.48 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=14 xfer_err=0 own=0 untracked=0
+@18701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=469 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@18701 [GW] HEARTBEAT lider=3 rodada=10 sensores_ativos=2 modo=3 periodo=1000 ms
+@18702 [GW] SENSOR sensor=1 rodada=10 valor=0xAA ativo=1
+# t=18704 comando: FAULT SILENCE 3 43
+@18704 [GW] FAULT_TX kind=SILENCE node=3 duration_ms=43000 seq=1
+@18704 TEL NODE=1 CHILD=1 SEQ=8 GW_TS_MS=18703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@18716 [GW] FAULT_EVENT node=3 kind=SILENCE state=STARTED duration_ms=43000 seq=1
+@18741 [GW] ID_STATS id=0x282 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=5233000 dt_avg_us=5233000 dt_max_us=5233000
+@18781 [GW] ID_STATS id=0x283 win_ms=5000 n=1 dlc=8 bits=121 dt_min_us=5233000 dt_avg_us=5233000 dt_max_us=5233000
+@18821 [GW] ID_STATS id=0x284 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=5233000 dt_avg_us=5233000 dt_max_us=5233000
+@18861 [GW] ID_STATS id=0x285 win_ms=5000 n=1 dlc=8 bits=118 dt_min_us=5233000 dt_avg_us=5233000 dt_max_us=5233000
+@19061 [GW] ID_STATS id=0x381 win_ms=5000 n=49 dlc=8 bits=5777 dt_min_us=37 dt_avg_us=102041 dt_max_us=998463
+@19108 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@19109 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+@19301 [GW] BUS_STATS t_ms=19300 win_ms=1000 frames=17 bits=1954 load=0.39 peak=2.96 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=15 xfer_err=0 own=1 untracked=0
+@19702 [GW] ID_STATS id=0x200 win_ms=5000 n=4 dlc=5 bits=370 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@19704 TEL NODE=1 CHILD=1 SEQ=9 GW_TS_MS=19703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@20003 [STATUS TX] Requisicao global de status enviada
+@20004 [GW] CONTROLE RX 23 21 1 1
+@20004 [NODE 0] [STATUS RX] NODE 1 estado=ATIVO
+@20004 [GW] CONTROLE RX 23 21 2 1
+@20004 [NODE 0] [STATUS RX] NODE 2 estado=ATIVO
+@20301 [GW] BUS_STATS t_ms=20300 win_ms=1000 frames=12 bits=1311 load=0.26 peak=2.12 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=16 xfer_err=0 own=1 untracked=0
+@20503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=10 rx=25 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@20503 [GW] WIRELESS_ASSOC node=1 child=1 uuid=0xE6616408432B6F39 profile=VIBRATION state=ONLINE rssi=-50 protocol=6 failover=AUTO session=SECURE
+@20704 TEL NODE=1 CHILD=1 SEQ=10 GW_TS_MS=20703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@20772 [GW] ID_STATS id=0x286 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=5217000 dt_avg_us=5217000 dt_max_us=5217000
+@20812 [GW] ID_STATS id=0x287 win_ms=5000 n=1 dlc=8 bits=120 dt_min_us=5217000 dt_avg_us=5217000 dt_max_us=5217000
+@21201 [GW] ID_STATS id=0x080 win_ms=5000 n=3 dlc=4 bits=251 dt_min_us=37 dt_avg_us=3333654 dt_max_us=9999926
+@21301 [GW] BUS_STATS t_ms=21300 win_ms=1000 frames=15 bits=1776 load=0.35 peak=2.12 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=18 xfer_err=0 own=0 untracked=0
+@21704 TEL NODE=1 CHILD=1 SEQ=11 GW_TS_MS=21703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@22301 [GW] BUS_STATS t_ms=22300 win_ms=1000 frames=9 bits=1061 load=0.21 peak=2.12 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=19 xfer_err=0 own=0 untracked=0
+@22702 [GW] Falha detectada no lider NODE 3
+@22702 [GW] Comando enviado: 22 00 FF 01
+@22703 [GW] ELEICAO recebida de NODE 2
+@22704 [GW] ELEICAO recebida de NODE 1
+@22704 TEL NODE=1 CHILD=1 SEQ=12 GW_TS_MS=22703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@23301 [GW] BUS_STATS t_ms=23300 win_ms=1000 frames=12 bits=1261 load=0.25 peak=2.52 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=20 xfer_err=0 own=1 untracked=0
+@23701 [GW] ID_STATS id=0x100 win_ms=5000 n=1 dlc=5 bits=93 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@23704 TEL NODE=1 CHILD=1 SEQ=13 GW_TS_MS=23703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@23741 [GW] ID_STATS id=0x282 win_ms=5000 n=1 dlc=8 bits=117 dt_min_us=5173000 dt_avg_us=5173000 dt_max_us=5173000
+@23781 [GW] ID_STATS id=0x283 win_ms=5000 n=1 dlc=8 bits=120 dt_min_us=5173000 dt_avg_us=5173000 dt_max_us=5173000
+@23821 [GW] ID_STATS id=0x284 win_ms=5000 n=1 dlc=8 bits=116 dt_min_us=5173000 dt_avg_us=5173000 dt_max_us=5173000
+@23861 [GW] ID_STATS id=0x285 win_ms=5000 n=1 dlc=8 bits=118 dt_min_us=5173000 dt_avg_us=5173000 dt_max_us=5173000
+@23901 [GW] ID_STATS id=0x305 win_ms=5197 n=1 dlc=8 bits=119 dt_min_us=0 dt_avg_us=0 dt_max_us=0
+@23941 [GW] ID_STATS id=0x306 win_ms=5225 n=1 dlc=8 bits=119 dt_min_us=0 dt_avg_us=0 dt_max_us=0
+@23981 [GW] ID_STATS id=0x322 win_ms=5000 n=1 dlc=8 bits=115 dt_min_us=9999037 dt_avg_us=9999037 dt_max_us=9999037
+@24021 [GW] ID_STATS id=0x323 win_ms=5000 n=1 dlc=8 bits=115 dt_min_us=9999463 dt_avg_us=9999463 dt_max_us=9999463
+@24061 [GW] ID_STATS id=0x381 win_ms=5000 n=49 dlc=8 bits=5787 dt_min_us=37 dt_avg_us=102040 dt_max_us=998463
+@24301 [GW] BUS_STATS t_ms=24300 win_ms=1000 frames=9 bits=1063 load=0.21 peak=2.12 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=21 xfer_err=0 own=0 untracked=0
+@24341 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@24342 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+@24704 TEL NODE=1 CHILD=1 SEQ=14 GW_TS_MS=24703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@25301 [GW] BUS_STATS t_ms=25300 win_ms=1000 frames=13 bits=1524 load=0.30 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=22 xfer_err=0 own=0 untracked=0
+@25503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=15 rx=36 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@25704 TEL NODE=1 CHILD=1 SEQ=15 GW_TS_MS=25703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@26201 [GW] ID_STATS id=0x080 win_ms=5000 n=1 dlc=4 bits=84 dt_min_us=2697963 dt_avg_us=2697963 dt_max_us=2697963
+@26241 [GW] ID_STATS id=0x050 win_ms=5000 n=2 dlc=1 bits=120 dt_min_us=1000 dt_avg_us=10750963 dt_max_us=21500926
+@26301 [GW] BUS_STATS t_ms=26300 win_ms=1000 frames=13 bits=1546 load=0.30 peak=2.12 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=24 xfer_err=0 own=0 untracked=0
+@26704 TEL NODE=1 CHILD=1 SEQ=16 GW_TS_MS=26703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@27301 [GW] BUS_STATS t_ms=27300 win_ms=1000 frames=9 bits=1064 load=0.21 peak=2.12 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=25 xfer_err=0 own=0 untracked=0
+@27702 [GW] CONTROLE RX 23 50 2 0
+@27702 [GW] Atualizacao de status recebida: [STATUS] NODE 2 estado=LIDER
+@27702 [GW] CONTROLE RX 22 20 FF 0
+@27702 [NODE 0] [STATUS TX] codigo=4
+@27703 [GW] CONTROLE RX 23 50 1 1
+@27703 [GW] Atualizacao de status recebida: [STATUS] NODE 1 estado=ATIVO
+@27704 [GW] CONTROLE RX 23 21 1 1
+@27704 [NODE 0] [STATUS RX] NODE 1 estado=ATIVO
+@27705 TEL NODE=1 CHILD=1 SEQ=17 GW_TS_MS=27704 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@28301 [GW] BUS_STATS t_ms=28300 win_ms=1000 frames=14 bits=1482 load=0.29 peak=2.96 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=26 xfer_err=0 own=1 untracked=0
+@28704 TEL NODE=1 CHILD=1 SEQ=18 GW_TS_MS=28703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@28741 [GW] ID_STATS id=0x282 win_ms=5000 n=1 dlc=8 bits=116 dt_min_us=5233000 dt_avg_us=5233000 dt_max_us=5233000
+@28781 [GW] ID_STATS id=0x283 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5233000 dt_avg_us=5233000 dt_max_us=5233000
+@28821 [GW] ID_STATS id=0x284 win_ms=5000 n=1 dlc=8 bits=115 dt_min_us=5233000 dt_avg_us=5233000 dt_max_us=5233000
+@28861 [GW] ID_STATS id=0x285 win_ms=5000 n=1 dlc=8 bits=118 dt_min_us=5233000 dt_avg_us=5233000 dt_max_us=5233000
+@29061 [GW] ID_STATS id=0x381 win_ms=5000 n=49 dlc=8 bits=5789 dt_min_us=37 dt_avg_us=102040 dt_max_us=998574
+@29202 [GW] Lider anunciado: NODE 2
+@29202 [GW] CONTROLE RX 23 50 2 0
+@29202 [GW] Atualizacao de status recebida: [STATUS] NODE 2 estado=LIDER
+@29301 [GW] BUS_STATS t_ms=29300 win_ms=1000 frames=11 bits=1207 load=0.24 peak=2.12 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=27 xfer_err=0 own=0 untracked=0
+@29554 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@29555 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+@29704 TEL NODE=1 CHILD=1 SEQ=19 GW_TS_MS=29703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@30004 [STATUS TX] Requisicao global de status enviada
+@30005 [GW] CONTROLE RX 23 21 1 1
+@30005 [NODE 0] [STATUS RX] NODE 1 estado=ATIVO
+@30005 [GW] CONTROLE RX 23 21 2 0
+@30005 [NODE 0] [STATUS RX] NODE 2 estado=LIDER
+@30202 [GW] CONTROLE RX 23 50 2 0
+@30202 [GW] Atualizacao de status recebida: [STATUS] NODE 2 estado=LIDER
+@30202 [GW] HEARTBEAT lider=2 rodada=0 sensores_ativos=1 modo=3 periodo=1000 ms
+@30301 [GW] BUS_STATS t_ms=30300 win_ms=1000 frames=18 bits=1959 load=0.39 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=28 xfer_err=0 own=1 untracked=0
+@30503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=20 rx=48 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@30503 [GW] WIRELESS_ASSOC node=1 child=1 uuid=0xE6616408432B6F39 profile=VIBRATION state=ONLINE rssi=-50 protocol=6 failover=AUTO session=SECURE
+@30704 TEL NODE=1 CHILD=1 SEQ=20 GW_TS_MS=30703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@31201 [GW] ID_STATS id=0x080 win_ms=5000 n=10 dlc=4 bits=845 dt_min_us=37 dt_avg_us=750050 dt_max_us=5000500
+@31202 [GW] HEARTBEAT lider=2 rodada=1 sensores_ativos=1 modo=3 periodo=1000 ms
+@31203 [GW] SENSOR sensor=1 rodada=1 valor=0xAA ativo=1
+@31301 [GW] BUS_STATS t_ms=31300 win_ms=1000 frames=17 bits=1964 load=0.39 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=30 xfer_err=0 own=0 untracked=0
+@31704 TEL NODE=1 CHILD=1 SEQ=21 GW_TS_MS=31703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@32202 [GW] HEARTBEAT lider=2 rodada=2 sensores_ativos=1 modo=3 periodo=1000 ms
+@32203 [GW] SENSOR sensor=1 rodada=2 valor=0xAA ativo=1
+@32301 [GW] BUS_STATS t_ms=32300 win_ms=1000 frames=11 bits=1247 load=0.24 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=31 xfer_err=0 own=0 untracked=0
+@32701 [GW] ID_STATS id=0x060 win_ms=5000 n=1 dlc=1 bits=59 dt_min_us=21501000 dt_avg_us=21501000 dt_max_us=21501000
+@32704 TEL NODE=1 CHILD=1 SEQ=22 GW_TS_MS=32703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@33202 [GW] HEARTBEAT lider=2 rodada=3 sensores_ativos=1 modo=3 periodo=1000 ms
+@33203 [GW] SENSOR sensor=1 rodada=3 valor=0xAA ativo=1
+@33301 [GW] BUS_STATS t_ms=33300 win_ms=1000 frames=11 bits=1245 load=0.24 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=32 xfer_err=0 own=0 untracked=0
+@33701 [GW] ID_STATS id=0x100 win_ms=5000 n=4 dlc=5 bits=380 dt_min_us=999963 dt_avg_us=3625250 dt_max_us=11501037
+@33704 TEL NODE=1 CHILD=1 SEQ=23 GW_TS_MS=33703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@33741 [GW] ID_STATS id=0x282 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=5213000 dt_avg_us=5213000 dt_max_us=5213000
+@33781 [GW] ID_STATS id=0x283 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5213000 dt_avg_us=5213000 dt_max_us=5213000
+@33821 [GW] ID_STATS id=0x284 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=5213000 dt_avg_us=5213000 dt_max_us=5213000
+@33861 [GW] ID_STATS id=0x285 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5213000 dt_avg_us=5213000 dt_max_us=5213000
+@33981 [GW] ID_STATS id=0x322 win_ms=5000 n=1 dlc=8 bits=115 dt_min_us=10000000 dt_avg_us=10000000 dt_max_us=10000000
+@34021 [GW] ID_STATS id=0x323 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=10000000 dt_avg_us=10000000 dt_max_us=10000000
+@34061 [GW] ID_STATS id=0x381 win_ms=5000 n=49 dlc=8 bits=5790 dt_min_us=37 dt_avg_us=102040 dt_max_us=998463
+@34202 [GW] HEARTBEAT lider=2 rodada=4 sensores_ativos=1 modo=3 periodo=1000 ms
+@34203 [GW] SENSOR sensor=1 rodada=4 valor=0xAA ativo=1
+@34301 [GW] BUS_STATS t_ms=34300 win_ms=1000 frames=11 bits=1255 load=0.25 peak=2.13 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=33 xfer_err=0 own=0 untracked=0
+@34702 [GW] ID_STATS id=0x200 win_ms=5000 n=4 dlc=5 bits=373 dt_min_us=1000000 dt_avg_us=3875250 dt_max_us=12501000
+@34704 TEL NODE=1 CHILD=1 SEQ=24 GW_TS_MS=34703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@34795 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@34796 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+@35202 [GW] HEARTBEAT lider=2 rodada=5 sensores_ativos=1 modo=3 periodo=1000 ms
+@35203 [GW] SENSOR sensor=1 rodada=5 valor=0xAA ativo=1
+@35301 [GW] BUS_STATS t_ms=35300 win_ms=1000 frames=15 bits=1712 load=0.34 peak=3.04 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=34 xfer_err=0 own=0 untracked=0
+@35503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=25 rx=60 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@35704 TEL NODE=1 CHILD=1 SEQ=25 GW_TS_MS=35703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@36202 [GW] HEARTBEAT lider=2 rodada=6 sensores_ativos=1 modo=3 periodo=1000 ms
+@36203 [GW] SENSOR sensor=1 rodada=6 valor=0xAA ativo=1
+@36301 [GW] BUS_STATS t_ms=36300 win_ms=1000 frames=15 bits=1726 load=0.34 peak=2.12 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=36 xfer_err=0 own=0 untracked=0
+@36704 TEL NODE=1 CHILD=1 SEQ=26 GW_TS_MS=36703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@37202 [GW] HEARTBEAT lider=2 rodada=7 sensores_ativos=1 modo=3 periodo=1000 ms
+@37203 [GW] SENSOR sensor=1 rodada=7 valor=0xAA ativo=1
+@37301 [GW] BUS_STATS t_ms=37300 win_ms=1000 frames=11 bits=1251 load=0.25 peak=2.12 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=37 xfer_err=0 own=0 untracked=0
+@37704 TEL NODE=1 CHILD=1 SEQ=27 GW_TS_MS=37703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@38202 [GW] HEARTBEAT lider=2 rodada=8 sensores_ativos=1 modo=3 periodo=1000 ms
+@38203 [GW] SENSOR sensor=1 rodada=8 valor=0xAA ativo=1
+@38301 [GW] BUS_STATS t_ms=38300 win_ms=1000 frames=11 bits=1241 load=0.24 peak=2.10 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=38 xfer_err=0 own=0 untracked=0
+@38701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=472 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@38704 TEL NODE=1 CHILD=1 SEQ=28 GW_TS_MS=38703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@38741 [GW] ID_STATS id=0x282 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=5241000 dt_avg_us=5241000 dt_max_us=5241000
+@38781 [GW] ID_STATS id=0x283 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5241000 dt_avg_us=5241000 dt_max_us=5241000
+@38821 [GW] ID_STATS id=0x284 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=5241000 dt_avg_us=5241000 dt_max_us=5241000
+@38861 [GW] ID_STATS id=0x285 win_ms=5000 n=1 dlc=8 bits=118 dt_min_us=5241000 dt_avg_us=5241000 dt_max_us=5241000
+@39061 [GW] ID_STATS id=0x381 win_ms=5000 n=49 dlc=8 bits=5773 dt_min_us=37 dt_avg_us=102040 dt_max_us=998463
+@39202 [GW] HEARTBEAT lider=2 rodada=9 sensores_ativos=1 modo=3 periodo=1000 ms
+@39203 [GW] SENSOR sensor=1 rodada=9 valor=0xAA ativo=1
+@39301 [GW] BUS_STATS t_ms=39300 win_ms=1000 frames=11 bits=1247 load=0.24 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=39 xfer_err=0 own=0 untracked=0
+@39702 [GW] ID_STATS id=0x200 win_ms=5000 n=5 dlc=5 bits=465 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@39704 TEL NODE=1 CHILD=1 SEQ=29 GW_TS_MS=39703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@39928 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@39929 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+@40005 [STATUS TX] Requisicao global de status enviada
+@40006 [GW] CONTROLE RX 23 21 1 1
+@40006 [NODE 0] [STATUS RX] NODE 1 estado=ATIVO
+@40006 [GW] CONTROLE RX 23 21 2 0
+@40006 [NODE 0] [STATUS RX] NODE 2 estado=LIDER
+@40202 [GW] HEARTBEAT lider=2 rodada=10 sensores_ativos=1 modo=3 periodo=1000 ms
+@40203 [GW] SENSOR sensor=1 rodada=10 valor=0xAA ativo=1
+@40301 [GW] BUS_STATS t_ms=40300 win_ms=1000 frames=18 bits=1967 load=0.39 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=40 xfer_err=0 own=1 untracked=0
+@40503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=30 rx=71 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@40503 [GW] WIRELESS_ASSOC node=1 child=1 uuid=0xE6616408432B6F39 profile=VIBRATION state=ONLINE rssi=-50 protocol=6 failover=AUTO session=SECURE
+@40704 TEL NODE=1 CHILD=1 SEQ=30 GW_TS_MS=40703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@41201 [GW] ID_STATS id=0x080 win_ms=5000 n=3 dlc=4 bits=252 dt_min_us=37 dt_avg_us=3267845 dt_max_us=9802500
+@41202 [GW] HEARTBEAT lider=2 rodada=11 sensores_ativos=1 modo=3 periodo=1000 ms
+@41203 [GW] SENSOR sensor=1 rodada=11 valor=0xAA ativo=1
+@41301 [GW] BUS_STATS t_ms=41300 win_ms=1000 frames=17 bits=1964 load=0.39 peak=2.12 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=42 xfer_err=0 own=0 untracked=0
+@41704 TEL NODE=1 CHILD=1 SEQ=31 GW_TS_MS=41703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@42202 [GW] HEARTBEAT lider=2 rodada=12 sensores_ativos=1 modo=3 periodo=1000 ms
+@42203 [GW] SENSOR sensor=1 rodada=12 valor=0xAA ativo=1
+@42301 [GW] BUS_STATS t_ms=42300 win_ms=1000 frames=11 bits=1249 load=0.24 peak=2.12 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=43 xfer_err=0 own=0 untracked=0
+@42704 TEL NODE=1 CHILD=1 SEQ=32 GW_TS_MS=42703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@43202 [GW] HEARTBEAT lider=2 rodada=13 sensores_ativos=1 modo=3 periodo=1000 ms
+@43203 [GW] SENSOR sensor=1 rodada=13 valor=0xAA ativo=1
+@43301 [GW] BUS_STATS t_ms=43300 win_ms=1000 frames=11 bits=1246 load=0.24 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=44 xfer_err=0 own=0 untracked=0
+@43701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=474 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@43704 TEL NODE=1 CHILD=1 SEQ=33 GW_TS_MS=43703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@43741 [GW] ID_STATS id=0x282 win_ms=5000 n=1 dlc=8 bits=116 dt_min_us=5133000 dt_avg_us=5133000 dt_max_us=5133000
+@43781 [GW] ID_STATS id=0x283 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5133000 dt_avg_us=5133000 dt_max_us=5133000
+@43821 [GW] ID_STATS id=0x284 win_ms=5000 n=1 dlc=8 bits=117 dt_min_us=5133000 dt_avg_us=5133000 dt_max_us=5133000
+@43861 [GW] ID_STATS id=0x285 win_ms=5000 n=1 dlc=8 bits=118 dt_min_us=5133000 dt_avg_us=5133000 dt_max_us=5133000
+@43981 [GW] ID_STATS id=0x322 win_ms=5000 n=1 dlc=8 bits=116 dt_min_us=10000000 dt_avg_us=10000000 dt_max_us=10000000
+@44021 [GW] ID_STATS id=0x323 win_ms=5000 n=1 dlc=8 bits=115 dt_min_us=10000000 dt_avg_us=10000000 dt_max_us=10000000
+@44061 [GW] ID_STATS id=0x381 win_ms=5000 n=49 dlc=8 bits=5788 dt_min_us=37 dt_avg_us=102040 dt_max_us=998463
+@44202 [GW] HEARTBEAT lider=2 rodada=14 sensores_ativos=1 modo=3 periodo=1000 ms
+@44203 [GW] SENSOR sensor=1 rodada=14 valor=0xAA ativo=1
+@44301 [GW] BUS_STATS t_ms=44300 win_ms=1000 frames=11 bits=1250 load=0.25 peak=2.12 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=45 xfer_err=0 own=0 untracked=0
+@44702 [GW] ID_STATS id=0x200 win_ms=5000 n=5 dlc=5 bits=463 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@44704 TEL NODE=1 CHILD=1 SEQ=34 GW_TS_MS=44703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@45153 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@45154 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+@45202 [GW] HEARTBEAT lider=2 rodada=15 sensores_ativos=1 modo=3 periodo=1000 ms
+@45203 [GW] SENSOR sensor=1 rodada=15 valor=0xAA ativo=1
+@45301 [GW] BUS_STATS t_ms=45300 win_ms=1000 frames=15 bits=1718 load=0.34 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=46 xfer_err=0 own=0 untracked=0
+@45503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=35 rx=83 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@45704 TEL NODE=1 CHILD=1 SEQ=35 GW_TS_MS=45703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@46202 [GW] HEARTBEAT lider=2 rodada=16 sensores_ativos=1 modo=3 periodo=1000 ms
+@46203 [GW] SENSOR sensor=1 rodada=16 valor=0xAA ativo=1
+@46301 [GW] BUS_STATS t_ms=46300 win_ms=1000 frames=15 bits=1729 load=0.34 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=48 xfer_err=0 own=0 untracked=0
+@46704 TEL NODE=1 CHILD=1 SEQ=36 GW_TS_MS=46703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@47202 [GW] HEARTBEAT lider=2 rodada=17 sensores_ativos=1 modo=3 periodo=1000 ms
+@47203 [GW] SENSOR sensor=1 rodada=17 valor=0xAA ativo=1
+@47301 [GW] BUS_STATS t_ms=47300 win_ms=1000 frames=11 bits=1251 load=0.25 peak=2.12 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=49 xfer_err=0 own=0 untracked=0
+@47704 TEL NODE=1 CHILD=1 SEQ=37 GW_TS_MS=47703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@48202 [GW] HEARTBEAT lider=2 rodada=18 sensores_ativos=1 modo=3 periodo=1000 ms
+@48203 [GW] SENSOR sensor=1 rodada=18 valor=0xAA ativo=1
+@48301 [GW] BUS_STATS t_ms=48300 win_ms=1000 frames=11 bits=1243 load=0.24 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=50 xfer_err=0 own=0 untracked=0
+@48701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=470 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@48704 TEL NODE=1 CHILD=1 SEQ=38 GW_TS_MS=48703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@48741 [GW] ID_STATS id=0x282 win_ms=5000 n=1 dlc=8 bits=117 dt_min_us=5225000 dt_avg_us=5225000 dt_max_us=5225000
+@48781 [GW] ID_STATS id=0x283 win_ms=5000 n=1 dlc=8 bits=121 dt_min_us=5225000 dt_avg_us=5225000 dt_max_us=5225000
+@48821 [GW] ID_STATS id=0x284 win_ms=5000 n=1 dlc=8 bits=115 dt_min_us=5225000 dt_avg_us=5225000 dt_max_us=5225000
+@48861 [GW] ID_STATS id=0x285 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5225000 dt_avg_us=5225000 dt_max_us=5225000
+@49061 [GW] ID_STATS id=0x381 win_ms=5000 n=49 dlc=8 bits=5782 dt_min_us=37 dt_avg_us=102040 dt_max_us=998463
+@49202 [GW] HEARTBEAT lider=2 rodada=19 sensores_ativos=1 modo=3 periodo=1000 ms
+@49203 [GW] SENSOR sensor=1 rodada=19 valor=0xAA ativo=1
+@49301 [GW] BUS_STATS t_ms=49300 win_ms=1000 frames=11 bits=1248 load=0.24 peak=2.12 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=51 xfer_err=0 own=0 untracked=0
+@49702 [GW] ID_STATS id=0x200 win_ms=5000 n=5 dlc=5 bits=466 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@49704 TEL NODE=1 CHILD=1 SEQ=39 GW_TS_MS=49703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@50006 [STATUS TX] Requisicao global de status enviada
+@50007 [GW] CONTROLE RX 23 21 1 1
+@50007 [NODE 0] [STATUS RX] NODE 1 estado=ATIVO
+@50007 [GW] CONTROLE RX 23 21 2 0
+@50007 [NODE 0] [STATUS RX] NODE 2 estado=LIDER
+@50202 [GW] HEARTBEAT lider=2 rodada=20 sensores_ativos=1 modo=3 periodo=1000 ms
+@50203 [GW] SENSOR sensor=1 rodada=20 valor=0xAA ativo=1
+@50301 [GW] BUS_STATS t_ms=50300 win_ms=1000 frames=14 bits=1500 load=0.30 peak=2.12 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=52 xfer_err=0 own=1 untracked=0
+@50326 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@50327 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+@50503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=40 rx=95 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@50503 [GW] WIRELESS_ASSOC node=1 child=1 uuid=0xE6616408432B6F39 profile=VIBRATION state=ONLINE rssi=-50 protocol=6 failover=AUTO session=SECURE
+@50704 TEL NODE=1 CHILD=1 SEQ=40 GW_TS_MS=50703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@51201 [GW] ID_STATS id=0x080 win_ms=5000 n=3 dlc=4 bits=252 dt_min_us=37 dt_avg_us=3333666 dt_max_us=9999963
+@51202 [GW] HEARTBEAT lider=2 rodada=21 sensores_ativos=1 modo=3 periodo=1000 ms
+@51203 [GW] SENSOR sensor=1 rodada=21 valor=0xAA ativo=1
+@51301 [GW] BUS_STATS t_ms=51300 win_ms=1000 frames=21 bits=2428 load=0.48 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=54 xfer_err=0 own=0 untracked=0
+@51704 TEL NODE=1 CHILD=1 SEQ=41 GW_TS_MS=51703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@52202 [GW] HEARTBEAT lider=2 rodada=22 sensores_ativos=1 modo=3 periodo=1000 ms
+@52203 [GW] SENSOR sensor=1 rodada=22 valor=0xAA ativo=1
+@52301 [GW] BUS_STATS t_ms=52300 win_ms=1000 frames=11 bits=1244 load=0.24 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=55 xfer_err=0 own=0 untracked=0
+@52704 TEL NODE=1 CHILD=1 SEQ=42 GW_TS_MS=52703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@53202 [GW] HEARTBEAT lider=2 rodada=23 sensores_ativos=1 modo=3 periodo=1000 ms
+@53203 [GW] SENSOR sensor=1 rodada=23 valor=0xAA ativo=1
+@53301 [GW] BUS_STATS t_ms=53300 win_ms=1000 frames=11 bits=1245 load=0.24 peak=2.12 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=56 xfer_err=0 own=0 untracked=0
+@53701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=469 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@53704 TEL NODE=1 CHILD=1 SEQ=43 GW_TS_MS=53703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@53741 [GW] ID_STATS id=0x282 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=5173000 dt_avg_us=5173000 dt_max_us=5173000
+@53781 [GW] ID_STATS id=0x283 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5173000 dt_avg_us=5173000 dt_max_us=5173000
+@53821 [GW] ID_STATS id=0x284 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=5173000 dt_avg_us=5173000 dt_max_us=5173000
+@53861 [GW] ID_STATS id=0x285 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5173000 dt_avg_us=5173000 dt_max_us=5173000
+@53981 [GW] ID_STATS id=0x322 win_ms=5000 n=1 dlc=8 bits=117 dt_min_us=10000000 dt_avg_us=10000000 dt_max_us=10000000
+@54021 [GW] ID_STATS id=0x323 win_ms=5000 n=1 dlc=8 bits=115 dt_min_us=10000000 dt_avg_us=10000000 dt_max_us=10000000
+@54061 [GW] ID_STATS id=0x381 win_ms=5000 n=49 dlc=8 bits=5788 dt_min_us=37 dt_avg_us=102040 dt_max_us=998463
+@54202 [GW] HEARTBEAT lider=2 rodada=24 sensores_ativos=1 modo=3 periodo=1000 ms
+@54203 [GW] SENSOR sensor=1 rodada=24 valor=0xAA ativo=1
+@54301 [GW] BUS_STATS t_ms=54300 win_ms=1000 frames=11 bits=1253 load=0.25 peak=2.13 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=57 xfer_err=0 own=0 untracked=0
+@54702 [GW] ID_STATS id=0x200 win_ms=5000 n=5 dlc=5 bits=462 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@54704 TEL NODE=1 CHILD=1 SEQ=44 GW_TS_MS=54703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@55202 [GW] HEARTBEAT lider=2 rodada=25 sensores_ativos=1 modo=3 periodo=1000 ms
+@55203 [GW] SENSOR sensor=1 rodada=25 valor=0xAA ativo=1
+@55301 [GW] BUS_STATS t_ms=55300 win_ms=1000 frames=11 bits=1245 load=0.24 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=58 xfer_err=0 own=0 untracked=0
+@55479 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@55480 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+@55503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=45 rx=106 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@55704 TEL NODE=1 CHILD=1 SEQ=45 GW_TS_MS=55703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@56202 [GW] HEARTBEAT lider=2 rodada=26 sensores_ativos=1 modo=3 periodo=1000 ms
+@56203 [GW] SENSOR sensor=1 rodada=26 valor=0xAA ativo=1
+@56301 [GW] BUS_STATS t_ms=56300 win_ms=1000 frames=19 bits=2191 load=0.43 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=60 xfer_err=0 own=0 untracked=0
+@56704 TEL NODE=1 CHILD=1 SEQ=46 GW_TS_MS=56703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@57202 [GW] HEARTBEAT lider=2 rodada=27 sensores_ativos=1 modo=3 periodo=1000 ms
+@57203 [GW] SENSOR sensor=1 rodada=27 valor=0xAA ativo=1
+@57301 [GW] BUS_STATS t_ms=57300 win_ms=1000 frames=11 bits=1249 load=0.24 peak=2.12 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=61 xfer_err=0 own=0 untracked=0
+@57704 TEL NODE=1 CHILD=1 SEQ=47 GW_TS_MS=57703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@58202 [GW] HEARTBEAT lider=2 rodada=28 sensores_ativos=1 modo=3 periodo=1000 ms
+@58203 [GW] SENSOR sensor=1 rodada=28 valor=0xAA ativo=1
+@58301 [GW] BUS_STATS t_ms=58300 win_ms=1000 frames=11 bits=1241 load=0.24 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=62 xfer_err=0 own=0 untracked=0
+@58701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=466 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@58704 TEL NODE=1 CHILD=1 SEQ=48 GW_TS_MS=58703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@58741 [GW] ID_STATS id=0x282 win_ms=5000 n=1 dlc=8 bits=115 dt_min_us=5153000 dt_avg_us=5153000 dt_max_us=5153000
+@58781 [GW] ID_STATS id=0x283 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5153000 dt_avg_us=5153000 dt_max_us=5153000
+@58821 [GW] ID_STATS id=0x284 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=5153000 dt_avg_us=5153000 dt_max_us=5153000
+@58861 [GW] ID_STATS id=0x285 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5153000 dt_avg_us=5153000 dt_max_us=5153000
+@59061 [GW] ID_STATS id=0x381 win_ms=5000 n=49 dlc=8 bits=5773 dt_min_us=37 dt_avg_us=102040 dt_max_us=998463
+@59202 [GW] HEARTBEAT lider=2 rodada=29 sensores_ativos=1 modo=3 periodo=1000 ms
+@59203 [GW] SENSOR sensor=1 rodada=29 valor=0xAA ativo=1
+@59301 [GW] BUS_STATS t_ms=59300 win_ms=1000 frames=11 bits=1244 load=0.24 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=63 xfer_err=0 own=0 untracked=0
+@59702 [GW] ID_STATS id=0x200 win_ms=5000 n=5 dlc=5 bits=464 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@59704 TEL NODE=1 CHILD=1 SEQ=49 GW_TS_MS=59703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@60007 [STATUS TX] Requisicao global de status enviada
+@60008 [GW] CONTROLE RX 23 21 1 1
+@60008 [NODE 0] [STATUS RX] NODE 1 estado=ATIVO
+@60008 [GW] CONTROLE RX 23 21 2 0
+@60008 [NODE 0] [STATUS RX] NODE 2 estado=LIDER
+@60202 [GW] HEARTBEAT lider=2 rodada=30 sensores_ativos=1 modo=3 periodo=1000 ms
+@60203 [GW] SENSOR sensor=1 rodada=30 valor=0xAA ativo=1
+@60301 [GW] BUS_STATS t_ms=60300 win_ms=1000 frames=14 bits=1495 load=0.29 peak=2.11 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=64 xfer_err=0 own=1 untracked=0
+@60503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=50 rx=118 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@60503 [GW] WIRELESS_ASSOC node=1 child=1 uuid=0xE6616408432B6F39 profile=VIBRATION state=ONLINE rssi=-50 protocol=6 failover=AUTO session=SECURE
+@60620 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@60621 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+@60704 TEL NODE=1 CHILD=1 SEQ=50 GW_TS_MS=60703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@61201 [GW] ID_STATS id=0x080 win_ms=5000 n=3 dlc=4 bits=252 dt_min_us=37 dt_avg_us=3333666 dt_max_us=9999963
+@61202 [GW] HEARTBEAT lider=2 rodada=31 sensores_ativos=1 modo=3 periodo=1000 ms
+@61203 [GW] SENSOR sensor=1 rodada=31 valor=0xAA ativo=1
+@61301 [GW] BUS_STATS t_ms=61300 win_ms=1000 frames=21 bits=2435 load=0.48 peak=3.06 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=66 xfer_err=0 own=0 untracked=0
+@61704 TEL NODE=1 CHILD=1 SEQ=51 GW_TS_MS=61703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@61715 [GW] FAULT_EVENT node=3 kind=SILENCE state=ENDED duration_ms=43000 seq=1
+@61715 [STATUS] Transicao protegida ignorada para NODE 3
+@61715 [STATUS] Transicao protegida ignorada para NODE 3
+@61715 [GW] Lider observado: NODE 3
+@61715 [GW] HEARTBEAT lider=3 rodada=11 sensores_ativos=2 modo=3 periodo=1000 ms
+@61716 [GW] CONTROLE RX 23 50 2 6
+@61716 [GW] Atualizacao de status recebida: [STATUS] NODE 2 estado=CONFLITO_LIDER
+@61716 [GW] CONTROLE RX 23 50 2 1
+@61716 [GW] Atualizacao de status recebida: [STATUS] NODE 2 estado=ATIVO
+@61716 [GW] WIRELESS_CANDIDATE reporter=3 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-40 protocol=6
+@62301 [GW] BUS_STATS t_ms=62300 win_ms=1000 frames=15 bits=1677 load=0.33 peak=3.35 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=67 xfer_err=0 own=0 untracked=0
+@62704 TEL NODE=1 CHILD=1 SEQ=52 GW_TS_MS=62703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@62715 [STATUS] Transicao protegida ignorada para NODE 3
+@62715 [STATUS] Transicao protegida ignorada para NODE 3
+@62715 [GW] HEARTBEAT lider=3 rodada=12 sensores_ativos=2 modo=3 periodo=1000 ms
+@62716 [GW] SENSOR sensor=1 rodada=12 valor=0xAA ativo=1
+@62716 [STATUS TX] Requisicao global de status enviada
+@62717 [GW] CONTROLE RX 23 21 1 1
+@62717 [NODE 0] [STATUS RX] NODE 1 estado=ATIVO
+@62717 [GW] CONTROLE RX 23 21 2 1
+@62717 [NODE 0] [STATUS RX] NODE 2 estado=ATIVO
+@62717 [GW] CONTROLE RX 23 21 3 0
+@62717 [STATUS] Transicao protegida ignorada para NODE 3
+@62717 [NODE 0] [STATUS RX] NODE 3 estado=LIDER
+@63301 [GW] BUS_STATS t_ms=63300 win_ms=1000 frames=15 bits=1577 load=0.31 peak=3.15 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=68 xfer_err=0 own=1 untracked=0
+@63701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=469 dt_min_us=513037 dt_avg_us=902600 dt_max_us=1000000
+@63704 TEL NODE=1 CHILD=1 SEQ=53 GW_TS_MS=63703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@63715 [STATUS] Transicao protegida ignorada para NODE 3
+@63715 [STATUS] Transicao protegida ignorada para NODE 3
+@63715 [GW] HEARTBEAT lider=3 rodada=13 sensores_ativos=2 modo=3 periodo=1000 ms
+@63716 [GW] SENSOR sensor=2 rodada=13 valor=0xAA ativo=1
+@63741 [GW] ID_STATS id=0x282 win_ms=5000 n=1 dlc=8 bits=117 dt_min_us=5141000 dt_avg_us=5141000 dt_max_us=5141000
+@63781 [GW] ID_STATS id=0x283 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5141000 dt_avg_us=5141000 dt_max_us=5141000
+@63821 [GW] ID_STATS id=0x284 win_ms=5000 n=1 dlc=8 bits=116 dt_min_us=5141000 dt_avg_us=5141000 dt_max_us=5141000
+@63861 [GW] ID_STATS id=0x285 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5141000 dt_avg_us=5141000 dt_max_us=5141000
+@63941 [GW] ID_STATS id=0x306 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=42999500 dt_avg_us=42999500 dt_max_us=42999500
+@63981 [GW] ID_STATS id=0x322 win_ms=5000 n=1 dlc=8 bits=115 dt_min_us=10000000 dt_avg_us=10000000 dt_max_us=10000000
+@64021 [GW] ID_STATS id=0x323 win_ms=5000 n=1 dlc=8 bits=116 dt_min_us=10000000 dt_avg_us=10000000 dt_max_us=10000000
+@64061 [GW] ID_STATS id=0x381 win_ms=5000 n=49 dlc=8 bits=5787 dt_min_us=37 dt_avg_us=102040 dt_max_us=998463
+@64301 [GW] BUS_STATS t_ms=64300 win_ms=1000 frames=11 bits=1250 load=0.25 peak=2.50 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=69 xfer_err=0 own=0 untracked=0
+@64702 [GW] ID_STATS id=0x200 win_ms=5000 n=4 dlc=5 bits=370 dt_min_us=1000000 dt_avg_us=1128250 dt_max_us=1513000
+@64704 TEL NODE=1 CHILD=1 SEQ=54 GW_TS_MS=64703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@64715 [STATUS] Transicao protegida ignorada para NODE 3
+@64715 [STATUS] Transicao protegida ignorada para NODE 3
+@64715 [GW] HEARTBEAT lider=3 rodada=14 sensores_ativos=2 modo=3 periodo=1000 ms
+@64716 [GW] SENSOR sensor=1 rodada=14 valor=0xAA ativo=1
+@65301 [GW] BUS_STATS t_ms=65300 win_ms=1000 frames=11 bits=1242 load=0.24 peak=2.48 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=70 xfer_err=0 own=0 untracked=0
+@65503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=55 rx=130 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@65704 TEL NODE=1 CHILD=1 SEQ=55 GW_TS_MS=65703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@65715 [STATUS] Transicao protegida ignorada para NODE 3
+@65715 [STATUS] Transicao protegida ignorada para NODE 3
+@65715 [GW] HEARTBEAT lider=3 rodada=15 sensores_ativos=2 modo=3 periodo=1000 ms
+@65716 [GW] SENSOR sensor=2 rodada=15 valor=0xAA ativo=1
+@65749 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@65750 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+@65772 [GW] ID_STATS id=0x286 win_ms=5000 n=1 dlc=8 bits=115 dt_min_us=45726074 dt_avg_us=45726074 dt_max_us=45726074
+@65812 [GW] ID_STATS id=0x287 win_ms=5000 n=1 dlc=8 bits=118 dt_min_us=45726537 dt_avg_us=45726537 dt_max_us=45726537
+@66201 [GW] ID_STATS id=0x080 win_ms=5000 n=6 dlc=4 bits=503 dt_min_us=37 dt_avg_us=451506 dt_max_us=1707963
+@66301 [GW] BUS_STATS t_ms=66300 win_ms=1000 frames=19 bits=2201 load=0.44 peak=3.43 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=72 xfer_err=0 own=0 untracked=0
+@66704 TEL NODE=1 CHILD=1 SEQ=56 GW_TS_MS=66703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@66715 [STATUS] Transicao protegida ignorada para NODE 3
+@66715 [STATUS] Transicao protegida ignorada para NODE 3
+@66715 [GW] HEARTBEAT lider=3 rodada=16 sensores_ativos=2 modo=3 periodo=1000 ms
+@66716 [GW] SENSOR sensor=1 rodada=16 valor=0xAA ativo=1
+@66774 [GW] WIRELESS_CANDIDATE reporter=3 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-40 protocol=6
+@67301 [GW] BUS_STATS t_ms=67300 win_ms=1000 frames=13 bits=1486 load=0.29 peak=2.97 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=73 xfer_err=0 own=0 untracked=0
+@67704 TEL NODE=1 CHILD=1 SEQ=57 GW_TS_MS=67703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@67715 [STATUS] Transicao protegida ignorada para NODE 3
+@67715 [STATUS] Transicao protegida ignorada para NODE 3
+@67715 [GW] HEARTBEAT lider=3 rodada=17 sensores_ativos=2 modo=3 periodo=1000 ms
+@67716 [GW] SENSOR sensor=2 rodada=17 valor=0xAA ativo=1
+@68301 [GW] BUS_STATS t_ms=68300 win_ms=1000 frames=11 bits=1244 load=0.24 peak=2.48 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=74 xfer_err=0 own=0 untracked=0
+@68701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=469 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@68704 TEL NODE=1 CHILD=1 SEQ=58 GW_TS_MS=68703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@68715 [STATUS] Transicao protegida ignorada para NODE 3
+@68715 [STATUS] Transicao protegida ignorada para NODE 3
+@68715 [GW] HEARTBEAT lider=3 rodada=18 sensores_ativos=2 modo=3 periodo=1000 ms
+@68716 [GW] SENSOR sensor=1 rodada=18 valor=0xAA ativo=1
+@68741 [GW] ID_STATS id=0x282 win_ms=5000 n=1 dlc=8 bits=115 dt_min_us=5129000 dt_avg_us=5129000 dt_max_us=5129000
+@68781 [GW] ID_STATS id=0x283 win_ms=5000 n=1 dlc=8 bits=120 dt_min_us=5129000 dt_avg_us=5129000 dt_max_us=5129000
+@68821 [GW] ID_STATS id=0x284 win_ms=5000 n=1 dlc=8 bits=116 dt_min_us=5129000 dt_avg_us=5129000 dt_max_us=5129000
+@68861 [GW] ID_STATS id=0x285 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5129000 dt_avg_us=5129000 dt_max_us=5129000
+@69061 [GW] ID_STATS id=0x381 win_ms=5000 n=49 dlc=8 bits=5784 dt_min_us=37 dt_avg_us=102040 dt_max_us=998463
+@69301 [GW] BUS_STATS t_ms=69300 win_ms=1000 frames=11 bits=1248 load=0.24 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=75 xfer_err=0 own=0 untracked=0
+@69702 [GW] ID_STATS id=0x200 win_ms=5000 n=5 dlc=5 bits=466 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@69704 TEL NODE=1 CHILD=1 SEQ=59 GW_TS_MS=69703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@69715 [STATUS] Transicao protegida ignorada para NODE 3
+@69715 [STATUS] Transicao protegida ignorada para NODE 3
+@69715 [GW] HEARTBEAT lider=3 rodada=19 sensores_ativos=2 modo=3 periodo=1000 ms
+@69716 [GW] SENSOR sensor=2 rodada=19 valor=0xAA ativo=1
+@70301 [GW] BUS_STATS t_ms=70300 win_ms=1000 frames=11 bits=1245 load=0.24 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=76 xfer_err=0 own=0 untracked=0
+@70503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=60 rx=141 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@70503 [GW] WIRELESS_ASSOC node=1 child=1 uuid=0xE6616408432B6F39 profile=VIBRATION state=ONLINE rssi=-50 protocol=6 failover=AUTO session=SECURE
+@70704 TEL NODE=1 CHILD=1 SEQ=60 GW_TS_MS=70703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@70715 [STATUS] Transicao protegida ignorada para NODE 3
+@70715 [STATUS] Transicao protegida ignorada para NODE 3
+@70715 [GW] HEARTBEAT lider=3 rodada=20 sensores_ativos=2 modo=3 periodo=1000 ms
+@70716 [GW] SENSOR sensor=1 rodada=20 valor=0xAA ativo=1
+@70772 [GW] ID_STATS id=0x286 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=5058926 dt_avg_us=5058926 dt_max_us=5058926
+@70812 [GW] ID_STATS id=0x287 win_ms=5000 n=1 dlc=8 bits=118 dt_min_us=5058463 dt_avg_us=5058463 dt_max_us=5058463
+@71010 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@71011 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+@71301 [GW] BUS_STATS t_ms=71300 win_ms=1000 frames=21 bits=2428 load=0.48 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=78 xfer_err=0 own=0 untracked=0
+@71704 TEL NODE=1 CHILD=1 SEQ=61 GW_TS_MS=71703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@71715 [STATUS] Transicao protegida ignorada para NODE 3
+@71715 [STATUS] Transicao protegida ignorada para NODE 3
+@71715 [GW] HEARTBEAT lider=3 rodada=21 sensores_ativos=2 modo=3 periodo=1000 ms
+@71716 [GW] SENSOR sensor=2 rodada=21 valor=0xAA ativo=1
+@72071 [GW] WIRELESS_CANDIDATE reporter=3 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-40 protocol=6
+@72301 [GW] BUS_STATS t_ms=72300 win_ms=1000 frames=13 bits=1475 load=0.29 peak=2.48 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=79 xfer_err=0 own=0 untracked=0
+@72704 TEL NODE=1 CHILD=1 SEQ=62 GW_TS_MS=72703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@72715 [STATUS] Transicao protegida ignorada para NODE 3
+@72715 [STATUS] Transicao protegida ignorada para NODE 3
+@72715 [GW] HEARTBEAT lider=3 rodada=22 sensores_ativos=2 modo=3 periodo=1000 ms
+@72716 [GW] SENSOR sensor=1 rodada=22 valor=0xAA ativo=1
+@72717 [STATUS TX] Requisicao global de status enviada
+@72718 [GW] CONTROLE RX 23 21 1 1
+@72718 [NODE 0] [STATUS RX] NODE 1 estado=ATIVO
+@72718 [GW] CONTROLE RX 23 21 2 1
+@72718 [NODE 0] [STATUS RX] NODE 2 estado=ATIVO
+@72718 [GW] CONTROLE RX 23 21 3 0
+@72718 [STATUS] Transicao protegida ignorada para NODE 3
+@72718 [NODE 0] [STATUS RX] NODE 3 estado=LIDER
+@73301 [GW] BUS_STATS t_ms=73300 win_ms=1000 frames=15 bits=1579 load=0.31 peak=3.15 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=18 xfer_ok=80 xfer_err=0 own=1 untracked=0
+@73701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=466 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@73704 TEL NODE=1 CHILD=1 SEQ=63 GW_TS_MS=73703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@73715 [STATUS] Transicao protegida ignorada para NODE 3
+@73715 [STATUS] Transicao protegida ignorada para NODE 3
+@73715 [GW] HEARTBEAT lider=3 rodada=23 sensores_ativos=2 modo=3 periodo=1000 ms
+@73716 [GW] SENSOR sensor=2 rodada=23 valor=0xAA ativo=1
+@73741 [GW] ID_STATS id=0x282 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=5261000 dt_avg_us=5261000 dt_max_us=5261000
+@73781 [GW] ID_STATS id=0x283 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5261000 dt_avg_us=5261000 dt_max_us=5261000
+@73821 [GW] ID_STATS id=0x284 win_ms=5000 n=1 dlc=8 bits=116 dt_min_us=5261000 dt_avg_us=5261000 dt_max_us=5261000
+@73861 [GW] ID_STATS id=0x285 win_ms=5000 n=1 dlc=8 bits=118 dt_min_us=5261000 dt_avg_us=5261000 dt_max_us=5261000
+@73981 [GW] ID_STATS id=0x322 win_ms=5000 n=1 dlc=8 bits=115 dt_min_us=10000000 dt_avg_us=10000000 dt_max_us=10000000
+@74021 [GW] ID_STATS id=0x323 win_ms=5000 n=1 dlc=8 bits=115 dt_min_us=10000000 dt_avg_us=10000000 dt_max_us=10000000
+@74061 [GW] ID_STATS id=0x381 win_ms=5000 n=49 dlc=8 bits=5790 dt_min_us=37 dt_avg_us=102040 dt_max_us=998463
+@74301 [GW] BUS_STATS t_ms=74300 win_ms=1000 frames=11 bits=1253 load=0.25 peak=2.50 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=81 xfer_err=0 own=0 untracked=0
+@74702 [GW] ID_STATS id=0x200 win_ms=5000 n=5 dlc=5 bits=462 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@74704 TEL NODE=1 CHILD=1 SEQ=64 GW_TS_MS=74703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@74715 [STATUS] Transicao protegida ignorada para NODE 3
+@74715 [STATUS] Transicao protegida ignorada para NODE 3
+@74715 [GW] HEARTBEAT lider=3 rodada=24 sensores_ativos=2 modo=3 periodo=1000 ms
+@74716 [GW] SENSOR sensor=1 rodada=24 valor=0xAA ativo=1
+@75301 [GW] BUS_STATS t_ms=75300 win_ms=1000 frames=11 bits=1247 load=0.24 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=82 xfer_err=0 own=0 untracked=0
+@75503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=65 rx=153 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@75704 TEL NODE=1 CHILD=1 SEQ=65 GW_TS_MS=75703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@75715 [STATUS] Transicao protegida ignorada para NODE 3
+@75715 [STATUS] Transicao protegida ignorada para NODE 3
+@75715 [GW] HEARTBEAT lider=3 rodada=25 sensores_ativos=2 modo=3 periodo=1000 ms
+@75716 [GW] SENSOR sensor=2 rodada=25 valor=0xAA ativo=1
+@75772 [GW] ID_STATS id=0x286 win_ms=5000 n=1 dlc=8 bits=113 dt_min_us=5297000 dt_avg_us=5297000 dt_max_us=5297000
+@75812 [GW] ID_STATS id=0x287 win_ms=5000 n=1 dlc=8 bits=118 dt_min_us=5297000 dt_avg_us=5297000 dt_max_us=5297000
+@76195 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@76196 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+@76201 [GW] ID_STATS id=0x080 win_ms=5000 n=4 dlc=4 bits=334 dt_min_us=37 dt_avg_us=2500250 dt_max_us=9999926
+@76301 [GW] BUS_STATS t_ms=76300 win_ms=1000 frames=19 bits=2190 load=0.43 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=84 xfer_err=0 own=0 untracked=0
+@76704 TEL NODE=1 CHILD=1 SEQ=66 GW_TS_MS=76703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@76715 [STATUS] Transicao protegida ignorada para NODE 3
+@76715 [STATUS] Transicao protegida ignorada para NODE 3
+@76715 [GW] HEARTBEAT lider=3 rodada=26 sensores_ativos=2 modo=3 periodo=1000 ms
+@76716 [GW] SENSOR sensor=1 rodada=26 valor=0xAA ativo=1
+@77268 [GW] WIRELESS_CANDIDATE reporter=3 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-40 protocol=6
+@77301 [GW] BUS_STATS t_ms=77300 win_ms=1000 frames=13 bits=1479 load=0.29 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=85 xfer_err=0 own=0 untracked=0
+@77704 TEL NODE=1 CHILD=1 SEQ=67 GW_TS_MS=77703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@77715 [STATUS] Transicao protegida ignorada para NODE 3
+@77715 [STATUS] Transicao protegida ignorada para NODE 3
+@77715 [GW] HEARTBEAT lider=3 rodada=27 sensores_ativos=2 modo=3 periodo=1000 ms
+@77716 [GW] SENSOR sensor=2 rodada=27 valor=0xAA ativo=1
+@78301 [GW] BUS_STATS t_ms=78300 win_ms=1000 frames=11 bits=1240 load=0.24 peak=2.48 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=86 xfer_err=0 own=0 untracked=0
+@78701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=467 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@78704 TEL NODE=1 CHILD=1 SEQ=68 GW_TS_MS=78703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@78715 [STATUS] Transicao protegida ignorada para NODE 3
+@78715 [STATUS] Transicao protegida ignorada para NODE 3
+@78715 [GW] HEARTBEAT lider=3 rodada=28 sensores_ativos=2 modo=3 periodo=1000 ms
+@78716 [GW] SENSOR sensor=1 rodada=28 valor=0xAA ativo=1
+@78741 [GW] ID_STATS id=0x282 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=5185000 dt_avg_us=5185000 dt_max_us=5185000
+@78781 [GW] ID_STATS id=0x283 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5185000 dt_avg_us=5185000 dt_max_us=5185000
+@78821 [GW] ID_STATS id=0x284 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=5185000 dt_avg_us=5185000 dt_max_us=5185000
+@78861 [GW] ID_STATS id=0x285 win_ms=5000 n=1 dlc=8 bits=118 dt_min_us=5185000 dt_avg_us=5185000 dt_max_us=5185000
+@79061 [GW] ID_STATS id=0x381 win_ms=5000 n=49 dlc=8 bits=5772 dt_min_us=37 dt_avg_us=102040 dt_max_us=998463
+@79301 [GW] BUS_STATS t_ms=79300 win_ms=1000 frames=11 bits=1245 load=0.24 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=87 xfer_err=0 own=0 untracked=0
+@79702 [GW] ID_STATS id=0x200 win_ms=5000 n=5 dlc=5 bits=464 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@79704 TEL NODE=1 CHILD=1 SEQ=69 GW_TS_MS=79703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@79715 [STATUS] Transicao protegida ignorada para NODE 3
+@79715 [STATUS] Transicao protegida ignorada para NODE 3
+@79715 [GW] HEARTBEAT lider=3 rodada=29 sensores_ativos=2 modo=3 periodo=1000 ms
+@79716 [GW] SENSOR sensor=2 rodada=29 valor=0xAA ativo=1
+@80301 [GW] BUS_STATS t_ms=80300 win_ms=1000 frames=11 bits=1245 load=0.24 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=88 xfer_err=0 own=0 untracked=0
+@80503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=70 rx=165 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@80503 [GW] WIRELESS_ASSOC node=1 child=1 uuid=0xE6616408432B6F39 profile=VIBRATION state=ONLINE rssi=-50 protocol=6 failover=AUTO session=SECURE
+@80704 TEL NODE=1 CHILD=1 SEQ=70 GW_TS_MS=80703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@80715 [STATUS] Transicao protegida ignorada para NODE 3
+@80715 [STATUS] Transicao protegida ignorada para NODE 3
+@80715 [GW] HEARTBEAT lider=3 rodada=30 sensores_ativos=2 modo=3 periodo=1000 ms
+@80716 [GW] SENSOR sensor=1 rodada=30 valor=0xAA ativo=1
+@80772 [GW] ID_STATS id=0x286 win_ms=5000 n=1 dlc=8 bits=113 dt_min_us=5197000 dt_avg_us=5197000 dt_max_us=5197000
+@80812 [GW] ID_STATS id=0x287 win_ms=5000 n=1 dlc=8 bits=118 dt_min_us=5197000 dt_avg_us=5197000 dt_max_us=5197000
+@81301 [GW] BUS_STATS t_ms=81300 win_ms=1000 frames=17 bits=1961 load=0.39 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=90 xfer_err=0 own=0 untracked=0
+@81416 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@81417 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+@81704 TEL NODE=1 CHILD=1 SEQ=71 GW_TS_MS=81703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@81715 [STATUS] Transicao protegida ignorada para NODE 3
+@81715 [STATUS] Transicao protegida ignorada para NODE 3
+@81715 [GW] HEARTBEAT lider=3 rodada=31 sensores_ativos=2 modo=3 periodo=1000 ms
+@81716 [GW] SENSOR sensor=2 rodada=31 valor=0xAA ativo=1
+@82301 [GW] BUS_STATS t_ms=82300 win_ms=1000 frames=15 bits=1720 load=0.34 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=91 xfer_err=0 own=0 untracked=0
+@82469 [GW] WIRELESS_CANDIDATE reporter=3 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-40 protocol=6
+@82704 TEL NODE=1 CHILD=1 SEQ=72 GW_TS_MS=82703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@82715 [STATUS] Transicao protegida ignorada para NODE 3
+@82715 [STATUS] Transicao protegida ignorada para NODE 3
+@82715 [GW] HEARTBEAT lider=3 rodada=32 sensores_ativos=2 modo=3 periodo=1000 ms
+@82716 [GW] SENSOR sensor=1 rodada=32 valor=0xAA ativo=1
+@82718 [STATUS TX] Requisicao global de status enviada
+@82719 [GW] CONTROLE RX 23 21 1 1
+@82719 [NODE 0] [STATUS RX] NODE 1 estado=ATIVO
+@82719 [GW] CONTROLE RX 23 21 2 1
+@82719 [NODE 0] [STATUS RX] NODE 2 estado=ATIVO
+@82719 [GW] CONTROLE RX 23 21 3 0
+@82719 [STATUS] Transicao protegida ignorada para NODE 3
+@82719 [NODE 0] [STATUS RX] NODE 3 estado=LIDER
+@83301 [GW] BUS_STATS t_ms=83300 win_ms=1000 frames=17 bits=1811 load=0.36 peak=3.15 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=16 xfer_ok=92 xfer_err=0 own=1 untracked=0
+@83701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=470 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@83704 TEL NODE=1 CHILD=1 SEQ=73 GW_TS_MS=83703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@83715 [STATUS] Transicao protegida ignorada para NODE 3
+@83715 [STATUS] Transicao protegida ignorada para NODE 3
+@83715 [GW] HEARTBEAT lider=3 rodada=33 sensores_ativos=2 modo=3 periodo=1000 ms
+@83716 [GW] SENSOR sensor=2 rodada=33 valor=0xAA ativo=1
+@83741 [GW] ID_STATS id=0x282 win_ms=5000 n=1 dlc=8 bits=117 dt_min_us=5221000 dt_avg_us=5221000 dt_max_us=5221000
+@83781 [GW] ID_STATS id=0x283 win_ms=5000 n=1 dlc=8 bits=120 dt_min_us=5221000 dt_avg_us=5221000 dt_max_us=5221000
+@83821 [GW] ID_STATS id=0x284 win_ms=5000 n=1 dlc=8 bits=117 dt_min_us=5221000 dt_avg_us=5221000 dt_max_us=5221000
+@83861 [GW] ID_STATS id=0x285 win_ms=5000 n=1 dlc=8 bits=118 dt_min_us=5221000 dt_avg_us=5221000 dt_max_us=5221000
+@83981 [GW] ID_STATS id=0x322 win_ms=5000 n=1 dlc=8 bits=116 dt_min_us=10000000 dt_avg_us=10000000 dt_max_us=10000000
+@84021 [GW] ID_STATS id=0x323 win_ms=5000 n=1 dlc=8 bits=115 dt_min_us=10000000 dt_avg_us=10000000 dt_max_us=10000000
+@84061 [GW] ID_STATS id=0x381 win_ms=5000 n=49 dlc=8 bits=5784 dt_min_us=37 dt_avg_us=102040 dt_max_us=998463
+@84301 [GW] BUS_STATS t_ms=84300 win_ms=1000 frames=11 bits=1250 load=0.25 peak=2.50 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=15 xfer_ok=93 xfer_err=0 own=0 untracked=0
+@84702 [GW] ID_STATS id=0x200 win_ms=5000 n=5 dlc=5 bits=465 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@84704 TEL NODE=1 CHILD=1 SEQ=74 GW_TS_MS=84703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@84715 [STATUS] Transicao protegida ignorada para NODE 3
+@84715 [STATUS] Transicao protegida ignorada para NODE 3
+@84715 [GW] HEARTBEAT lider=3 rodada=34 sensores_ativos=2 modo=3 periodo=1000 ms
+@84716 [GW] SENSOR sensor=1 rodada=34 valor=0xAA ativo=1
+@85301 [GW] BUS_STATS t_ms=85300 win_ms=1000 frames=11 bits=1241 load=0.24 peak=2.48 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=15 xfer_ok=94 xfer_err=0 own=0 untracked=0
+@85503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=75 rx=176 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@85704 TEL NODE=1 CHILD=1 SEQ=75 GW_TS_MS=85703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@85715 [STATUS] Transicao protegida ignorada para NODE 3
+@85715 [STATUS] Transicao protegida ignorada para NODE 3
+@85715 [GW] HEARTBEAT lider=3 rodada=35 sensores_ativos=2 modo=3 periodo=1000 ms
+@85716 [GW] SENSOR sensor=2 rodada=35 valor=0xAA ativo=1
+@85772 [GW] ID_STATS id=0x286 win_ms=5000 n=1 dlc=8 bits=115 dt_min_us=5201000 dt_avg_us=5201000 dt_max_us=5201000
+@85812 [GW] ID_STATS id=0x287 win_ms=5000 n=1 dlc=8 bits=118 dt_min_us=5201000 dt_avg_us=5201000 dt_max_us=5201000
+@86201 [GW] ID_STATS id=0x080 win_ms=5000 n=4 dlc=4 bits=334 dt_min_us=37 dt_avg_us=2500250 dt_max_us=9999926
+@86301 [GW] BUS_STATS t_ms=86300 win_ms=1000 frames=15 bits=1725 load=0.34 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=14 xfer_ok=96 xfer_err=0 own=0 untracked=0
+@86593 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@86594 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+@86704 TEL NODE=1 CHILD=1 SEQ=76 GW_TS_MS=86703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@86715 [STATUS] Transicao protegida ignorada para NODE 3
+@86715 [STATUS] Transicao protegida ignorada para NODE 3
+@86715 [GW] HEARTBEAT lider=3 rodada=36 sensores_ativos=2 modo=3 periodo=1000 ms
+@86716 [GW] SENSOR sensor=1 rodada=36 valor=0xAA ativo=1
+@87301 [GW] BUS_STATS t_ms=87300 win_ms=1000 frames=15 bits=1721 load=0.34 peak=2.50 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=14 xfer_ok=97 xfer_err=0 own=0 untracked=0
+@87666 [GW] WIRELESS_CANDIDATE reporter=3 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-40 protocol=6
+@87704 TEL NODE=1 CHILD=1 SEQ=77 GW_TS_MS=87703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@87715 [STATUS] Transicao protegida ignorada para NODE 3
+@87715 [STATUS] Transicao protegida ignorada para NODE 3
+@87715 [GW] HEARTBEAT lider=3 rodada=37 sensores_ativos=2 modo=3 periodo=1000 ms
+@87716 [GW] SENSOR sensor=2 rodada=37 valor=0xAA ativo=1
+@88301 [GW] BUS_STATS t_ms=88300 win_ms=1000 frames=13 bits=1477 load=0.29 peak=2.95 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=14 xfer_ok=98 xfer_err=0 own=0 untracked=0
+@88701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=467 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@88704 TEL NODE=1 CHILD=1 SEQ=78 GW_TS_MS=88703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@88715 [STATUS] Transicao protegida ignorada para NODE 3
+@88715 [STATUS] Transicao protegida ignorada para NODE 3
+@88715 [GW] HEARTBEAT lider=3 rodada=38 sensores_ativos=2 modo=3 periodo=1000 ms
+@88716 [GW] SENSOR sensor=1 rodada=38 valor=0xAA ativo=1
+@88741 [GW] ID_STATS id=0x282 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=5177000 dt_avg_us=5177000 dt_max_us=5177000
+@88781 [GW] ID_STATS id=0x283 win_ms=5000 n=1 dlc=8 bits=121 dt_min_us=5177000 dt_avg_us=5177000 dt_max_us=5177000
+@88821 [GW] ID_STATS id=0x284 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=5177000 dt_avg_us=5177000 dt_max_us=5177000
+@88861 [GW] ID_STATS id=0x285 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5177000 dt_avg_us=5177000 dt_max_us=5177000
+@89061 [GW] ID_STATS id=0x381 win_ms=5000 n=49 dlc=8 bits=5780 dt_min_us=37 dt_avg_us=102040 dt_max_us=998463
+@89301 [GW] BUS_STATS t_ms=89300 win_ms=1000 frames=11 bits=1250 load=0.25 peak=2.50 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=14 xfer_ok=99 xfer_err=0 own=0 untracked=0
+@89702 [GW] ID_STATS id=0x200 win_ms=5000 n=5 dlc=5 bits=464 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@89704 TEL NODE=1 CHILD=1 SEQ=79 GW_TS_MS=89703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@89715 [STATUS] Transicao protegida ignorada para NODE 3
+@89715 [STATUS] Transicao protegida ignorada para NODE 3
+@89715 [GW] HEARTBEAT lider=3 rodada=39 sensores_ativos=2 modo=3 periodo=1000 ms
+@89716 [GW] SENSOR sensor=2 rodada=39 valor=0xAA ativo=1
+@90301 [GW] BUS_STATS t_ms=90300 win_ms=1000 frames=11 bits=1243 load=0.24 peak=2.48 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=14 xfer_ok=100 xfer_err=0 own=0 untracked=0
+@90503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=80 rx=188 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@90503 [GW] WIRELESS_ASSOC node=1 child=1 uuid=0xE6616408432B6F39 profile=VIBRATION state=ONLINE rssi=-50 protocol=6 failover=AUTO session=SECURE
+@90704 TEL NODE=1 CHILD=1 SEQ=80 GW_TS_MS=90703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@90715 [STATUS] Transicao protegida ignorada para NODE 3
+@90715 [STATUS] Transicao protegida ignorada para NODE 3
+@90715 [GW] HEARTBEAT lider=3 rodada=40 sensores_ativos=2 modo=3 periodo=1000 ms
+@90716 [GW] SENSOR sensor=1 rodada=40 valor=0xAA ativo=1
+@90772 [GW] ID_STATS id=0x286 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=5197000 dt_avg_us=5197000 dt_max_us=5197000
+@90812 [GW] ID_STATS id=0x287 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5197000 dt_avg_us=5197000 dt_max_us=5197000
+@91301 [GW] BUS_STATS t_ms=91300 win_ms=1000 frames=17 bits=1961 load=0.39 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=14 xfer_ok=102 xfer_err=0 own=0 untracked=0
+@91704 TEL NODE=1 CHILD=1 SEQ=81 GW_TS_MS=91703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@91715 [STATUS] Transicao protegida ignorada para NODE 3
+@91715 [STATUS] Transicao protegida ignorada para NODE 3
+@91715 [GW] HEARTBEAT lider=3 rodada=41 sensores_ativos=2 modo=3 periodo=1000 ms
+@91716 [GW] SENSOR sensor=2 rodada=41 valor=0xAA ativo=1
+@91806 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@91807 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+@92301 [GW] BUS_STATS t_ms=92300 win_ms=1000 frames=15 bits=1712 load=0.34 peak=2.48 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=14 xfer_ok=103 xfer_err=0 own=0 untracked=0
+@92704 TEL NODE=1 CHILD=1 SEQ=82 GW_TS_MS=92703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@92715 [STATUS] Transicao protegida ignorada para NODE 3
+@92715 [STATUS] Transicao protegida ignorada para NODE 3
+@92715 [GW] HEARTBEAT lider=3 rodada=42 sensores_ativos=2 modo=3 periodo=1000 ms
+@92716 [GW] SENSOR sensor=1 rodada=42 valor=0xAA ativo=1
+@92719 [STATUS TX] Requisicao global de status enviada
+@92720 [GW] CONTROLE RX 23 21 1 1
+@92720 [NODE 0] [STATUS RX] NODE 1 estado=ATIVO
+@92720 [GW] CONTROLE RX 23 21 2 1
+@92720 [NODE 0] [STATUS RX] NODE 2 estado=ATIVO
+@92720 [GW] CONTROLE RX 23 21 3 0
+@92720 [STATUS] Transicao protegida ignorada para NODE 3
+@92720 [NODE 0] [STATUS RX] NODE 3 estado=LIDER
+@92875 [GW] WIRELESS_CANDIDATE reporter=3 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-40 protocol=6
+@93301 [GW] BUS_STATS t_ms=93300 win_ms=1000 frames=17 bits=1809 load=0.36 peak=3.15 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=13 xfer_ok=104 xfer_err=0 own=1 untracked=0
+@93701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=470 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@93704 TEL NODE=1 CHILD=1 SEQ=83 GW_TS_MS=93703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@93715 [STATUS] Transicao protegida ignorada para NODE 3
+@93715 [STATUS] Transicao protegida ignorada para NODE 3
+@93715 [GW] HEARTBEAT lider=3 rodada=43 sensores_ativos=2 modo=3 periodo=1000 ms
+@93716 [GW] SENSOR sensor=2 rodada=43 valor=0xAA ativo=1
+@93741 [GW] ID_STATS id=0x282 win_ms=5000 n=1 dlc=8 bits=115 dt_min_us=5213000 dt_avg_us=5213000 dt_max_us=5213000
+@93781 [GW] ID_STATS id=0x283 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5213000 dt_avg_us=5213000 dt_max_us=5213000
+@93821 [GW] ID_STATS id=0x284 win_ms=5000 n=1 dlc=8 bits=116 dt_min_us=5213000 dt_avg_us=5213000 dt_max_us=5213000
+@93861 [GW] ID_STATS id=0x285 win_ms=5000 n=1 dlc=8 bits=118 dt_min_us=5213000 dt_avg_us=5213000 dt_max_us=5213000
+@93981 [GW] ID_STATS id=0x322 win_ms=5000 n=1 dlc=8 bits=116 dt_min_us=10000000 dt_avg_us=10000000 dt_max_us=10000000
+@94021 [GW] ID_STATS id=0x323 win_ms=5000 n=1 dlc=8 bits=114 dt_min_us=10000000 dt_avg_us=10000000 dt_max_us=10000000
+@94061 [GW] ID_STATS id=0x381 win_ms=5000 n=49 dlc=8 bits=5785 dt_min_us=37 dt_avg_us=102040 dt_max_us=998463
+@94301 [GW] BUS_STATS t_ms=94300 win_ms=1000 frames=11 bits=1255 load=0.25 peak=2.51 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=13 xfer_ok=105 xfer_err=0 own=0 untracked=0
+@94702 [GW] ID_STATS id=0x200 win_ms=5000 n=5 dlc=5 bits=463 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@94704 TEL NODE=1 CHILD=1 SEQ=84 GW_TS_MS=94703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@94715 [STATUS] Transicao protegida ignorada para NODE 3
+@94715 [STATUS] Transicao protegida ignorada para NODE 3
+@94715 [GW] HEARTBEAT lider=3 rodada=44 sensores_ativos=2 modo=3 periodo=1000 ms
+@94716 [GW] SENSOR sensor=1 rodada=44 valor=0xAA ativo=1
+@95301 [GW] BUS_STATS t_ms=95300 win_ms=1000 frames=11 bits=1244 load=0.24 peak=2.48 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=13 xfer_ok=106 xfer_err=0 own=0 untracked=0
+@95503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=85 rx=200 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@95704 TEL NODE=1 CHILD=1 SEQ=85 GW_TS_MS=95703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@95715 [STATUS] Transicao protegida ignorada para NODE 3
+@95715 [STATUS] Transicao protegida ignorada para NODE 3
+@95715 [GW] HEARTBEAT lider=3 rodada=45 sensores_ativos=2 modo=3 periodo=1000 ms
+@95716 [GW] SENSOR sensor=2 rodada=45 valor=0xAA ativo=1
+@95772 [GW] ID_STATS id=0x286 win_ms=5000 n=1 dlc=8 bits=113 dt_min_us=5209000 dt_avg_us=5209000 dt_max_us=5209000
+@95812 [GW] ID_STATS id=0x287 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5209000 dt_avg_us=5209000 dt_max_us=5209000
+@96201 [GW] ID_STATS id=0x080 win_ms=5000 n=4 dlc=4 bits=334 dt_min_us=37 dt_avg_us=2500250 dt_max_us=9999926
+@96301 [GW] BUS_STATS t_ms=96300 win_ms=1000 frames=15 bits=1726 load=0.34 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=13 xfer_ok=108 xfer_err=0 own=0 untracked=0
+@96704 TEL NODE=1 CHILD=1 SEQ=86 GW_TS_MS=96703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@96715 [STATUS] Transicao protegida ignorada para NODE 3
+@96715 [STATUS] Transicao protegida ignorada para NODE 3
+@96715 [GW] HEARTBEAT lider=3 rodada=46 sensores_ativos=2 modo=3 periodo=1000 ms
+@96716 [GW] SENSOR sensor=1 rodada=46 valor=0xAA ativo=1
+@97047 [GW] WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-50 protocol=6
+@97048 [GW] WIRELESS_CANDIDATE reporter=2 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-68 protocol=6
+@97301 [GW] BUS_STATS t_ms=97300 win_ms=1000 frames=15 bits=1718 load=0.34 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=13 xfer_ok=109 xfer_err=0 own=0 untracked=0
+@97704 TEL NODE=1 CHILD=1 SEQ=87 GW_TS_MS=97703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.12000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@97715 [STATUS] Transicao protegida ignorada para NODE 3
+@97715 [STATUS] Transicao protegida ignorada para NODE 3
+@97715 [GW] HEARTBEAT lider=3 rodada=47 sensores_ativos=2 modo=3 periodo=1000 ms
+@97716 [GW] SENSOR sensor=2 rodada=47 valor=0xAA ativo=1
+@98088 [GW] WIRELESS_CANDIDATE reporter=3 uuid=0xE6616408432B6F39 profile=VIBRATION rssi=-40 protocol=6
+@98301 [GW] BUS_STATS t_ms=98300 win_ms=1000 frames=13 bits=1473 load=0.29 peak=2.48 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=13 xfer_ok=110 xfer_err=0 own=0 untracked=0
+@98701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=467 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@98704 TEL NODE=1 CHILD=1 SEQ=88 GW_TS_MS=98703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.14000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@98715 [STATUS] Transicao protegida ignorada para NODE 3
+@98715 [STATUS] Transicao protegida ignorada para NODE 3
+@98715 [GW] HEARTBEAT lider=3 rodada=48 sensores_ativos=2 modo=3 periodo=1000 ms
+@98716 [GW] SENSOR sensor=1 rodada=48 valor=0xAA ativo=1
+@98741 [GW] ID_STATS id=0x282 win_ms=5000 n=1 dlc=8 bits=116 dt_min_us=5241000 dt_avg_us=5241000 dt_max_us=5241000
+@98781 [GW] ID_STATS id=0x283 win_ms=5000 n=1 dlc=8 bits=119 dt_min_us=5241000 dt_avg_us=5241000 dt_max_us=5241000
+@98821 [GW] ID_STATS id=0x284 win_ms=5000 n=1 dlc=8 bits=116 dt_min_us=5241000 dt_avg_us=5241000 dt_max_us=5241000
+@98861 [GW] ID_STATS id=0x285 win_ms=5000 n=1 dlc=8 bits=118 dt_min_us=5241000 dt_avg_us=5241000 dt_max_us=5241000
+@99061 [GW] ID_STATS id=0x381 win_ms=5000 n=49 dlc=8 bits=5774 dt_min_us=37 dt_avg_us=102040 dt_max_us=998463
+@99301 [GW] BUS_STATS t_ms=99300 win_ms=1000 frames=11 bits=1248 load=0.24 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=13 xfer_ok=111 xfer_err=0 own=0 untracked=0
+@99702 [GW] ID_STATS id=0x200 win_ms=5000 n=5 dlc=5 bits=465 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@99704 TEL NODE=1 CHILD=1 SEQ=89 GW_TS_MS=99703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.16000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@99715 [STATUS] Transicao protegida ignorada para NODE 3
+@99715 [STATUS] Transicao protegida ignorada para NODE 3
+@99715 [GW] HEARTBEAT lider=3 rodada=49 sensores_ativos=2 modo=3 periodo=1000 ms
+@99716 [GW] SENSOR sensor=2 rodada=49 valor=0xAA ativo=1
+@100301 [GW] BUS_STATS t_ms=100300 win_ms=1000 frames=11 bits=1244 load=0.24 peak=2.48 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=13 xfer_ok=112 xfer_err=0 own=0 untracked=0
+@100503 [GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-50 age_s=90 rx=211 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 rtt_ms=0.5 rtt_max_ms=0.5
+@100503 [GW] WIRELESS_ASSOC node=1 child=1 uuid=0xE6616408432B6F39 profile=VIBRATION state=ONLINE rssi=-50 protocol=6 failover=AUTO session=SECURE
+@100704 TEL NODE=1 CHILD=1 SEQ=90 GW_TS_MS=100703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.13000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@100715 [STATUS] Transicao protegida ignorada para NODE 3
+@100715 [STATUS] Transicao protegida ignorada para NODE 3
+@100715 [GW] HEARTBEAT lider=3 rodada=50 sensores_ativos=2 modo=3 periodo=1000 ms
+@100716 [GW] SENSOR sensor=1 rodada=50 valor=0xAA ativo=1
+@100772 [GW] ID_STATS id=0x286 win_ms=5000 n=1 dlc=8 bits=113 dt_min_us=5213000 dt_avg_us=5213000 dt_max_us=5213000
+@100812 [GW] ID_STATS id=0x287 win_ms=5000 n=1 dlc=8 bits=118 dt_min_us=5213000 dt_avg_us=5213000 dt_max_us=5213000
+@101301 [GW] BUS_STATS t_ms=101300 win_ms=1000 frames=17 bits=1959 load=0.39 peak=2.49 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=13 xfer_ok=114 xfer_err=0 own=0 untracked=0
+@101704 TEL NODE=1 CHILD=1 SEQ=91 GW_TS_MS=101703 MODE=ROTATING ACQ=POLLING WIN=512 AXIS=VECTOR FFT_VALID=NO RATE_REQ_HZ=1000.00 RATE_EFF_HZ=1000.00 RMS=0.15000 RMS_UNIT=m/s2 KURT=-0.20000 CREST=2.8000 PEAK_HZ=31.250 PEAK_AMP=0.020000 ENT=0.4500 PPV_MM_S=0.4000 STA_LTA=NO CLIP=NO BATT_PCT=93 BATT_MV=3980 DTC=0x0000 DTC_COUNT=0
+@101715 [STATUS] Transicao protegida ignorada para NODE 3
+@101715 [STATUS] Transicao protegida ignorada para NODE 3
+@101715 [GW] HEARTBEAT lider=3 rodada=51 sensores_ativos=2 modo=3 periodo=1000 ms
+# fim t=101716 quadros=1270 falhas=0

@@ -123,6 +123,17 @@ def data_link_label(state: str) -> str:
     return DATA_LINK_LABELS.get((state or "NONE").upper(), (state or "desconhecido").lower())
 
 
+def failover_label(policy: str) -> str:
+    return {"AUTO": "automática", "MANUAL": "manual"}.get(policy.upper(), "não informada")
+
+
+def failover_help(policy: str) -> str:
+    return {
+        "AUTO": "o líder entrega o sensor a outro módulo se o responsável falhar",
+        "MANUAL": "só o operador muda o módulo responsável",
+    }.get(policy.upper(), "o módulo não informou a política (firmware anterior à versão 0.18)")
+
+
 def sensor_condition(sensor: SensorNode) -> Condition:
     reasons_critical: list[str] = []
     reasons_attention: list[str] = []

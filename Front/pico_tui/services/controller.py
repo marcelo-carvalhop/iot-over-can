@@ -5,6 +5,7 @@ import time
 
 from pico_tui.core.event_bus import EventBus
 from pico_tui.core.events import (
+    BusStatsReceived,
     CanFrameReceived,
     ConnectionClosed,
     ConnectionModeDetected,
@@ -30,6 +31,7 @@ from pico_tui.core.events import (
     WirelessCandidateReceived,
     WirelessAssociationReceived,
     WirelessConfigReceived,
+    WirelessFailoverReceived,
     WirelessLinkReceived,
 )
 from pico_tui.core.models import (
@@ -77,6 +79,8 @@ class DomainController:
             (WirelessCandidateReceived, self._wireless_candidate),
             (WirelessAssociationReceived, self._wireless_association),
             (WirelessLinkReceived, self._wireless_link),
+            (WirelessFailoverReceived, self._wireless_failover),
+            (BusStatsReceived, self._bus_stats),
             (WirelessConfigReceived, self._wireless_config),
             (SensorStatusReceived, self._sensor_status),
             (DirectSensorVersionReceived, self._direct_version),
@@ -226,12 +230,34 @@ class DomainController:
             "STALE": NodeStatus.STALE,
             "LOST": NodeStatus.LOST,
         }
+        # Um sensor tem um único módulo responsável. Quando outro módulo passa
+        # a publicar o vínculo (reassociação), o registro anterior é retirado
+        # sem esperar o UNBOUND, que não chega se o módulo antigo saiu do ar.
+        if state in {"ASSOCIATING", "BOUND", "ONLINE"}:
+            for other_id, other in list(self.state.snapshot(history=0, frames=0).nodes.items()):
+                if other_id == event.parent_node_id:
+                    continue
+                for child_id, existing in list(other.sensors.items()):
+                    if existing.wireless_uuid and existing.wireless_uuid.lower() == event.wireless_uuid.lower():
+                        self.state.remove_sensor(other_id, child_id)
+                        await self.bus.publish(
+                            LogEvent(
+                                "WARNING",
+                                f"{event.wireless_uuid}: responsável passou do Módulo {other_id:02d} "
+                                f"para o Módulo {event.parent_node_id:02d}",
+                                "BLE",
+                            )
+                        )
+
         sensor = self.state.ensure_sensor(
             event.parent_node_id,
             event.child_id,
             wireless_uuid=event.wireless_uuid,
         )
         previous_assoc = sensor.association_state
+        policy = sensor.failover_policy
+        if event.failover_auto is not None:
+            policy = "AUTO" if event.failover_auto else "MANUAL"
         self.state.update_sensor(
             event.parent_node_id,
             event.child_id,
@@ -240,6 +266,7 @@ class DomainController:
             protocol_version=event.protocol_version,
             association_state=state,
             association_rssi_dbm=event.rssi_dbm,
+            failover_policy=policy,
             status=status_map.get(state, NodeStatus.UNKNOWN),
         )
         if previous_assoc != state:
@@ -276,6 +303,8 @@ class DomainController:
             data_link_auth_failures=event.auth_failures,
             data_link_replay_drops=event.replay_drops,
             data_link_lost_datagrams=event.lost_datagrams,
+            data_link_rtt_ms=event.rtt_ms,
+            data_link_rtt_max_ms=event.rtt_max_ms,
         )
         self.state.update_sensor_health(
             event.parent_node_id,
@@ -320,6 +349,30 @@ class DomainController:
                 key="link:rejected",
             )
             await self.bus.publish(LogEvent("WARNING", f"{ident}: {message}", "SECURITY"))
+
+    async def _bus_stats(self, event: BusStatsReceived) -> None:
+        """Medição da Probe 00: ocupação e estado de erro do barramento."""
+
+        self.state.update_network(
+            utilization_percent=event.load_percent,
+            bus_off=bool(event.error_flags & 0x20),
+            error_passive=event.rx_errors >= 128 or event.tx_errors >= 128,
+            error_warning=event.rx_errors >= 96 or event.tx_errors >= 96,
+        )
+
+    async def _wireless_failover(self, event: WirelessFailoverReceived) -> None:
+        reason = {
+            "OWNER_LOST": "o módulo responsável saiu do ar",
+            "SENSOR_LOST": "o sensor saiu do alcance do módulo responsável",
+        }.get(event.reason, event.reason)
+        message = (
+            f"Reassociação automática de {event.wireless_uuid}: Módulo {event.from_node_id:02d} → "
+            f"Módulo {event.to_node_id:02d} ({reason})"
+        )
+        for node_id in {event.from_node_id, event.to_node_id}:
+            if self.state.find_node(node_id) is not None:
+                self.state.add_node_incident(node_id, Severity.WARNING, "REASSOCIACAO", message, key=f"failover:{event.wireless_uuid}")
+        await self.bus.publish(LogEvent("WARNING", message, "BLE"))
 
     async def _wireless_config(self, event: WirelessConfigReceived) -> None:
         node = self.state.find_node(event.parent_node_id)
@@ -651,10 +704,10 @@ class DomainController:
         )
 
     async def _legacy_heartbeat(self, event: LegacyHeartbeatReceived) -> None:
+        # O sinal de presença não é uma ação do operador: "Última ação" continua
+        # mostrando o último comando. Líder, período e intervalos ficam na tela
+        # de métricas (pico_tui.metrics.service).
         self.state.update_node(event.leader, node_type="CAN_NODE", role="LEADER", status=NodeStatus.ONLINE, legacy_last_round=event.round_number)
-        self.state.set_last_action(
-            f"Heartbeat líder={event.leader} rodada={event.round_number} período={event.period_ms} ms"
-        )
 
     async def _fragment(self, event: FragmentReceived) -> None:
         key = (*event.source, event.transfer_type, event.transfer_id)

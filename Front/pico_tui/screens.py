@@ -391,6 +391,7 @@ class SensorScreen(BaseScreen):
                     ("Módulo responsável", f"Módulo {sensor.parent_node_id:02d}"),
                     ("RSSI do vínculo", f"{sensor.association_rssi_dbm} dBm" if sensor.association_rssi_dbm is not None else pres.MISSING),
                     ("Plano de dados", pres.data_link_label(sensor.data_link_state).capitalize()),
+                    ("Reassociação", pres.failover_label(sensor.failover_policy).capitalize()),
                 ]
             )
             self.query_one("#sensor-config", Fields).set_fields(
@@ -405,7 +406,14 @@ class SensorScreen(BaseScreen):
                 [
                     ("Plano de dados", f"Sessão autenticada via Módulo {sensor.parent_node_id:02d}"),
                     ("Sinal Wi-Fi", f"{sensor.data_link_rssi_dbm} dBm" if sensor.data_link_rssi_dbm is not None else pres.MISSING),
+                    (
+                        "Ida e volta",
+                        f"{pres.fmt_number(sensor.data_link_rtt_ms, 1, 'ms')} (máximo {pres.fmt_number(sensor.data_link_rtt_max_ms, 1, 'ms')})"
+                        if sensor.data_link_rtt_ms is not None
+                        else pres.MISSING,
+                    ),
                     ("Sessão ativa há", pres.fmt_int(sensor.data_link_session_age_s) + " s"),
+                    ("Reassociação", pres.failover_label(sensor.failover_policy).capitalize()),
                     ("Leituras no CAN", pres.fmt_int(sensor.rx_count)),
                     ("Perdidas no CAN", f"{pres.fmt_int(sensor.lost_count)} ({pres.fmt_number(sensor.loss_percent, 2, '%')})" if total else pres.MISSING),
                     ("Perdidas no Wi-Fi", pres.fmt_int(sensor.data_link_lost_datagrams)),
@@ -923,6 +931,7 @@ class WirelessScreen(BaseScreen):
     BINDINGS = BaseScreen.BINDINGS + [
         Binding("a", "associate", "Associar", show=False),
         Binding("d", "unbind", "Desassociar", show=False),
+        Binding("f", "policy", "Reassociação", show=False),
     ]
 
     def __init__(self) -> None:
@@ -936,6 +945,7 @@ class WirelessScreen(BaseScreen):
             ("Esc", "Voltar", "screen.back"),
             ("Enter/a", "Associar disponível", "screen.associate"),
             ("d", "Desassociar vínculo", "screen.unbind"),
+            ("f", "Reassociação automática", "screen.policy"),
         ]
         hints.extend(self.tui.global_hints(home=False, commands=False))
         return hints
@@ -1022,6 +1032,7 @@ class WirelessScreen(BaseScreen):
                 ),
                 Text(f"  {sensor.wireless_uuid}", style=palette.TEXT_MUTED),
                 Text(f"  Módulo {sensor.parent_node_id:02d} · {rssi}", style=palette.TEXT_SECONDARY),
+                Text(f"  Reassociação {pres.failover_label(sensor.failover_policy)}", style=palette.TEXT_MUTED),
             ]
             assoc_items.append((f"sensor:{sensor.logical_id}", Text("\n").join(lines)))
         assoc_list.set_items(assoc_items)
@@ -1068,6 +1079,7 @@ class WirelessScreen(BaseScreen):
                 Text(f"UUID {sensor.wireless_uuid}", style=palette.TEXT_SECONDARY),
                 Text(f"Vínculo {sensor.association_state.upper()} · Módulo {sensor.parent_node_id:02d}", style=palette.TEXT_SECONDARY),
                 Text(f"Plano de dados: {pres.data_link_label(sensor.data_link_state)}", style=palette.TEXT_SECONDARY),
+                Text(f"Reassociação {pres.failover_label(sensor.failover_policy)}: {pres.failover_help(sensor.failover_policy)}", style=palette.TEXT_SECONDARY),
                 Text(
                     "O vínculo define o módulo responsável. Telemetria e comandos passam por ele depois que o sensor é autenticado.",
                     style=palette.TEXT_MUTED,
@@ -1109,6 +1121,14 @@ class WirelessScreen(BaseScreen):
         option_id = associated.highlighted_id
         if option_id and option_id.startswith("sensor:"):
             self.tui.request_wireless_unbind(option_id.split(":", 1)[1])
+            return
+        self.notify("Realce um sensor na lista Associados.", severity="warning", timeout=3)
+
+    def action_policy(self) -> None:
+        associated = self.query_one("#wireless-associated", StableOptionList)
+        option_id = associated.highlighted_id
+        if option_id and option_id.startswith("sensor:"):
+            self.tui.request_wireless_policy(option_id.split(":", 1)[1])
             return
         self.notify("Realce um sensor na lista Associados.", severity="warning", timeout=3)
 
@@ -1343,6 +1363,8 @@ class HelpScreen(BaseScreen):
                         ("F5 ou r", "Rede CAN: barramento, tráfego e quadros"),
                         ("F6 ou m", "Mensagens: registro completo de eventos"),
                         ("F7 ou w", "Sensores sem fio: descobrir, associar e desassociar"),
+                        ("F8 ou b", "Métricas da rede: ocupação, períodos, tempos de resposta e enlaces"),
+                        ("F9 ou e", "Ensaios: injeção de falhas com medição do resultado"),
                         ("F1 ou ?", "Esta ajuda"),
                         ("F10 ou q", "Sair"),
                         ("Tab", "Passar para a próxima lista ou campo"),
@@ -1375,6 +1397,9 @@ class HelpScreen(BaseScreen):
                 Text("A tela do sensor mostra situação, métricas do perfil, intercorrências e a configuração aplicada."),
                 Text("A tela do módulo mostra papel na rede, sensor local, sensores sem fio e descoberta BLE."),
                 Text("F7 ou w abre o gerenciamento wireless: candidatos disponíveis, vínculos ativos, associação e desassociação."),
+                Text("Na associação escolhe-se a política de reassociação. Na automática, o líder entrega o sensor a outro módulo quando o responsável sai do ar ou deixa de ouvi-lo; f, na lista de associados, altera a política."),
+                Text("F8 ou b mostra o que a Probe 00 mede no barramento e a análise de tempo de resposta; x exporta as medições para exports/."),
+                Text("F9 ou e abre os ensaios de falha: queda de módulo, módulo congelado, queda do ponto de acesso e carga no barramento. O resultado é medido a partir das mensagens da rede."),
                 Text("Sensores wireless associados expõem telemetria, FFT e configuração pelo módulo CAN quando o plano de dados tem sessão autenticada; sem ela, essas ações ficam ocultas."),
                 Text("Em qualquer tela de equipamento com canal de comandos disponível, c abre os comandos já apontados para ele."),
             ]
@@ -1386,7 +1411,8 @@ class HelpScreen(BaseScreen):
                 Text(":tel on|off|once|fast|slow|period <ms>   :fft [sensor] bins=64   :acq polling"),
                 Text(":dtc list [sensor]   :dtc clear [sensor] all|0xCÓDIGO   :wifi on|off|status"),
                 Text(":config [sensor] mode=STRUCTURAL rate=250 window=HANN   :connect [porta] [modo]"),
-                Text(":wireless   :bind [uuid] [módulo]   :unbind [uuid] [módulo]"),
+                Text(":wireless   :bind [uuid] [módulo] [auto]   :unbind [uuid] [módulo]   :policy [sensor] auto|manual"),
+                Text(":metrics [on|off|reset|export]   :ensaios [nome|stop]   :export metrics"),
                 Text(":disconnect   :reconnect   :export csv   :snapshot   :security   :lock   :quit"),
             ],
             indent=2,

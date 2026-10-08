@@ -29,9 +29,15 @@ O plano de dados Pico W ↔ Node CAN é uma camada separada, sobre Wi-Fi/UDP, co
 
 ## Liderança e liveness CAN
 
-Nodes funcionais podem assumir `LEADER` ou `FOLLOWER`. O líder publica presença; ausência dentro do lease leva à detecção de falha e pode iniciar eleição. A Probe 00 é excluída desse mecanismo.
+Nodes funcionais podem assumir `LEADER` ou `FOLLOWER`. O líder publica presença e declara ausente o seguidor que deixa de responder por cinco períodos. A Probe 00 não participa da eleição, do ciclo TDMA nem do sensoriamento.
 
-A chegada de um Node não substitui automaticamente o líder atual. Entre candidatos elegíveis, o firmware usa o critério implementado no protocolo de eleição.
+A falta do líder é percebida pelos próprios seguidores: sem sinal de presença por seis períodos, o seguidor de maior identificador pede a eleição. A Probe 00, quando ligada, faz o mesmo pedido antes, com quatro períodos; ela acelera a recuperação, mas a rede não depende dela. Até a versão 0.17 só a Probe fazia esse pedido, o que tornava a instrumentação necessária ao funcionamento.
+
+A chegada de um Node não substitui automaticamente o líder atual. Entre candidatos elegíveis, vence o de maior identificador. Se dois líderes coexistem por um instante (um líder que travou e retomou, por exemplo), prevalece o de maior identificador, tanto entre os líderes quanto para os seguidores.
+
+## Medição e ensaios
+
+A Probe 00 mede a ocupação do barramento e o período de cada identificador; os Nodes informam o tempo de ida e volta de cada enlace sem fio. A TUI reúne essas medidas, calcula o pior tempo de resposta de cada mensagem e conduz ensaios de falha (queda de módulo, módulo congelado, queda do ponto de acesso, carga no barramento), medindo a reação da rede. O firmware do Node pode ser executado no computador, em vários Nodes ao mesmo tempo, para verificar esse comportamento sem hardware. Tudo isso está em [`metricas-e-ensaios.md`](metricas-e-ensaios.md).
 
 ## Funções locais dos Nodes
 
@@ -130,6 +136,7 @@ Essa distinção é obrigatória para interpretar o estado atual:
 | oferta de vínculo e sessão autenticada Pico ↔ Node | implementado; validação em bancada pendente |
 | telemetria Pico → Node → CAN → TUI | implementado; validação em bancada pendente |
 | comando TUI → CAN → Node → Pico | implementado; validação em bancada pendente |
+| reassociação automática a outro Node, quando autorizada | implementado; validação em bancada pendente |
 | persistência do vínculo após reinício do Node | pendente |
 
 A interface filtra ações conforme o estado informado pelo Node. Um filho associado aparece e pode ser desassociado; telemetria, FFT e configuração via Node só são oferecidas enquanto o plano de dados está em `SECURE`.

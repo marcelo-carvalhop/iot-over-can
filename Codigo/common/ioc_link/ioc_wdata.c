@@ -2,8 +2,8 @@
 
 #include <string.h>
 
-#define FIRST_SEGMENT_DATA 4
-#define NEXT_SEGMENT_DATA  6
+#define SEGMENT_HEADER_FIRST 4 /* filho|tipo, transferência|índice, tamanho, CRC */
+#define SEGMENT_HEADER_NEXT  2 /* filho|tipo, transferência|índice */
 
 /* ------------------------------------------------------- serialização LE */
 
@@ -58,35 +58,73 @@ uint8_t ioc_wd_crc8(const uint8_t *data, size_t len) {
     return crc;
 }
 
+static int valid_frame_len(uint8_t frame_len) {
+    switch (frame_len) {
+        case 8: case 12: case 16: case 20: case 24: case 32: case 48: case 64:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+uint8_t ioc_wd_fd_frame_len(size_t len) {
+    static const uint8_t sizes[] = {8, 12, 16, 20, 24, 32, 48, 64};
+    for (unsigned i = 0; i < sizeof(sizes); ++i) {
+        if (len <= sizes[i]) return sizes[i];
+    }
+    return 0;
+}
+
+uint8_t ioc_wd_segment_count_ex(size_t len, uint8_t frame_len) {
+    if (!valid_frame_len(frame_len) || len == 0 || len > IOC_WD_MAX_PAYLOAD) return 0;
+    const size_t first = (size_t)frame_len - SEGMENT_HEADER_FIRST;
+    const size_t next = (size_t)frame_len - SEGMENT_HEADER_NEXT;
+    if (len <= first) return 1;
+    size_t count = 1u + (len - first + next - 1u) / next;
+    return count > IOC_WD_MAX_SEGMENTS ? 0 : (uint8_t)count;
+}
+
+uint8_t ioc_wd_build_segment_ex(uint8_t child, uint8_t kind, uint8_t transfer,
+                                const uint8_t *payload, size_t len, uint8_t index,
+                                uint8_t frame_len, uint8_t *frame) {
+    uint8_t count = ioc_wd_segment_count_ex(len, frame_len);
+    if (!payload || !frame || count == 0 || index >= count) return 0;
+    if (child > IOC_WD_MAX_CHILD || kind > 0x1Fu) return 0;
+
+    const size_t first = (size_t)frame_len - SEGMENT_HEADER_FIRST;
+    const size_t next = (size_t)frame_len - SEGMENT_HEADER_NEXT;
+    size_t used;
+
+    memset(frame, 0, frame_len);
+    frame[0] = (uint8_t)((child << 5) | (kind & 0x1Fu));
+    frame[1] = (uint8_t)(((transfer & 0x07u) << 5) | (index & 0x1Fu));
+
+    if (index == 0) {
+        size_t n = len < first ? len : first;
+        frame[2] = (uint8_t)len;
+        frame[3] = ioc_wd_crc8(payload, len);
+        memcpy(&frame[SEGMENT_HEADER_FIRST], payload, n);
+        used = SEGMENT_HEADER_FIRST + n;
+    } else {
+        size_t offset = first + (size_t)(index - 1u) * next;
+        size_t n = len - offset;
+        if (n > next) n = next;
+        memcpy(&frame[SEGMENT_HEADER_NEXT], &payload[offset], n);
+        used = SEGMENT_HEADER_NEXT + n;
+    }
+    /* No CAN clássico todo segmento tem 8 bytes; no FD, o menor tamanho válido. */
+    return frame_len == IOC_WD_FRAME_LEN ? IOC_WD_FRAME_LEN : ioc_wd_fd_frame_len(used);
+}
+
 uint8_t ioc_wd_segment_count(size_t len) {
-    if (len == 0 || len > IOC_WD_MAX_PAYLOAD) return 0;
-    if (len <= FIRST_SEGMENT_DATA) return 1;
-    return (uint8_t)(1u + (len - FIRST_SEGMENT_DATA + NEXT_SEGMENT_DATA - 1u) / NEXT_SEGMENT_DATA);
+    return ioc_wd_segment_count_ex(len, IOC_WD_FRAME_LEN);
 }
 
 int ioc_wd_build_segment(uint8_t child, uint8_t kind, uint8_t transfer,
                          const uint8_t *payload, size_t len, uint8_t index,
                          uint8_t frame[IOC_WD_FRAME_LEN]) {
-    uint8_t count = ioc_wd_segment_count(len);
-    if (!payload || !frame || count == 0 || index >= count) return 0;
-    if (child > IOC_WD_MAX_CHILD || kind > 0x1Fu) return 0;
-
-    memset(frame, 0, IOC_WD_FRAME_LEN);
-    frame[0] = (uint8_t)((child << 5) | (kind & 0x1Fu));
-    frame[1] = (uint8_t)(((transfer & 0x07u) << 5) | (index & 0x1Fu));
-
-    if (index == 0) {
-        size_t n = len < FIRST_SEGMENT_DATA ? len : FIRST_SEGMENT_DATA;
-        frame[2] = (uint8_t)len;
-        frame[3] = ioc_wd_crc8(payload, len);
-        memcpy(&frame[4], payload, n);
-    } else {
-        size_t offset = FIRST_SEGMENT_DATA + (size_t)(index - 1u) * NEXT_SEGMENT_DATA;
-        size_t n = len - offset;
-        if (n > NEXT_SEGMENT_DATA) n = NEXT_SEGMENT_DATA;
-        memcpy(&frame[2], &payload[offset], n);
-    }
-    return 1;
+    return ioc_wd_build_segment_ex(child, kind, transfer, payload, len, index,
+                                   IOC_WD_FRAME_LEN, frame) != 0;
 }
 
 void ioc_wd_rx_reset(ioc_wd_rx *rx) {
@@ -112,10 +150,12 @@ static ioc_wd_rx_slot *rx_allocate(ioc_wd_rx *rx, uint32_t now_ms) {
     return oldest; /* todos ocupados e recentes: descarta a transferência mais antiga */
 }
 
-ioc_wd_rx_result ioc_wd_rx_push(ioc_wd_rx *rx, const uint8_t frame[IOC_WD_FRAME_LEN],
-                                uint32_t now_ms, const ioc_wd_rx_slot **done) {
+ioc_wd_rx_result ioc_wd_rx_push_ex(ioc_wd_rx *rx, const uint8_t *frame, uint8_t frame_len,
+                                   uint32_t now_ms, const ioc_wd_rx_slot **done) {
     if (done) *done = NULL;
-    if (!rx || !frame) return IOC_WD_RX_ERROR;
+    if (!rx || !frame || frame_len < IOC_WD_FRAME_LEN || frame_len > IOC_WD_FD_MAX_FRAME_LEN) {
+        return IOC_WD_RX_ERROR;
+    }
 
     const uint8_t child = (uint8_t)(frame[0] >> 5);
     const uint8_t kind = (uint8_t)(frame[0] & 0x1Fu);
@@ -125,6 +165,7 @@ ioc_wd_rx_result ioc_wd_rx_push(ioc_wd_rx *rx, const uint8_t frame[IOC_WD_FRAME_
 
     if (index == 0) {
         const uint8_t total = frame[2];
+        const uint8_t room = (uint8_t)(frame_len - SEGMENT_HEADER_FIRST);
         if (total == 0 || total > IOC_WD_MAX_PAYLOAD) {
             if (slot) slot->active = 0;
             return IOC_WD_RX_ERROR;
@@ -137,9 +178,9 @@ ioc_wd_rx_result ioc_wd_rx_push(ioc_wd_rx *rx, const uint8_t frame[IOC_WD_FRAME_
         slot->total_len = total;
         slot->crc = frame[3];
         slot->started_ms = now_ms;
-        slot->received = total < FIRST_SEGMENT_DATA ? total : FIRST_SEGMENT_DATA;
+        slot->received = total < room ? total : room;
         slot->next_index = 1;
-        memcpy(slot->data, &frame[4], slot->received);
+        memcpy(slot->data, &frame[SEGMENT_HEADER_FIRST], slot->received);
     } else {
         if (!slot) return IOC_WD_RX_ERROR;
         if (slot->transfer != transfer || slot->next_index != index ||
@@ -147,13 +188,14 @@ ioc_wd_rx_result ioc_wd_rx_push(ioc_wd_rx *rx, const uint8_t frame[IOC_WD_FRAME_
             slot->active = 0;
             return IOC_WD_RX_ERROR;
         }
+        const uint8_t room = (uint8_t)(frame_len - SEGMENT_HEADER_NEXT);
         uint8_t remaining = (uint8_t)(slot->total_len - slot->received);
-        uint8_t n = remaining < NEXT_SEGMENT_DATA ? remaining : NEXT_SEGMENT_DATA;
+        uint8_t n = remaining < room ? remaining : room;
         if (n == 0) {
             slot->active = 0;
             return IOC_WD_RX_ERROR;
         }
-        memcpy(&slot->data[slot->received], &frame[2], n);
+        memcpy(&slot->data[slot->received], &frame[SEGMENT_HEADER_NEXT], n);
         slot->received = (uint8_t)(slot->received + n);
         slot->next_index++;
     }
@@ -164,6 +206,11 @@ ioc_wd_rx_result ioc_wd_rx_push(ioc_wd_rx *rx, const uint8_t frame[IOC_WD_FRAME_
     if (ioc_wd_crc8(slot->data, slot->total_len) != slot->crc) return IOC_WD_RX_ERROR;
     if (done) *done = slot;
     return IOC_WD_RX_COMPLETE;
+}
+
+ioc_wd_rx_result ioc_wd_rx_push(ioc_wd_rx *rx, const uint8_t frame[IOC_WD_FRAME_LEN],
+                                uint32_t now_ms, const ioc_wd_rx_slot **done) {
+    return ioc_wd_rx_push_ex(rx, frame, IOC_WD_FRAME_LEN, now_ms, done);
 }
 
 /* -------------------------------------------------------------- telemetria */
@@ -335,11 +382,13 @@ size_t ioc_wd_link_encode(const ioc_wd_link *in, uint8_t out[IOC_WD_LINK_LEN]) {
     put_u16(&out[10], in->lost_datagrams);
     out[12] = in->stream_enabled;
     put_u16(&out[13], in->stream_period_ms);
+    put_u16(&out[15], in->rtt_100us);
+    put_u16(&out[17], in->rtt_max_100us);
     return IOC_WD_LINK_LEN;
 }
 
 int ioc_wd_link_decode(const uint8_t *buf, size_t len, ioc_wd_link *out) {
-    if (!buf || !out || len != IOC_WD_LINK_LEN) return 0;
+    if (!buf || !out || (len != IOC_WD_LINK_LEN && len != IOC_WD_LINK_LEN_V017)) return 0;
     out->state = buf[0];
     out->wifi_rssi = (int8_t)buf[1];
     out->session_age_s = get_u16(&buf[2]);
@@ -349,6 +398,8 @@ int ioc_wd_link_decode(const uint8_t *buf, size_t len, ioc_wd_link *out) {
     out->lost_datagrams = get_u16(&buf[10]);
     out->stream_enabled = buf[12];
     out->stream_period_ms = get_u16(&buf[13]);
+    out->rtt_100us = len >= IOC_WD_LINK_LEN ? get_u16(&buf[15]) : IOC_WD_RTT_UNKNOWN;
+    out->rtt_max_100us = len >= IOC_WD_LINK_LEN ? get_u16(&buf[17]) : IOC_WD_RTT_UNKNOWN;
     return 1;
 }
 

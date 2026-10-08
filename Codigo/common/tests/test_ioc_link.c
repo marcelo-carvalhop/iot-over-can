@@ -368,10 +368,15 @@ static void test_codecs(void) {
     CHECK(ioc_wd_dtc_encode(&dtc, buf) == IOC_WD_DTC_LEN && ioc_wd_dtc_decode(buf, IOC_WD_DTC_LEN, &dtc2));
     CHECK(dtc2.code == 0x4003 && dtc2.timestamp_ms == 123456u);
 
-    ioc_wd_link link = {IOC_WD_LINK_SECURE, -52, 120, 400, 2, 1, 3, 1, 1000}, link2;
+    ioc_wd_link link = {IOC_WD_LINK_SECURE, -52, 120, 400, 2, 1, 3, 1, 1000, 7, 23}, link2;
     CHECK(ioc_wd_link_encode(&link, buf) == IOC_WD_LINK_LEN && ioc_wd_link_decode(buf, IOC_WD_LINK_LEN, &link2));
     CHECK(link2.state == IOC_WD_LINK_SECURE && link2.wifi_rssi == -52 && link2.lost_datagrams == 3);
     CHECK(link2.stream_enabled == 1 && link2.stream_period_ms == 1000);
+    CHECK(link2.rtt_100us == 7 && link2.rtt_max_100us == 23);
+    /* Um Node com firmware anterior publica 15 bytes: aceito, sem tempo de resposta. */
+    CHECK(ioc_wd_link_decode(buf, IOC_WD_LINK_LEN_V017, &link2));
+    CHECK(link2.stream_period_ms == 1000 && link2.rtt_100us == IOC_WD_RTT_UNKNOWN);
+    CHECK(!ioc_wd_link_decode(buf, IOC_WD_LINK_LEN - 1, &link2));
 
     ioc_wd_config cfg = {1, 1, 512, 1000.0f, 1000.0f, 4.0f, 1.0f, 1}, cfg2;
     CHECK(ioc_wd_config_encode(&cfg, buf) == IOC_WD_CONFIG_LEN && ioc_wd_config_decode(buf, IOC_WD_CONFIG_LEN, &cfg2));

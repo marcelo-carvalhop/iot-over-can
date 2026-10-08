@@ -23,7 +23,7 @@ from textual.theme import Theme
 
 from pico_tui import commands, palette
 from pico_tui import presentation as pres
-from pico_tui.command_catalog import ACTIONS_BY_KEY, can_command
+from pico_tui.command_catalog import ACTIONS_BY_KEY, CommandAction, Parameter, can_command
 from pico_tui.core.event_bus import EventBus
 from pico_tui.core.events import (
     CommandAck,
@@ -46,6 +46,7 @@ from pico_tui.core.models import (
 )
 from pico_tui.core.state_store import StateStore
 from pico_tui.dialogs import (
+    ChoiceScreen,
     ConfigRequest,
     ConfigScreen,
     ConfirmScreen,
@@ -53,6 +54,10 @@ from pico_tui.dialogs import (
     ParameterScreen,
     WirelessNodeScreen,
 )
+from pico_tui.metrics.experiments import EXPERIMENTS_BY_KEY, ExperimentRecorder
+from pico_tui.metrics.export import export_metrics
+from pico_tui.metrics.service import MetricsService
+from pico_tui.metrics_screens import ExperimentsScreen, MetricsScreen
 from pico_tui.dtc_catalog import dtc_description
 from pico_tui.preferences import load_preferences, save_preferences
 from pico_tui.protocol.router import DecoderRouter
@@ -76,6 +81,36 @@ from pico_tui.services.log_manager import LogManager
 from pico_tui.widgets import MessageEntry
 
 REFRESH_SECONDS = 0.5
+
+
+class SessionClock:
+    """Relógio das medições.
+
+    Em operação normal é o relógio monotônico do sistema. Na reprodução de
+    uma gravação ("--replay"), é o instante registrado em cada linha, para
+    que os tempos medidos sejam os da sessão gravada, qualquer que seja a
+    velocidade de reprodução.
+    """
+
+    def __init__(self) -> None:
+        self.replay_time: float | None = None
+
+    def __call__(self) -> float:
+        return self.replay_time if self.replay_time is not None else time.monotonic()
+
+
+
+def _first_replay_instant(lines: list[str]) -> float:
+    """Instante, em segundos, da primeira linha datada de uma gravação."""
+
+    for raw in lines:
+        if raw.startswith("@"):
+            stamp = raw[1:].partition(" ")[0]
+            if stamp.isdigit():
+                return int(stamp) / 1000.0
+    return 0.0
+
+
 UI_HISTORY_SAMPLES = 120
 UI_RECENT_FRAMES = 40
 MESSAGE_HISTORY = 2000
@@ -128,6 +163,10 @@ class PicoTuiApp(App[None]):
         # Compatibilidade com a interface anterior. O caminho principal é F7/w,
         # sempre exposto na barra de teclas e na Ajuda.
         Binding("ctrl+a", "show_wireless", "Sensores sem fio", show=False),
+        Binding("f8", "show_metrics", "Métricas", show=False),
+        Binding("b", "show_metrics", "Métricas", show=False),
+        Binding("f9", "show_experiments", "Ensaios", show=False),
+        Binding("e", "show_experiments", "Ensaios", show=False),
         Binding("f10", "exit_confirm", "Sair", show=False),
         Binding("q", "exit_confirm", "Sair", show=False),
     ]
@@ -145,8 +184,14 @@ class PicoTuiApp(App[None]):
         show_messages: bool | None = None,
         ascii_symbols: bool | None = None,
         preferences_path: str | Path | None = None,
+        replay: str | Path | None = None,
+        replay_speed: float = 1.0,
     ) -> None:
         super().__init__()
+        self.replay_path = Path(replay) if replay else None
+        self.replay_speed = replay_speed if replay_speed > 0 else 1.0
+        self.replaying = False
+        self.clock = SessionClock()
         self.initial_port = port
         self.baudrate = baudrate
         self.requested_mode = mode
@@ -164,6 +209,8 @@ class PicoTuiApp(App[None]):
         self.bus = EventBus()
         self.state_store = StateStore()
         self.controller = DomainController(self.bus, self.state_store)
+        self.metrics = MetricsService(self.bus, self.clock)
+        self.experiments = ExperimentRecorder(self.bus, self.clock)
         self.decoder = DecoderRouter(self.bus, requested_mode=mode)
         self.session_id = uuid.uuid4().hex[:12]
         self.state_store.set_session_id(self.session_id)
@@ -240,6 +287,9 @@ class PicoTuiApp(App[None]):
         elif self.security.mode == "off":
             await self.bus.publish(LogEvent("WARNING", "TUI iniciada com --security-mode off", "SECURITY"))
             self.notify("Modo de segurança OFF ativo durante toda esta sessão.", title="Segurança", severity="warning", timeout=10)
+        if self.replay_path is not None:
+            await self._start_replay()
+            return
         if self.demo_requested:
             await self._start_demo()
             return
@@ -312,6 +362,62 @@ class PicoTuiApp(App[None]):
         self.state_store.set_connection(ConnectionState.READY, port="DEMO", mode=ConnectionMode.DEMO)
         await self.bus.publish(LogEvent("INFO", "Modo demonstração iniciado", "DEMO"))
         self.run_worker(self.demo_producer.run(), group="demo", exclusive=True)
+
+    async def _start_replay(self) -> None:
+        """Reproduz uma gravação das linhas da Probe 00 ("@<ms> <linha>").
+
+        As gravações em Front/replays/ vêm da bancada virtual
+        (Codigo/node-can/test/host/sim_network.cpp). Nada é enviado a
+        equipamento algum durante a reprodução.
+        """
+
+        path = self.replay_path
+        assert path is not None
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            await self.bus.publish(LogEvent("ERROR", f"Não foi possível abrir a gravação {path}: {exc}", "REPLAY"))
+            self.notify(f"Gravação não encontrada: {path}", severity="error", timeout=8)
+            return
+        self.connected = True
+        self.replaying = True
+        self.port_name = "REPLAY"
+        self._last_port = "REPLAY"
+        self._last_mode = "gateway"
+        self.decoder.requested_mode = "gateway"
+        self.decoder.reset()
+        # As medições passam a usar o tempo da gravação: o que foi acumulado
+        # com o relógio do sistema é descartado antes da primeira linha.
+        self.clock.replay_time = _first_replay_instant(lines)
+        self.metrics.reset()
+        self.experiments.reset()
+        self.state_store.set_connection(ConnectionState.READY, port=f"gravação {path.name}", mode=ConnectionMode.GATEWAY_CAN)
+        await self.bus.publish(
+            LogEvent("INFO", f"Reproduzindo {path.name} a {self.replay_speed:g}x; nenhum comando será enviado", "REPLAY")
+        )
+        self.run_worker(self._replay_lines(lines), group="replay", exclusive=True)
+
+    async def _replay_lines(self, lines: list[str]) -> None:
+        previous_ms: int | None = None
+        for raw in lines:
+            if not raw.startswith("@"):
+                continue
+            stamp, _, line = raw[1:].partition(" ")
+            try:
+                at_ms = int(stamp)
+            except ValueError:
+                continue
+            if previous_ms is not None and at_ms > previous_ms:
+                await asyncio.sleep((at_ms - previous_ms) / 1000.0 / self.replay_speed)
+            previous_ms = at_ms
+            self.clock.replay_time = at_ms / 1000.0
+            try:
+                await self.decoder.decode(line)
+            except Exception as exc:
+                self.state_store.increment_network(parse_errors=1)
+                await self.bus.publish(LogEvent("ERROR", f"Falha ao decodificar '{line}': {exc}", "PROTOCOL"))
+        await self.bus.publish(LogEvent("INFO", "Fim da gravação", "REPLAY"))
+        self.notify("Fim da gravação.", timeout=6)
 
     async def _connect_serial(self, port: str, mode: str) -> bool:
         if self._connecting:
@@ -582,6 +688,7 @@ class PicoTuiApp(App[None]):
 
     def _refresh_ui(self, force: bool = False) -> None:
         self.state_store.refresh_freshness()
+        self._poll_experiment()
         state = self.state_store.snapshot(history=UI_HISTORY_SAMPLES, frames=UI_RECENT_FRAMES)
         # Seleção implícita: comandos internos sem alvo (:tel on, :dtc list)
         # usam o primeiro sensor quando nada foi aberto ainda.
@@ -620,8 +727,12 @@ class PicoTuiApp(App[None]):
 
 
     def _send_raw(self, command: str) -> bool:
+        if self.replaying:
+            self.run_worker(self.bus.publish(LogEvent("INFO", f"> {command} [gravação: não enviado]", "COMMAND")))
+            return True
         if self.demo_requested or self.state_store.snapshot().connection_mode == ConnectionMode.DEMO:
             self.run_worker(self.bus.publish(LogEvent("INFO", f"> {command} [DEMO]", "COMMAND")))
+            self.demo_producer.handle_command(command)
             return True
 
         decision = self.security.authorize_command(command)
@@ -820,6 +931,24 @@ class PicoTuiApp(App[None]):
             await self._command_wireless_unbind(args)
         elif cmd in {"wireless", "semfio", "sem-fio"}:
             self.action_show_wireless()
+        elif cmd in {"policy", "politica", "política"}:
+            await self._command_wireless_policy(args)
+        elif cmd in {"metrics", "metricas", "métricas"}:
+            if args and args[0].lower() in {"on", "off", "reset"}:
+                self._send_raw(commands.metrics(args[0]))
+                if args[0].lower() == "reset":
+                    self.metrics.reset()
+            elif args and args[0].lower() in {"export", "exportar"}:
+                self.export_metrics()
+            else:
+                self.action_show_metrics()
+        elif cmd in {"ensaios", "ensaio", "experiments", "fault"}:
+            if args and args[0].lower() in {"stop", "parar", "encerrar"}:
+                self.stop_experiment()
+            elif args and args[0].lower() in EXPERIMENTS_BY_KEY:
+                self.start_experiment(args[0].lower())
+            else:
+                self.action_show_experiments()
         elif cmd == "disconnect":
             await self._disconnect()
         elif cmd == "reconnect":
@@ -832,6 +961,8 @@ class PicoTuiApp(App[None]):
                 await self._open_connection_dialog()
         elif cmd == "export" and args and args[0].lower() == "csv":
             self._export_csv()
+        elif cmd == "export" and args and args[0].lower() in {"metrics", "metricas", "métricas"}:
+            self.export_metrics()
         elif cmd == "snapshot":
             # Substitui o antigo F12: estado completo em exports/snapshot_*.json.
             self.action_snapshot()
@@ -955,8 +1086,32 @@ class PicoTuiApp(App[None]):
             return
         resolved_uuid, recommended_node = best
         target = node_id if node_id is not None else recommended_node
-        if self._send_raw(commands.wireless_association("BIND", target, resolved_uuid)):
-            await self.bus.publish(LogEvent("INFO", f"Associação solicitada: {resolved_uuid} → Módulo {target:02d}", "BLE"))
+        option = "AUTO" if len(args) > 2 and args[2].lower() == "auto" else None
+        if self._send_raw(commands.wireless_association("BIND", target, resolved_uuid, option)):
+            policy = " (reassociação automática)" if option else ""
+            await self.bus.publish(
+                LogEvent("INFO", f"Associação solicitada: {resolved_uuid} → Módulo {target:02d}{policy}", "BLE")
+            )
+
+    async def _command_wireless_policy(self, args: list[str]) -> None:
+        """:policy [sensor|uuid] auto|manual"""
+
+        if not args or args[-1].lower() not in {"auto", "manual"}:
+            await self.bus.publish(LogEvent("WARNING", "Uso: :policy [sensor|uuid] auto|manual", "BLE"))
+            return
+        option = args[-1].upper()
+        sensor = None
+        if len(args) > 1:
+            sensor = self.state_store.find_sensor(args[0]) if "." in args[0] else self._associated_sensor_by_uuid(args[0])
+        else:
+            sensor = self._selected_sensor()
+        if sensor is None or not sensor.wireless_uuid or sensor.association_state.upper() == "UNBOUND":
+            await self.bus.publish(LogEvent("WARNING", "Selecione um sensor sem fio associado", "BLE"))
+            return
+        if self._send_raw(commands.wireless_association("POLICY", sensor.parent_node_id, sensor.wireless_uuid, option)):
+            await self.bus.publish(
+                LogEvent("INFO", f"Política de reassociação de {sensor.logical_id}: {option}", "BLE")
+            )
 
     async def _command_wireless_unbind(self, args: list[str]) -> None:
         if not args:
@@ -1395,6 +1550,8 @@ class PicoTuiApp(App[None]):
                     ("F5/r", "Rede", "app.show_network"),
                     ("F6/m", "Mensagens", "app.show_messages"),
                     ("F7/w", "Sensores sem fio", "app.show_wireless"),
+                    ("F8/b", "Métricas", "app.show_metrics"),
+                    ("F9/e", "Ensaios", "app.show_experiments"),
                 ]
             )
         if help:
@@ -1467,6 +1624,172 @@ class PicoTuiApp(App[None]):
         if not self._modal_open() and not isinstance(self.screen, WirelessScreen):
             self._replace_top(WirelessScreen())
 
+    def action_show_metrics(self) -> None:
+        if not self._modal_open() and not isinstance(self.screen, MetricsScreen):
+            self._replace_top(MetricsScreen())
+
+    def action_show_experiments(self) -> None:
+        if not self._modal_open() and not isinstance(self.screen, ExperimentsScreen):
+            self._replace_top(ExperimentsScreen())
+
+    # ------------------------------------------------------------------
+    # Métricas e ensaios
+    # ------------------------------------------------------------------
+
+    def export_metrics(self) -> None:
+        try:
+            paths = export_metrics(self.metrics.snapshot(), list(self.experiments.history))
+        except OSError as exc:
+            self.notify(f"Falha ao exportar as métricas: {exc}", severity="error", timeout=8)
+            return
+        self.run_worker(
+            self.bus.publish(LogEvent("INFO", "Métricas exportadas: " + ", ".join(str(path) for path in paths), "EXPORT"))
+        )
+        self.notify(f"Métricas exportadas em {paths[0].parent}", timeout=6)
+
+    def reset_metrics(self) -> None:
+        self.metrics.reset()
+        mode = self.state_store.snapshot(history=0, frames=0).connection_mode
+        if mode == ConnectionMode.GATEWAY_CAN and not self.replaying:
+            self._send_raw(commands.metrics("RESET"))
+        self.notify("Medições zeradas.", timeout=3)
+
+    def _poll_experiment(self) -> None:
+        finished = self.experiments.poll()
+        if finished is not None:
+            self._experiment_finished(finished)
+
+    def _experiment_finished(self, run) -> None:
+        summary = "; ".join(f"{label}: {value}" for label, value in run.rows() if value != "não observado")
+        self.run_worker(self.bus.publish(LogEvent("INFO", f"Ensaio concluído: {run.title}. {summary}", "ENSAIO")))
+        try:
+            self.notify(f"Ensaio concluído: {run.title}", timeout=6)
+        except Exception:
+            pass
+
+    def stop_experiment(self) -> None:
+        run = self.experiments.active
+        if run is None:
+            self.notify("Nenhum ensaio em curso.", severity="warning", timeout=3)
+            return
+        if run.experiment.kind != "MANUAL":
+            self._send_raw(commands.fault_cancel(run.node_id))
+        finished = self.experiments.stop()
+        if finished is not None:
+            self._experiment_finished(finished)
+
+    def _experiment_node_options(self, target: str) -> tuple[list[tuple[str, str]], str | None]:
+        """Módulos elegíveis para um ensaio e o mais indicado para o tipo de alvo."""
+
+        state = self.state_store.snapshot(history=0, frames=0)
+        leader = self.experiments.current_leader
+        options: list[tuple[str, str]] = []
+        preferred: str | None = None
+        for node_id in sorted(state.nodes):
+            node = state.nodes[node_id]
+            if not 1 <= node_id <= 31:
+                continue
+            notes: list[str] = []
+            if node_id == leader or node.role == "LEADER":
+                notes.append("líder")
+            sensors = [sensor for sensor in node.sensors.values() if sensor.wireless_associated]
+            if sensors:
+                notes.append(f"{len(sensors)} sensor(es) sem fio")
+            label = f"Módulo {node_id:02d}" + (f" · {', '.join(notes)}" if notes else "")
+            options.append((label, str(node_id)))
+            if target == "leader" and "líder" in notes:
+                preferred = str(node_id)
+            if target == "owner" and sensors and preferred is None:
+                preferred = str(node_id)
+        return options, preferred
+
+    @work
+    async def start_experiment(self, key: str) -> None:
+        experiment = EXPERIMENTS_BY_KEY.get(key)
+        if experiment is None:
+            return
+        if self.experiments.active is not None:
+            self.notify("Há um ensaio em curso. Encerre-o com s antes de iniciar outro.", severity="warning", timeout=5)
+            return
+        mode = self.state_store.snapshot(history=0, frames=0).connection_mode
+        if experiment.kind != "MANUAL" and mode not in {ConnectionMode.GATEWAY_CAN, ConnectionMode.DEMO}:
+            self.notify("Os ensaios são comandados pela Probe 00. Conecte-se a ela em F3.", severity="warning", timeout=6)
+            return
+
+        node_id: int | None = None
+        if experiment.target != "none":
+            options, preferred = self._experiment_node_options(experiment.target)
+            if not options:
+                self.notify("Nenhum módulo CAN conhecido nesta sessão.", severity="warning", timeout=5)
+                return
+            hint = {
+                "leader": "O ensaio é aplicado ao líder em exercício; outro módulo pode ser escolhido.",
+                "owner": "Para medir a reassociação, escolha um módulo com sensores sem fio.",
+            }.get(experiment.target, "Escolha o módulo que sofrerá a falha.")
+            chosen = await self.push_screen_wait(ChoiceScreen(experiment.title, hint, options, preferred))
+            if chosen is None:
+                return
+            node_id = int(chosen)
+
+        seconds = experiment.default_seconds
+        if experiment.kind not in {"MANUAL", "DROP_SESSION"}:
+            action = CommandAction(
+                key=f"experiment.{experiment.key}",
+                scope="network",
+                group="Ensaios",
+                title=experiment.title,
+                description=experiment.summary,
+                parameter=Parameter(
+                    name="seconds",
+                    label="Duração da falha",
+                    default=str(experiment.default_seconds),
+                    minimum=experiment.min_seconds,
+                    maximum=experiment.max_seconds,
+                    unit="s",
+                    help="Depois da falha, a rede é observada por mais "
+                         f"{experiment.settle_seconds} s antes de o resultado ser fechado.",
+                ),
+            )
+            target_label = f"Módulo {node_id:02d}" if node_id else "barramento CAN"
+            value = await self.push_screen_wait(ParameterScreen(action, target_label))
+            if value is None:
+                return
+            seconds = int(value)
+
+        load_percent: int | None = None
+        if experiment.kind == "LOAD":
+            choice = await self.push_screen_wait(
+                ChoiceScreen(
+                    experiment.title,
+                    "Parcela do tempo de barramento ocupada pela carga artificial.",
+                    [(f"{percent} %", str(percent)) for percent in (20, 40, 60, 80)],
+                    "40",
+                )
+            )
+            if choice is None:
+                return
+            load_percent = int(choice)
+
+        command = experiment.command(node_id, seconds, load_percent or 40)
+        if command is not None:
+            where = f"Módulo {node_id:02d}" if node_id else "Barramento CAN"
+            confirmed = await self.push_screen_wait(
+                ConfirmScreen(
+                    experiment.title,
+                    f"{where}\n\n{experiment.effect}\n\nComando: {command}",
+                    confirm_label="Iniciar ensaio",
+                    danger=True,
+                )
+            )
+            if not confirmed:
+                return
+            if not self._send_raw(command):
+                return
+        run = self.experiments.start(experiment, node_id, seconds, load_percent=load_percent)
+        await self.bus.publish(LogEvent("WARNING", f"Ensaio iniciado: {run.title}", "ENSAIO"))
+        if not isinstance(self.screen, ExperimentsScreen):
+            self.action_show_experiments()
+
     def action_open_commands(self) -> None:
         if self._modal_open() or isinstance(self.screen, CommandScreen):
             return
@@ -1530,19 +1853,54 @@ class PicoTuiApp(App[None]):
         node_id = await self.push_screen_wait(WirelessNodeScreen(wireless_uuid, pres.profile_label(profile), observations))
         if node_id is None:
             return
-        confirmed = await self.push_screen_wait(
-            ConfirmScreen(
+        policy = await self.push_screen_wait(
+            ChoiceScreen(
                 "Associar sensor sem fio",
-                f"Associar {wireless_uuid} ao Módulo {node_id:02d}?\n\n"
-                "O módulo passará a ser responsável pelo vínculo lógico e pelo liveness deste sensor.",
-                confirm_label="Associar",
+                f"Associar {wireless_uuid} ao Módulo {node_id:02d}. O módulo passa a ser responsável pelo "
+                "sensor. Com a reassociação automática, o líder entrega o sensor a outro módulo que o alcance "
+                "se este sair do ar ou deixar de ouvi-lo.",
+                [
+                    ("Associar com reassociação automática", "AUTO"),
+                    ("Associar; só o operador muda o responsável", "MANUAL"),
+                ],
+                "AUTO",
             )
         )
-        if not confirmed:
+        if policy is None:
             return
-        if self._send_raw(commands.wireless_association("BIND", node_id, wireless_uuid)):
-            await self.bus.publish(LogEvent("INFO", f"Associação solicitada: {wireless_uuid} → Módulo {node_id:02d}", "BLE"))
+        option = "AUTO" if policy == "AUTO" else None
+        if self._send_raw(commands.wireless_association("BIND", node_id, wireless_uuid, option)):
+            detail = " (reassociação automática)" if option else ""
+            await self.bus.publish(
+                LogEvent("INFO", f"Associação solicitada: {wireless_uuid} → Módulo {node_id:02d}{detail}", "BLE")
+            )
             self.notify("Associação solicitada; aguardando confirmação do módulo.", timeout=4)
+
+    @work
+    async def request_wireless_policy(self, logical_id: str) -> None:
+        """Alterna a política de reassociação de um sensor associado."""
+
+        sensor = self.state_store.find_sensor(logical_id)
+        if sensor is None or not sensor.wireless_uuid or sensor.association_state.upper() == "UNBOUND":
+            self.notify("O sensor não possui uma associação wireless ativa.", severity="warning", timeout=4)
+            return
+        current = sensor.failover_policy if sensor.failover_policy in {"AUTO", "MANUAL"} else None
+        policy = await self.push_screen_wait(
+            ChoiceScreen(
+                f"Reassociação do sensor {logical_id}",
+                "Define se o líder pode entregar este sensor a outro módulo sem intervenção do operador.",
+                [
+                    ("Automática: o líder reassocia quando o responsável falha", "AUTO"),
+                    ("Manual: só o operador muda o responsável", "MANUAL"),
+                ],
+                current,
+            )
+        )
+        if policy is None or policy == current:
+            return
+        if self._send_raw(commands.wireless_association("POLICY", sensor.parent_node_id, sensor.wireless_uuid, policy)):
+            await self.bus.publish(LogEvent("INFO", f"Política de reassociação de {logical_id}: {policy}", "BLE"))
+            self.notify("Política enviada; aguardando confirmação do módulo.", timeout=4)
 
     @work
     async def request_wireless_unbind(self, logical_id: str) -> None:

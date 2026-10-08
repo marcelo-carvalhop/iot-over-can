@@ -28,6 +28,16 @@ A associação é o **plano de controle**. O **plano de dados** é estabelecido 
 
 Essa camada está implementada e coberta por testes automatizados no computador, incluindo uma simulação que executa o código do Node e da Probe. **Ainda não foi validada em hardware.** O desenho, o modelo de ameaças e o roteiro de bancada estão em [`Documentacao/arquitetura/plano-de-dados-wireless.md`](Documentacao/arquitetura/plano-de-dados-wireless.md).
 
+A versão 0.18 acrescenta medição e resiliência, também sem validação em hardware até aqui:
+
+- **Métricas.** A Probe 00 mede a ocupação do barramento pela duração exata de cada quadro e o período de cada identificador. Os Nodes medem o tempo de ida e volta de cada enlace sem fio. A TUI calcula o pior tempo de resposta de cada mensagem (análise de Davis et al., 2007) e estima a capacidade restante.
+- **Reassociação automática.** Quando o operador autoriza, o líder entrega um sensor a outro Node que o alcance se o responsável sair do ar ou deixar de ouvi-lo.
+- **Recuperação sem a Probe.** Os seguidores vigiam o líder e pedem a eleição; a Probe 00 deixou de ser necessária para a rede se recuperar.
+- **Ensaios de falha.** Queda de módulo, módulo congelado, queda do ponto de acesso e carga no barramento, comandados pela TUI, que mede a reação da rede.
+- **Bancada virtual.** O firmware completo do Node CAN é executado no computador, em vários Nodes ao mesmo tempo, com barramento, rádios e sensores simulados. Quinze cenários fazem parte dos testes, e a TUI os reproduz com `--replay`.
+
+Detalhes em [`Documentacao/arquitetura/metricas-e-ensaios.md`](Documentacao/arquitetura/metricas-e-ensaios.md). O que está preparado para CAN FD, e a recomendação de não migrar por ora, estão em [`Documentacao/arquitetura/predisposicao-can-fd.md`](Documentacao/arquitetura/predisposicao-can-fd.md).
+
 ## TUI
 
 A interface é uma aplicação Textual em tela cheia organizada por assunto, sem a antiga concentração de topologia, telemetria, comandos e logs na mesma visão. A navegação principal é:
@@ -41,6 +51,8 @@ Início
 ├── Rede CAN
 ├── Mensagens
 ├── Sensores sem fio
+├── Métricas da rede
+├── Ensaios
 └── Ajuda
 ```
 
@@ -59,6 +71,8 @@ Teclas globais:
 | `F5` ou `r` | Rede CAN |
 | `F6` ou `m` | Mensagens |
 | `F7` ou `w` | Sensores sem fio |
+| `F8` ou `b` | Métricas da rede |
+| `F9` ou `e` | Ensaios |
 | `F10` ou `q` | Sair |
 | `Esc` | Voltar |
 
@@ -102,6 +116,12 @@ Para iniciar já apontando para a Probe 00:
 
 A TUI continua abrindo sem hardware. `F3` ou `p` permite escolher a porta depois.
 
+Sem hardware, a TUI também reproduz uma sessão gravada da bancada virtual, com métricas e ensaios:
+
+```bash
+cd Front && python -m pico_tui --replay replays/owner_failover.log --replay-speed 4
+```
+
 Build de um Node CAN com ID 1:
 
 ```bash
@@ -129,11 +149,18 @@ Testes nativos:
 ./Codigo/scripts/test_native_firmware.sh
 ```
 
+O mesmo script executa a bancada virtual. Para rodar um cenário e ver o que cada Node escreve:
+
+```bash
+./Codigo/scripts/build_network_sim.sh /tmp/sim_network
+/tmp/sim_network leader_failure --verbose
+```
+
 Os procedimentos completos estão em [`Documentacao/build_e_teste.md`](Documentacao/build_e_teste.md).
 
 ## Segurança operacional
 
-A TUI, o firmware do sensor e o enlace entre sensor e Node aplicam controles em fronteiras diferentes. Leitura permanece disponível conforme o modo operacional; comandos mutáveis passam pelo `SecurityManager`, e comandos mutáveis do sensor direto também precisam ser autorizados pelo firmware. Eleição, administração de Node, ajuste de liveness, associação/desassociação wireless e comandos `CMD ...` são classificados como ações mutáveis na TUI.
+A TUI, o firmware do sensor e o enlace entre sensor e Node aplicam controles em fronteiras diferentes. Leitura permanece disponível conforme o modo operacional; comandos mutáveis passam pelo `SecurityManager`, e comandos mutáveis do sensor direto também precisam ser autorizados pelo firmware. Eleição, administração de Node, ajuste de liveness, associação/desassociação wireless, política de reassociação, ensaios de falha (`FAULT ...`) e comandos `CMD ...` são classificados como ações mutáveis na TUI. Os comandos de ensaio existem para bancada; fora dela, os Nodes devem ser compilados com `-D IOT_FAULT_INJECTION=0`.
 
 Arquivos locais:
 
@@ -164,8 +191,12 @@ O índice oficial está em [`Documentacao/README.md`](Documentacao/README.md). A
 ## Itens ainda a implementar
 
 - validação em bancada do plano de dados wireless e da autenticação do enlace;
+- validação em bancada das métricas, da vigilância do líder, da reassociação automática e dos ensaios de falha;
+- ajuste, com medição em bancada, dos tempos de espera do sensor que limitam a reassociação (hoje cerca de 25 s);
+- detecção, pelo próprio Node, de que ele está isolado do barramento, para liberar os sensores;
 - persistência e recuperação dos vínculos após reinicialização dos Nodes;
 - autenticação de origem dos comandos e dados no barramento CAN;
 - entrega da chave do sensor pela estação no momento da associação, retirando a chave mestra dos Nodes;
 - verificação FIDO2/OTP real da chave física do operador;
-- migração experimental para CAN FD com MCP2518FD após estabilização do protocolo funcional.
+- segundo sensor (áudio, INMP441) e painel de estado em papel eletrônico (M5Stack PaperColor) via Wi-Fi;
+- experimento comparativo em CAN FD com MCP2518FD, com as métricas e os ensaios atuais como linha de base.

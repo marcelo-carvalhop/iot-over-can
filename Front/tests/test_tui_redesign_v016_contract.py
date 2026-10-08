@@ -72,5 +72,5 @@ def test_v016_uses_single_full_screen_subject_architecture() -> None:
 def test_v016_version_is_consistent() -> None:
     pyproject = (ROOT / "Front" / "pyproject.toml").read_text(encoding="utf-8")
     init = (FRONT / "__init__.py").read_text(encoding="utf-8")
-    assert 'version = "0.17.0"' in pyproject
-    assert '__version__ = "0.17.0"' in init
+    assert 'version = "0.18.0"' in pyproject
+    assert '__version__ = "0.18.0"' in init

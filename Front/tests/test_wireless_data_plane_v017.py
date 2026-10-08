@@ -70,7 +70,10 @@ def test_can_identifiers_reserve_lowest_priority_range_for_sensor_data() -> None
     # Dados de sensores usam os maiores identificadores do projeto: nunca
     # vencem a arbitragem contra eleição, controle, liveness ou associação.
     values = [int(token, 16) for token in re.findall(r"0x[0-9A-Fa-f]{3}\b", ids)]
-    assert max(values) == 0x39F
+    # A única exceção é a carga artificial de baixa prioridade dos ensaios
+    # (v0.18), gerada pela Probe 00 e ignorada pelos Nodes.
+    assert "#define CAN_ID_TEST_LOAD_LOW              0x7EF" in ids
+    assert max(value for value in values if value != 0x7EF) == 0x39F
 
 
 def test_sensor_firmware_shares_link_library_and_scans_for_offers() -> None:

@@ -24,6 +24,8 @@ htmlcov/
 # Logs and runtime data
 logs/
 *.log
+# Gravações da bancada virtual, usadas pelos testes e pelo modo --replay da TUI.
+!Front/replays/*.log
 *.csv
 *.jsonl
 *.binlog

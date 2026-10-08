@@ -67,10 +67,12 @@ Início
 ├── Rede CAN
 ├── Mensagens
 ├── Sensores sem fio
+├── Métricas da rede
+├── Ensaios
 └── Ajuda
 ```
 
-`Enter` abre o item realçado. `Esc` volta. `F2`/`i` retorna diretamente ao Início. Rede, Mensagens e Sensores sem fio são telas de primeiro nível: a TUI substitui a tela de primeiro nível atual em vez de empilhar cópias indefinidamente.
+`Enter` abre o item realçado. `Esc` volta. `F2`/`i` retorna diretamente ao Início. Rede, Mensagens, Sensores sem fio, Métricas e Ensaios são telas de primeiro nível: a TUI substitui a tela de primeiro nível atual em vez de empilhar cópias indefinidamente.
 
 ### Teclas globais
 
@@ -83,6 +85,8 @@ Início
 | `F5` / `r` | Rede CAN | `action_show_network` |
 | `F6` / `m` | Mensagens | `action_show_messages` |
 | `F7` / `w` | Sensores sem fio | `action_show_wireless` |
+| `F8` / `b` | Métricas da rede | `action_show_metrics` |
+| `F9` / `e` | Ensaios | `action_show_experiments` |
 | `F10` / `q` | Sair com confirmação | `action_exit_confirm` |
 | `Esc` | Voltar | `BaseScreen.action_back` |
 | `Ctrl+C` | interromper stream no sensor USB direto | tratamento em `on_key` |
@@ -210,11 +214,20 @@ Módulo 02 · -65 dBm
 Módulo 01 · -78 dBm
 ```
 
-O operador pode escolher qualquer um. Depois há confirmação explícita. Só então a TUI envia:
+O operador pode escolher qualquer um. Em seguida, `ChoiceScreen` pede a política de reassociação, o que também serve de confirmação:
 
 ```text
-WIRELESS BIND <node> <uuid>
+Associar com reassociação automática
+Associar; só o operador muda o responsável
 ```
+
+Só então a TUI envia:
+
+```text
+WIRELESS BIND <node> <uuid> [AUTO]
+```
+
+Com a reassociação automática, o líder da rede entrega o sensor a outro módulo que o alcance quando o responsável sai do ar ou deixa de ouvi-lo. A regra está em [`../arquitetura/metricas-e-ensaios.md`](../arquitetura/metricas-e-ensaios.md).
 
 A TUI não cria o filho localmente no clique. O fluxo esperado é:
 
@@ -234,7 +247,11 @@ O menor `child_id` livre é alocado pelo Node, não pela apresentação.
 
 ### Associados
 
-A lista mostra `NN.CC`, perfil, UUID, Node responsável, estado e RSSI do vínculo. `Enter` abre a tela do sensor.
+A lista mostra `NN.CC`, perfil, UUID, Node responsável, estado, RSSI do vínculo e a política de reassociação (automática, manual ou não informada, quando o firmware do Node é anterior à versão 0.18). `Enter` abre a tela do sensor.
+
+`f` altera a política do sensor realçado (`WIRELESS POLICY <node> <uuid> AUTO|MANUAL`). A lista só mostra a nova política depois que o Node a confirma.
+
+Quando o líder reassocia um sensor, o filho muda de `NN.CC`: o registro sob o módulo antigo é retirado assim que o novo módulo publica o vínculo, sem esperar um `UNBOUND` que não chega se o módulo antigo saiu do ar. A troca gera uma intercorrência nos dois módulos e uma mensagem de aviso.
 
 `d` solicita desassociação. Antes do envio, `ConfirmScreen` descreve a consequência. A TUI envia:
 
@@ -297,8 +314,12 @@ O campo manual é deliberadamente secundário e oculto por padrão. Texto sem `:
 :node 04.01
 :can 22 20 FF 00
 :wireless
-:bind [uuid] [módulo]
+:bind [uuid] [módulo] [auto]
 :unbind [uuid] [módulo]
+:policy [sensor|uuid] auto|manual
+:metrics [on|off|reset|export]
+:ensaios [nome do ensaio|stop]
+:export metrics
 :tel ...
 :fft ...
 :dtc ...
@@ -328,6 +349,61 @@ Mostra:
 - até 40 quadros recentes, com direção, ID, formato e bytes.
 
 Não existe rolagem horizontal; linhas longas são quebradas.
+
+A utilização e os indicadores de erro desta tela passam a vir da medição da Probe 00 (`BUS_STATS`) quando o firmware é da versão 0.18 ou posterior.
+
+## Métricas da rede — `MetricsScreen`
+
+Abre com `F8` ou `b`. Reúne o que é medido na sessão, em seções:
+
+| Seção | Conteúdo | Origem |
+|---|---|---|
+| Barramento | ocupação na última janela de 1 s, pico de 100 ms, máximos da sessão, quadros por segundo, estado de erro do controlador, contadores, fila de recepção, transferências segmentadas; gráfico da ocupação por segundo | `BUS_STATS` da Probe 00 |
+| Coordenação da rede | líder, período do sinal de presença, maior silêncio do líder, trocas de líder, eleições, pedidos de entrada, reassociações decididas, módulos em falha | linhas da Probe 00 |
+| Comandos aos sensores | quantidade e tempo de resposta mínimo, médio, percentil 95 e máximo | `RTT_MS` das confirmações |
+| Tempo de resposta no pior caso | ocupação do modelo, se todos os prazos são cumpridos, a mensagem de menor folga, capacidade restante | análise sobre `ID_STATS` |
+| Enlaces sem fio | por sensor: estado, sinal Wi-Fi, tempo de ida e volta, intervalo da telemetria, amostras perdidas entre o Node e a Probe, sessões, tempo da última retomada | `WIRELESS_LINK` e chegada da telemetria |
+| Acontecimentos | eleições, trocas de líder, módulos marcados em falha, reassociações | linhas da Probe 00 |
+| Mensagens por identificador | por identificador CAN: nome, quadros na janela, intervalo mínimo e variação ou tamanho estimado da rajada, pior tempo de resposta | `ID_STATS` e análise |
+
+`x` exporta as medições e os ensaios para `exports/` (um JSON e dois CSV). `z` zera os acumulados da sessão na TUI e na Probe 00.
+
+A análise de tempo de resposta é uma estimativa a partir do tráfego observado e a tela diz isso. O método e as ressalvas estão em [`../arquitetura/metricas-e-ensaios.md`](../arquitetura/metricas-e-ensaios.md).
+
+Sem `BUS_STATS` (Probe 00 com firmware anterior, sensor em USB direto), a seção Barramento informa que aguarda as medições; as seções alimentadas pela própria TUI continuam funcionando.
+
+## Ensaios — `ExperimentsScreen`
+
+Abre com `F9` ou `e`. À esquerda, a lista de ensaios; à direita, o que o ensaio realçado faz, o que mede e o que o operador precisa fazer depois. Abaixo, o ensaio em curso e os resultados dos ensaios concluídos.
+
+| Ensaio | Comando |
+|---|---|
+| Queda do líder | `FAULT POWER_CYCLE <líder> <s>` |
+| Queda de um módulo | `FAULT POWER_CYCLE <node> <s>` |
+| Módulo congelado | `FAULT SILENCE <node> <s>` |
+| Queda do ponto de acesso | `FAULT AP_OUTAGE <node> <s>` |
+| Sessões descartadas | `FAULT DROP_SESSION <node>` |
+| Carga de alta / baixa prioridade | `FAULT LOAD <pct> <s> HIGH|LOW` |
+| Ensaio manual | nenhum; marca início e fim de uma falha provocada à mão |
+
+`Enter` inicia: a TUI pede o módulo (com o mais indicado já realçado: o líder, ou um módulo com sensores sem fio), a duração e, nos ensaios de carga, o percentual; depois mostra o efeito e o comando e pede confirmação. O comando passa pelo `SecurityManager` como qualquer comando mutável.
+
+Durante o ensaio, a tela mostra o tempo decorrido, as medidas já obtidas e os acontecimentos com o instante em relação ao início da falha. O ensaio termina sozinho depois da duração da falha mais um período de observação, ou com `s`, que também envia `FAULT CANCEL`. Um ensaio por vez.
+
+O resultado é medido a partir das mensagens da rede. Uma medida que não pôde ser obtida aparece como "não observado", e não como zero. O maior intervalo sem telemetria conta a partir da última amostra recebida antes da falha, de sensores que vinham enviando nos 10 s anteriores ao ensaio. Um ensaio iniciado fora da tela (comando digitado no campo manual, reprodução de uma gravação) é reconhecido pelas linhas `FAULT_TX` e `FAULT_EVENT` e medido da mesma forma.
+
+No modo demonstração a rede simulada não reage à falha; apenas o início, o fim e a carga no barramento são representados. Para ver um ensaio completo sem hardware, use a reprodução de uma gravação.
+
+## Reprodução de gravações
+
+```bash
+cd Front
+python -m pico_tui --replay replays/owner_failover.log --replay-speed 4
+```
+
+A TUI lê um arquivo com as linhas da Probe 00 e o instante de cada uma (`@<ms> <linha>`) e as entrega ao decodificador no ritmo gravado, multiplicado por `--replay-speed`. Nenhum comando é enviado: `_send_raw` registra o comando com a marca "gravação: não enviado". As durações medidas nas telas de métricas e de ensaios usam o relógio da gravação, de modo que não dependem da velocidade de reprodução.
+
+As gravações em `Front/replays/` são produzidas pela bancada virtual (`Codigo/scripts/record_network_scenarios.sh`), que executa o firmware real do Node CAN.
 
 ## Mensagens — `MessagesScreen`
 
@@ -380,6 +456,10 @@ Escolhe o alvo da tela Comandos.
 ### `WirelessNodeScreen`
 
 Escolhe o Node responsável por um UUID disponível. Mostra RSSI de todas as observações recentes e marca textualmente a melhor recepção.
+
+### `ChoiceScreen`
+
+Lista curta de opções com título e explicação. Usada para a política de reassociação, para o módulo de um ensaio e para o percentual de carga.
 
 ## Layout responsivo
 
@@ -460,12 +540,13 @@ DTC crítico, bus-off e comunicação perdida elevam para Crítico. DTC de aviso
 22 00    eleição
 22 10    administração de Node
 22 30    liveness CAN
-WIRELESS BIND / UNBIND
+WIRELESS BIND / UNBIND / POLICY
+FAULT ...
 CMD ...
 RESET / SET / APPLY / DTC CLEAR / WIFI ...
 ```
 
-`22 20` permanece leitura. Se a autorização falhar, o comando é bloqueado; esconder a ação não é considerado mecanismo de segurança.
+`22 20` e `METRICS ...` permanecem leitura. Se a autorização falhar, o comando é bloqueado; esconder a ação não é considerado mecanismo de segurança.
 
 Em conexão USB direta, o firmware do Pico W ainda aplica sua própria sessão `AUTH UNLOCK` para comandos mutáveis.
 
@@ -514,6 +595,8 @@ Execução:
 
 A validação de layout deve incluir pelo menos 48×18, 60×24, 80×24, 100×30 e 160×48.
 
+`test_network_metrics_v018.py` cobre a versão 0.18 em quatro níveis: contrato do firmware; conferência da biblioteca C com referências em Python (duração de quadro, PDU autenticada); análise de tempo de resposta contra o exemplo publicado por Davis et al.; e ponta a ponta, entregando as gravações da bancada virtual ao decodificador, ao domínio, às métricas e ao registrador de ensaios. Um dos testes refaz as gravações e as compara com as versionadas. Os rótulos das seções em `Fields` não passam de 24 caracteres, para que a quebra de linha não intercale rótulo e valor.
+
 ## Capturas de referência
 
 As capturas fornecidas com o redesenho foram consolidadas em:
@@ -533,7 +616,10 @@ As imagens `antes_*` servem apenas para registrar o problema de densidade visual
 
 ## Limitações atuais
 
-- o vínculo wireless não transporta telemetria ou comandos do Pico W;
+- telemetria e comandos do Pico W pelo módulo CAN, métricas, reassociação e ensaios ainda não foram validados em hardware;
+- a variação de período medida pela Probe 00 inclui a latência do laço dela, da ordem de 1 ms;
+- a análise de tempo de resposta usa o tráfego observado, não um pior caso de projeto;
+- no modo demonstração a rede simulada não reage aos ensaios;
 - associação ainda não é persistida no Node após reinicialização;
 - só o perfil `VIBRATION` possui visualização especializada de telemetria;
 - preferências e intercorrências do modelo visual não substituem o JSONL técnico da sessão;

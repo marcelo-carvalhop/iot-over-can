@@ -100,6 +100,19 @@ pio device monitor -b 115200
 
 O diagnóstico normal da associação pode ser feito pelo JSONL da TUI/Probe, sem exigir uma porta USB adicional para cada Node.
 
+Opções de compilação do Node, passadas pela variável `PLATFORMIO_BUILD_FLAGS`:
+
+| Opção | Padrão | Efeito |
+|---|---|---|
+| `-D IOT_FAULT_INJECTION=0` | `1` | remove o tratamento dos comandos de ensaio nos Nodes |
+| `-D IOT_FOLLOWER_LEADER_WATCHDOG=0` | `1` | desativa a vigilância do líder pelos seguidores |
+
+```bash
+PLATFORMIO_BUILD_FLAGS="-D IOT_FAULT_INJECTION=0" ./Codigo/scripts/build_esp32_can_node.sh 1
+```
+
+A versão 0.18 muda o formato do estado de vínculo e do relatório de enlace no CAN. Grave todos os Nodes e a Probe 00 com a mesma versão.
+
 ## Sensor wireless — Raspberry Pi Pico W
 
 Build de bancada (usa a chave mestra de `.env.local`, se existir):
@@ -129,13 +142,38 @@ O alvo operacional é `pico_w`.
 ./Codigo/scripts/test_native_firmware.sh
 ```
 
-O script executa, no computador, três verificações: a validação de configuração do sensor; a biblioteca `ioc_link` (SHA-256/HMAC, autenticação do enlace, segmentação CAN); e a simulação sensor ↔ Node ↔ Probe, que compila `Codigo/node-can/src/wireless_link.cpp` com os substitutos de `Codigo/node-can/test/host/stubs/`. Requer `cc` e `c++`.
+O script executa, no computador, cinco verificações. Requer `cc` e `c++`.
+
+1. Validação de configuração do sensor.
+2. Biblioteca `ioc_link`: SHA-256/HMAC, autenticação do enlace, segmentação CAN.
+3. Biblioteca `ioc_link`, parte de rede: duração de quadro e CRC-15, PDU autenticada, segmentação em quadros de até 64 bytes e decisão de reassociação.
+4. Simulação sensor ↔ Node ↔ Probe, que compila `Codigo/node-can/src/wireless_link.cpp` com os substitutos de `Codigo/node-can/test/host/stubs/`.
+5. Bancada virtual: a Probe 00 e três Nodes, cada um o firmware completo, em quinze cenários.
 
 Para inspecionar a saída que a Probe 00 produziria:
 
 ```bash
 ./Codigo/scripts/build_wireless_link_sim.sh /tmp/sim_wireless_link
 /tmp/sim_wireless_link
+
+./Codigo/scripts/build_network_sim.sh /tmp/sim_network
+/tmp/sim_network --list
+/tmp/sim_network leader_failure --verbose      # inclui a serial de cada Node
+```
+
+### Gravações da bancada virtual
+
+`Front/replays/` guarda a saída da Probe 00 em cada cenário. Os testes da TUI usam essas gravações e conferem que elas correspondem ao firmware atual. Depois de alterar o firmware do Node de um modo que mude o que a Probe escreve, refaça-as:
+
+```bash
+./Codigo/scripts/record_network_scenarios.sh
+```
+
+A TUI reproduz uma gravação sem hardware, com as telas de métricas e de ensaios funcionando sobre ela:
+
+```bash
+cd Front
+python -m pico_tui --replay replays/owner_failover.log --replay-speed 4
 ```
 
 ## Validação wireless de bancada
@@ -151,9 +189,11 @@ Com o Pico anunciando:
 - após o `BIND`, o Node deve registrar `AP=ON` e, em seguida, `SECURE` para o filho;
 - com o Pico desligado, o plano de dados deve voltar a `OFFERING` em cerca de 10 s e se recuperar sem novo `BIND` quando o Pico retornar.
 
+O roteiro para métricas, vigilância do líder, reassociação e ensaios de falha está em [`arquitetura/metricas-e-ensaios.md`](arquitetura/metricas-e-ensaios.md), seção 9.
+
 ## Integração contínua
 
-`.github/workflows/ci.yml` usa os scripts operacionais e executa os testes da TUI, validação nativa e builds de firmware. Scripts devem estar versionados como executáveis (`100755`).
+`.github/workflows/ci.yml` usa os scripts operacionais e executa os testes da TUI, a validação nativa (com a bancada virtual) e os builds de firmware: Pico W, Node CAN e Probe 00. Scripts devem estar versionados como executáveis (`100755`).
 
 Verificação:
 

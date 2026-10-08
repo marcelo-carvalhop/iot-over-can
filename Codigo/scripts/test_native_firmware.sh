@@ -24,8 +24,26 @@ cc -std=c11 -Wall -Wextra -Werror \
   -lm -o "$OUT_DIR/test_ioc_link"
 "$OUT_DIR/test_ioc_link"
 
-# 3. Simulação sensor <-> Node <-> Probe com o código real de wireless_link.cpp.
+# 3. Medição de ocupação do barramento, PDU autenticado (predisposição para
+#    CAN FD), segmentação em quadros maiores e reassociação automática.
+cc -std=c11 -Wall -Wextra -Werror \
+  -I"$LINK" \
+  "$LINK/ioc_sha256.c" "$LINK/ioc_wdata.c" "$LINK/ioc_canbits.c" \
+  "$LINK/ioc_secpdu.c" "$LINK/ioc_failover.c" \
+  "$REPO_ROOT/Codigo/common/tests/test_ioc_net.c" \
+  -lm -o "$OUT_DIR/test_ioc_net"
+"$OUT_DIR/test_ioc_net"
+
+# 4. Simulação sensor <-> Node <-> Probe com o código real de wireless_link.cpp.
 "$REPO_ROOT/Codigo/scripts/build_wireless_link_sim.sh" "$OUT_DIR/sim_wireless_link"
 "$OUT_DIR/sim_wireless_link" > /dev/null
+
+# 5. Bancada virtual: Probe 00, três Nodes (firmware real) e sensores
+#    simulados. Cada cenário é um processo, pois um reinício de Node consome
+#    uma instância do firmware.
+"$REPO_ROOT/Codigo/scripts/build_network_sim.sh" "$OUT_DIR/sim_network"
+while IFS=$'\t' read -r scenario _description; do
+  "$OUT_DIR/sim_network" "$scenario" > /dev/null
+done < <("$OUT_DIR/sim_network" --list)
 
 echo "native firmware validation tests: PASS"

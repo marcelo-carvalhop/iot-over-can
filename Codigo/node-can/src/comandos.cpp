@@ -7,6 +7,8 @@
 #include "falhas.h"
 #include "wireless_discovery.h"
 #include "wireless_link.h"
+#include "net_metrics.h"
+#include "fault_injection.h"
 
 /* =========================================================
  * VARIAVEIS EXTERNAS DO .ino
@@ -53,7 +55,7 @@ static void sendControlFrame(uint8_t subcmd,
   msg.data[2] = targetId;
   msg.data[3] = action;
 
-  can.tryToSend(msg);
+  if (can.tryToSend(msg)) netMetricsOnTransmit(msg);
 }
 
 static void sendCommandAck(uint8_t originalSubcmd, uint8_t action, uint8_t result) {
@@ -66,7 +68,7 @@ static void sendCommandAck(uint8_t originalSubcmd, uint8_t action, uint8_t resul
   ack.data[3] = originalSubcmd;
   ack.data[4] = action;
   ack.data[5] = result;
-  can.tryToSend(ack);
+  if (can.tryToSend(ack)) netMetricsOnTransmit(ack);
 }
 
 static void printHexByte(uint8_t value) {
@@ -78,7 +80,8 @@ static void printHexByte(uint8_t value) {
 }
 
 static void printProbeVersion() {
-  Serial.println("PROBE_VERSION FIRMWARE=0.15.0 PROTOCOL=CAN_CLASSIC_V1 NODE=0");
+  Serial.println("PROBE_VERSION FIRMWARE=0.18.0 PROTOCOL=CAN_CLASSIC_V1 NODE=0 "
+                 "FEATURES=WIRELESS_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER");
 }
 
 static void printProbeStatus() {
@@ -271,6 +274,14 @@ void handleSerialCommands() {
       }
 
       if (wirelessLinkHandleSerialCommand(buffer)) {
+        return;
+      }
+
+      if (netMetricsHandleSerialCommand(buffer)) {
+        return;
+      }
+
+      if (faultInjectionHandleSerialCommand(buffer)) {
         return;
       }
 

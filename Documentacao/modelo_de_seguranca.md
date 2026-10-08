@@ -72,12 +72,16 @@ WIFI ...
 CMD ...
 WIRELESS BIND ...
 WIRELESS UNBIND ...
+WIRELESS POLICY ...
+FAULT ...     ensaios de injeção de falhas
 22 00 ...     eleição CAN
 22 10 ...     administração direcionada de Node
 22 30 ...     período de liveness
 ```
 
-`22 20 ...` é consulta e permanece leitura.
+`22 20 ...` é consulta e permanece leitura. `METRICS ON|OFF|RESET` altera apenas o que a Probe 00 escreve na serial e não é classificado como mutável.
+
+Os comandos CAN de quatro bytes são classificados pelo valor, e não pela grafia. A Probe 00 os lê com `sscanf("%hhx %hhx %hhx %hhx")`, que aceita o mesmo comando escrito de várias formas (`22 0 FF 01`, `0x22 00 FF 01`, dígitos a mais, sinal). A TUI refaz essa leitura e autoriza pela forma canônica; até a versão 0.17 essas variações passavam sem autorização.
 
 Essa classificação é aplicada também quando o operador usa o campo de comando manual. O fato de uma ação estar escondida ou desabilitada visualmente não é autorização.
 
@@ -106,6 +110,27 @@ A sessão expira. A TUI obtém `device_admin_token` somente quando necessário e
 `WIRELESS BIND` e `WIRELESS UNBIND` alteram responsabilidade distribuída e, por isso, são tratados como mutáveis pela TUI. A interface apresenta confirmação antes da ação e só atualiza a topologia depois da confirmação do Node (`ASSOCIATING/BOUND/...` ou `UNBOUND`).
 
 O UUID anunciado por BLE é apenas um identificador: qualquer dispositivo pode anunciá-lo e ser associado pelo operador. A prova de identidade acontece no plano de dados.
+
+### Reassociação automática
+
+A reassociação a outro Node é uma autorização por sensor, dada pelo operador (`WIRELESS BIND ... AUTO` ou `WIRELESS POLICY`). O padrão é manual. Com a política automática, quem decide é o líder da rede, a partir de informações que trafegam no barramento sem autenticação: o estado de vínculo publicado por cada Node e as observações de RSSI.
+
+Consequências, com o barramento CAN no estado atual (sem autenticação de origem):
+
+- quem consegue escrever no barramento pode forjar um pedido de reassociação ou o silêncio de um Node, e com isso mover um sensor de um Node para outro ou deixá-lo sem responsável;
+- não consegue ler os dados do sensor nem se passar por ele: a sessão entre sensor e Node continua exigindo a chave do dispositivo, e um Node só abre sessão com um sensor que prove conhecê-la;
+- o efeito máximo é, portanto, indisponibilidade do sensor, o mesmo que esse atacante já obteria ocupando o barramento.
+
+A política manual elimina a decisão automática, não o risco de fundo. A autenticação dos comandos no barramento está preparada em `ioc_secpdu` e descrita em [`arquitetura/predisposicao-can-fd.md`](arquitetura/predisposicao-can-fd.md).
+
+## Ensaios de falha
+
+Os comandos `FAULT ...` derrubam Nodes, desligam pontos de acesso e ocupam o barramento. São recursos de bancada.
+
+- Na TUI são mutáveis: passam pelo `SecurityManager`, pedem confirmação e mostram o comando que será enviado.
+- No barramento, o quadro `0x305` não é autenticado. Um equipamento ligado ao CAN pode enviá-lo.
+- Fora da bancada, os Nodes devem ser compilados com `-D IOT_FAULT_INJECTION=0`, que remove o tratamento do comando. A Probe 00 continua capaz de gerar carga no barramento (`FAULT LOAD`); ela é um equipamento de instrumentação e não deve permanecer ligada a uma rede em operação.
+- A duração é limitada a 120 s e um Node aceita um ensaio por vez.
 
 ## Enlace sensor ↔ Node CAN
 

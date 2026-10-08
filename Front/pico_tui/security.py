@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,12 +42,40 @@ MUTATING_PREFIXES = (
     "WIFI ",
     "WIRELESS ",
     "CMD ",
+    # Ensaios de injeção de falhas: derrubam módulos e ocupam o barramento.
+    "FAULT ",
     # Comandos administrativos da rede CAN enviados pela Probe 00.
     # "22 20" (solicitação de status) continua livre por ser somente leitura.
     "22 00 ",  # eleição de líder
     "22 10 ",  # desativar/reativar/limpar falha do sensor de um módulo
     "22 30 ",  # intervalo de liveness da rede
 )
+
+
+_HEX_FIELD = re.compile(r"\s*([+-]?)(?:0X(?=[0-9A-F]))?([0-9A-F]+)")
+
+
+def _canonical_can_command(command: str) -> str | None:
+    """Forma canônica ("22 00 FF 01") de um comando CAN em quatro bytes.
+
+    A Probe 00 lê esses comandos com sscanf("%hhx %hhx %hhx %hhx"), que aceita
+    variações do mesmo valor: "0" por "00", prefixo "0x", sinal, dígitos a
+    mais (só o byte menos significativo é mantido) e texto após o quarto
+    campo. A autorização precisa enxergar o que o firmware vai executar, e
+    não a grafia digitada; por isso a leitura é refeita aqui do mesmo modo.
+    Devolve None quando o texto não é um comando desse formato.
+    """
+
+    values: list[int] = []
+    position = 0
+    for _ in range(4):
+        match = _HEX_FIELD.match(command, position)
+        if match is None:
+            return None
+        value = int(match.group(2), 16)
+        values.append((-value if match.group(1) == "-" else value) & 0xFF)
+        position = match.end()
+    return " ".join(f"{value:02X}" for value in values)
 
 
 @dataclass(slots=True)
@@ -153,6 +182,13 @@ class SecurityManager:
         cmd = " ".join(command.strip().upper().split())
         if not cmd:
             return False
+        canonical = _canonical_can_command(cmd)
+        if canonical is not None and canonical != cmd and self._requires_auth(canonical):
+            return True
+        return self._requires_auth(cmd)
+
+    @staticmethod
+    def _requires_auth(cmd: str) -> bool:
         if cmd in READ_ONLY_COMMANDS:
             return False
         if cmd in {"AUTH STATUS", "AUTH LOCK"}:

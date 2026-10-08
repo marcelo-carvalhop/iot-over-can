@@ -1,7 +1,7 @@
 {
   "name": "iot-over-can",
-  "version": "0.17.0",
-  "description": "Plataforma experimental de IoT embarcada sobre CAN/CAN FD com descoberta, associação e plano de dados wireless autenticado, diagnóstico e supervisão local.",
+  "version": "0.18.0",
+  "description": "Plataforma experimental de IoT embarcada sobre CAN/CAN FD com descoberta, associação e plano de dados wireless autenticado, reassociação automática, medição da rede, ensaios de falha, diagnóstico e supervisão local.",
   "paths": {
     "tui": "Front",
     "can_firmware": "Codigo/node-can",
@@ -13,7 +13,11 @@
     "security": "Documentacao/modelo_de_seguranca.md",
     "build_and_test": "Documentacao/build_e_teste.md",
     "shared_firmware": "Codigo/common",
-    "wireless_data_plane": "Documentacao/arquitetura/plano-de-dados-wireless.md"
+    "wireless_data_plane": "Documentacao/arquitetura/plano-de-dados-wireless.md",
+    "metrics_and_experiments": "Documentacao/arquitetura/metricas-e-ensaios.md",
+    "can_fd_readiness": "Documentacao/arquitetura/predisposicao-can-fd.md",
+    "virtual_bench": "Codigo/node-can/test/host/sim_network.cpp",
+    "replays": "Front/replays"
   },
   "hardware": {
     "probe": "ESP32 + MCP2515, Node ID 0, instrumentação externa",
@@ -27,7 +31,11 @@
     "probe_role": "observação e injeção de bancada; fora da lógica distribuída",
     "wireless_association": "vínculo lógico explícito via Probe 00 e CAN; presença acompanhada por advertisements BLE",
     "wireless_data_plane": "Wi-Fi/UDP entre sensor e Node responsável, sessão HMAC-SHA256 com chave por dispositivo; dados no CAN em 0x380+N, comandos em 0x304",
-    "sensor_protocol": "0x06"
+    "sensor_protocol": "0x06",
+    "bus_metrics": "Probe 00: ocupação pela duração exata dos quadros (CRC-15 e bits de preenchimento reconstruídos) e período por identificador",
+    "wireless_failover": "reassociação decidida pelo líder a partir dos estados de vínculo e das observações de RSSI; autorização por sensor",
+    "leader_supervision": "Probe 00 (4 períodos) e seguidores (6 períodos, escalonados pelo identificador)",
+    "fault_injection": "comando 0x305, estado 0x306; carga artificial em 0x010 e 0x7F0; removível com IOT_FAULT_INJECTION=0"
   },
   "implemented": [
     "eleição e liveness lease dos Nodes CAN",
@@ -45,18 +53,32 @@
     "oferta de vínculo BLE autenticada e ponto de acesso por Node",
     "autenticação mútua sensor-Node por desafio-resposta, sessão com contador anti-replay",
     "telemetria, espectro, DTC e configuração do sensor associado através do Node CAN",
-    "simulação no computador do caminho sensor-Node-Probe-TUI"
+    "simulação no computador do caminho sensor-Node-Probe-TUI",
+    "medição de ocupação do barramento e de período por identificador pela Probe 00",
+    "tempo de ida e volta do enlace sem fio e tempo de resposta de comandos",
+    "análise de tempo de resposta (Davis et al., 2007) e estimativa de capacidade na TUI",
+    "reassociação automática de sensores, autorizada por sensor",
+    "vigilância do líder pelos seguidores",
+    "ensaios de injeção de falhas com medição do resultado na TUI",
+    "bancada virtual: firmware completo de vários Nodes CAN em um processo, com doze cenários",
+    "reprodução de gravações na TUI (--replay)",
+    "predisposição para CAN FD em biblioteca: segmentação até 64 bytes e PDU autenticada"
   ],
   "pending": [
     "validação em bancada do plano de dados wireless",
+    "validação em bancada de métricas, vigilância do líder, reassociação e ensaios",
+    "ajuste dos tempos de espera do sensor que limitam a reassociação",
+    "detecção de isolamento do barramento pelo próprio Node",
     "persistência da associação",
     "autenticação de origem no barramento CAN",
     "entrega da chave do sensor pela estação, sem chave mestra nos Nodes",
     "verificação FIDO2/OTP real da chave física",
-    "migração experimental para CAN FD"
+    "segundo sensor (áudio) e painel em papel eletrônico",
+    "experimento comparativo em CAN FD"
   ],
   "validation": {
-    "automated": "testes nativos, simulação e suíte da TUI",
-    "hardware": "plano de dados wireless e autenticação do enlace ainda não validados em bancada"
+    "automated": "testes nativos, simulação do plano de dados, bancada virtual com doze cenários e suíte da TUI",
+    "compiled": "firmware do Node CAN e da Probe 00 para ESP32 (arduino-esp32 2.0.17); firmware do Pico W inalterado nesta versão",
+    "hardware": "plano de dados wireless, métricas, reassociação e ensaios ainda não validados em bancada"
   }
 }

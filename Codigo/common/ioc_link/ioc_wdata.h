@@ -79,6 +79,26 @@ typedef enum {
     IOC_WD_RX_ERROR    = -1
 } ioc_wd_rx_result;
 
+/*
+ * Variantes para quadros maiores que 8 bytes (PREDISPOSIÇÃO para CAN FD).
+ * O formato é o mesmo; muda apenas quanto cabe em cada segmento: o primeiro
+ * leva frame_len - 4 bytes de dados e os demais frame_len - 2. Com 64 bytes
+ * por quadro, uma amostra de telemetria ocupa um quadro e um bloco de
+ * espectro, três. `frame_len` deve ser um tamanho válido de quadro CAN FD
+ * (8, 12, 16, 20, 24, 32, 48 ou 64); o último segmento é completado com
+ * zeros até o tamanho válido seguinte. Nenhum firmware do projeto usa estas
+ * funções ainda.
+ */
+#define IOC_WD_FD_MAX_FRAME_LEN 64
+
+/** Menor tamanho válido de quadro CAN FD que comporta `len` bytes; 0 se > 64. */
+uint8_t ioc_wd_fd_frame_len(size_t len);
+uint8_t ioc_wd_segment_count_ex(size_t len, uint8_t frame_len);
+/** Retorna o tamanho do quadro produzido (0 em erro). `frame` precisa de frame_len bytes. */
+uint8_t ioc_wd_build_segment_ex(uint8_t child, uint8_t kind, uint8_t transfer,
+                                const uint8_t *payload, size_t len, uint8_t index,
+                                uint8_t frame_len, uint8_t *frame);
+
 void ioc_wd_rx_reset(ioc_wd_rx *rx);
 /**
  * Entrega um quadro ao remontador. Quando retorna IOC_WD_RX_COMPLETE, *done
@@ -87,6 +107,9 @@ void ioc_wd_rx_reset(ioc_wd_rx *rx);
  */
 ioc_wd_rx_result ioc_wd_rx_push(ioc_wd_rx *rx, const uint8_t frame[IOC_WD_FRAME_LEN],
                                 uint32_t now_ms, const ioc_wd_rx_slot **done);
+/** Como ioc_wd_rx_push, para um quadro recebido com `frame_len` bytes (8 a 64). */
+ioc_wd_rx_result ioc_wd_rx_push_ex(ioc_wd_rx *rx, const uint8_t *frame, uint8_t frame_len,
+                                   uint32_t now_ms, const ioc_wd_rx_slot **done);
 
 /* ------------------------------------------------------------- telemetria */
 
@@ -154,7 +177,9 @@ void ioc_wd_spectrum_reduce(const float *in, uint16_t in_bins, uint16_t *out, ui
 
 #define IOC_WD_ACK_LEN    5
 #define IOC_WD_DTC_LEN    8
-#define IOC_WD_LINK_LEN   15
+#define IOC_WD_LINK_LEN        19
+#define IOC_WD_LINK_LEN_V017   15 /* formato anterior, sem tempo de resposta */
+#define IOC_WD_RTT_UNKNOWN      0xFFFFu
 #define IOC_WD_CONFIG_LEN 21
 
 typedef enum {
@@ -197,6 +222,8 @@ typedef struct {
     uint16_t lost_datagrams;
     uint8_t  stream_enabled;   /* telemetria sendo encaminhada ao CAN */
     uint16_t stream_period_ms;
+    uint16_t rtt_100us;        /* última ida e volta Node <-> sensor (PING/PONG), em 0,1 ms; 0xFFFF = sem medida */
+    uint16_t rtt_max_100us;    /* maior valor desde o início da sessão */
 } ioc_wd_link;
 
 typedef struct {

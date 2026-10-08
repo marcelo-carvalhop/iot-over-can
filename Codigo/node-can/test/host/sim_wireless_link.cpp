@@ -44,9 +44,13 @@ HostWiFi WiFi;
 std::deque<HostDatagram> WiFiUDP::inbox;
 std::deque<HostDatagram> WiFiUDP::outbox;
 
+HostEsp ESP;
+
 static uint32_t g_millis = 1000;
 uint32_t millis() { return g_millis; }
-void host_set_millis(uint32_t value) { g_millis = value; }
+uint32_t micros() { return g_millis * 1000u; }
+void delay(uint32_t ms) { g_millis += ms; }
+void HostEsp::restart() {}
 
 int HostSerial::printf(const char* fmt, ...) {
   char buf[2048];
@@ -238,9 +242,12 @@ struct SimSensor {
       switch (inner[2]) {
         case CMD_PING: {
           pings++;
+          Payload_Heartbeat ping{};
+          if (view.payload_len >= sizeof(ping)) memcpy(&ping, inner, sizeof(ping));
           Payload_Heartbeat pong{};
           pong.magic_header = NET_MAGIC_HEADER;
           pong.cmd_type = CMD_PONG;
+          pong.request_counter = ping.request_counter; // o sensor devolve o contador do PING
           sendData(&pong, sizeof(pong));
           break;
         }
@@ -401,7 +408,10 @@ int main() {
   g_millis += 1000;
   sensor.telemetry(true);
   cycle(sensor);
-  CHECK(probeSaw("TEL NODE=1 CHILD=1 SEQ=2 "));
+  // A sequência no CAN é a das amostras encaminhadas: a amostra descartada
+  // pelo Node (a segunda do sensor) não aparece como perda.
+  CHECK(probeSaw("TEL NODE=1 CHILD=1 SEQ=1 "));
+  CHECK(!probeSaw("TEL NODE=1 CHILD=1 SEQ=2 "));
 
   /* 5. Espectro sob demanda, reduzido para 64 faixas. */
   probeCommand("CMD TARGET=01.01 ACTION=FFT TX=A00002 MODE=VIEW_ONLY BINS=64");
@@ -631,6 +641,12 @@ int main() {
   wirelessLinkPoll();
   CHECK(!WiFi.apUp);
   takeCanFrames();
+
+  /* Tempos de resposta: PING/PONG no enlace e comando/confirmação na Probe. */
+  CHECK(probeSaw(" rtt_ms=5.0 rtt_max_ms=5.0"));
+  CHECK(probeSaw("ACK COMMAND=FFT STATE=APPLIED TX=A00002 NODE=1 CHILD=1 DETAIL=64 RTT_MS="));
+  CHECK(probeSaw("state=OFFERING rssi=0 age_s=0 rx=0 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 "
+                 "rtt_ms=-1 rtt_max_ms=-1"));
 
   if (g_failures) {
     fprintf(stderr, "sim_wireless_link: %d falha(s)\n", g_failures);
