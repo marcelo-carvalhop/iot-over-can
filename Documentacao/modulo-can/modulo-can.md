@@ -76,6 +76,43 @@ Dois Nodes com o mesmo sensor resolvem a duplicidade entre si: cede quem não te
 
 `fault_injection.cpp` trata o comando `0x305` nos Nodes e os comandos `FAULT ...` na Probe 00. Durante `POWER_CYCLE` e `SILENCE` o controlador CAN fica em modo somente escuta (não transmite nem confirma quadros) e o laço principal apenas descarta o que chega, exceto o cancelamento. `-D IOT_FAULT_INJECTION=0` remove o tratamento do comando nos Nodes.
 
+## Alimentação (planejado)
+
+Nada desta seção está implementado. Ela registra o problema observado na bancada e a proposta para tratá-lo.
+
+### Consumo
+
+Valores típicos do ESP32, não medidos nas placas do projeto:
+
+| Situação | Corrente em 5 V |
+|---|---|
+| Node sem sensor associado: processador e varredura BLE contínua (janela de 50 ms a cada 100 ms) | 100 a 130 mA |
+| Node com sensor associado: o ponto de acesso Wi-Fi fica ligado | 150 a 200 mA em média, picos de 300 a 500 mA ao transmitir |
+| Partida (calibração do rádio) | picos de 300 a 500 mA |
+| Módulo MCP2515 com TJA1050 | 10 a 70 mA, conforme a ocupação do barramento |
+
+Três Nodes somam de 0,4 a 0,6 A em média, com picos acima de 1 A quando coincidem. Um power bank com saída de 1 A não sustenta esses picos: a tensão cai, os ESP32 reiniciam por subtensão e, ao religarem juntos, repetem o pico. Na bancada, use uma fonte de 5 V com 3 A ou mais, cabos curtos e, se as placas dividirem a mesma alimentação, um capacitor eletrolítico de 470 a 1000 µF entre 5 V e GND perto de cada uma.
+
+### Como diagnosticar hoje
+
+No monitor serial (115200), a primeira linha após um reinício informa o motivo: `rst:0xf (BROWNOUT_RST)` ou `Brownout detector was triggered` indicam alimentação; `rst:0xc (SW_CPU_RESET)` com `Guru Meditation` indica falha do firmware. Na TUI, vários Nodes pedindo entrada na rede ao mesmo tempo apontam para uma causa comum, quase sempre a alimentação.
+
+### Monitoramento proposto
+
+Em três níveis, do que não exige hardware ao que exige:
+
+1. **Motivo do reinício, sem hardware adicional.** Na partida, o Node lê `esp_reset_reason()` (alimentação, subtensão, falha do firmware, vigilância, reinício por software) e incrementa um contador de reinícios em memória não volátil. As duas informações vão ao barramento quando ele entra na rede. A Probe 00 as escreve em uma linha própria (por exemplo, `[GW] NODE_BOOT node=2 reason=BROWNOUT boots=7`), e a TUI mostra na tela do módulo o último motivo e quantos reinícios por subtensão houve, abrindo uma intercorrência quando o motivo for subtensão.
+2. **Tensão de entrada, com dois resistores.** Um divisor do 5 V para uma entrada do ADC1 (o ADC2 não funciona com o Wi-Fi ligado), lido com `analogReadMilliVolts`. O Node publica a menor tensão de cada janela junto com o seu estado, e a TUI avisa abaixo de cerca de 4,6 V. É um aviso antecipado: o detector de subtensão do ESP32 vigia o 3,3 V e só atua quando o 5 V já caiu bem abaixo disso, por causa da queda no regulador da placa.
+3. **Corrente, com um sensor I²C (INA219 ou INA226).** Opcional. Mede o consumo real de cada placa, o que permitiria comparar, com números, o Node com e sem ponto de acesso e o efeito dos ajustes abaixo.
+
+### Ajustes de consumo no firmware
+
+- potência de transmissão menor no ponto de acesso (`WiFi.setTxPower`), já que na bancada o sensor fica perto;
+- partida escalonada: cada Node espera um intervalo proporcional ao seu identificador antes de ligar os rádios, para que os picos de calibração não coincidam;
+- opção de reduzir o ciclo da varredura BLE quando não há sensor sendo procurado.
+
+Nenhum desses ajustes substitui uma fonte adequada; eles reduzem os picos e a média.
+
 ## Persistência
 
 A associação ainda não é persistida em memória não volátil; uma reinicialização do Node remove a tabela local de vínculos e as sessões. Com a política automática, o líder devolve o sensor ao Node quando este volta a observá-lo e nenhum outro o alcança melhor; com a política manual, o operador precisa associar de novo. A persistência será adicionada antes de considerar o mecanismo de associação completo para implantação permanente.

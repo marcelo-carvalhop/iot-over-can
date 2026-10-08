@@ -194,6 +194,7 @@ O índice oficial está em [`Documentacao/README.md`](Documentacao/README.md). A
 - validação em bancada das métricas, da vigilância do líder, da reassociação automática e dos ensaios de falha;
 - ajuste, com medição em bancada, dos tempos de espera do sensor que limitam a reassociação (hoje cerca de 25 s);
 - detecção, pelo próprio Node, de que ele está isolado do barramento, para liberar os sensores;
+- monitoramento da alimentação de cada Node (motivo do último reinício, contagem de reinícios e, com um divisor resistivo, tensão de entrada), com aviso na TUI; e ajustes de consumo no firmware (potência do Wi-Fi, partida escalonada dos rádios);
 - persistência e recuperação dos vínculos após reinicialização dos Nodes;
 - autenticação de origem dos comandos e dados no barramento CAN;
 - entrega da chave do sensor pela estação no momento da associação, retirando a chave mestra dos Nodes;

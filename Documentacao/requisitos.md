@@ -31,6 +31,7 @@
 | Ensaios de injeção de falhas com medição do resultado | Implementado; validação em bancada pendente |
 | Verificação do firmware do Node CAN em bancada virtual | Implementado |
 | Persistência e recuperação da associação | Pendente |
+| Monitoramento da alimentação dos Nodes, com aviso na TUI | Pendente; proposta em `modulo-can/modulo-can.md` |
 | CAN FD no hardware final | Pendente; predisposição em biblioteca |
 
 ## Requisitos da interface
