@@ -66,6 +66,22 @@ A Probe 00 converte `CMD TARGET=NN.CC ...` em quadros `0x304` e remonta as trans
 
 BLE e Wi-Fi juntos não cabem na partição de aplicação padrão; `platformio.ini` usa `min_spiffs.csv`. Formatos e limites estão em [`../arquitetura/plano-de-dados-wireless.md`](../arquitetura/plano-de-dados-wireless.md).
 
+### Diagnóstico do enlace no monitor serial
+
+O Node escreve no próprio monitor serial (115200) cada passo do enlace com o sensor. As linhas não vão ao barramento:
+
+```text
+[NODE 2] [WLINK] AP=ON ssid=IOC-02 channel=11 ip=192.168.4.1 udp=4242
+[NODE 2] [WLINK] OFERTA uuid=0xE6616408432B6F39 canal=11: anunciando por BLE
+[NODE 2] [WLINK] estacao conectada mac=28:CD:C1:...
+[NODE 2] [WLINK] estacao recebeu ip=192.168.4.2
+[NODE 2] [WLINK] HELLO de 192.168.4.2:4242 uuid=0xE6616408432B6F39: conferido, CHALLENGE enviado
+[NODE 2] [WLINK] child=1 uuid=0xE6616408432B6F39 SECURE
+[NODE 2] [WLINK] OFERTA encerrada
+```
+
+Onde a sequência para indica a etapa com problema: sem `estacao conectada`, o sensor não entrou no Wi-Fi; sem `HELLO`, ele entrou mas não se apresentou; `chave nao confere` indica chaves diferentes entre Node e sensor. Recusas repetidas aparecem no máximo uma vez por segundo.
+
 ## Reassociação automática
 
 Cada vínculo tem uma política, escolhida pelo operador na associação ou depois: manual (padrão) ou automática. Todos os Nodes mantêm uma tabela com os vínculos publicados e as observações de RSSI que ouvem no barramento; o líder a consulta uma vez por segundo e, para um vínculo com política automática, pede a associação a outro Node quando o responsável sai do ar ou deixa de alcançar o sensor. O pedido do líder usa identificadores próprios (`0x302`/`0x303`) e não desfaz o vínculo anterior: o responsável antigo cede quando ouve o novo publicá-lo. Entre duas decisões para o mesmo sensor passam no mínimo 30 s. A decisão em si não faz entrada nem saída e está em `Codigo/common/ioc_link/ioc_failover.c`, testada no computador.

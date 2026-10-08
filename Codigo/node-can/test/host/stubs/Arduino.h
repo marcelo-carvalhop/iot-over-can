@@ -95,6 +95,7 @@ class IPAddress {
   IPAddress(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
       : value_((uint32_t)a << 24 | (uint32_t)b << 16 | (uint32_t)c << 8 | d) {}
   bool operator==(const IPAddress& other) const { return value_ == other.value_; }
+  uint8_t operator[](int index) const { return (uint8_t)(value_ >> (24 - 8 * index)); }
 
  private:
   uint32_t value_;

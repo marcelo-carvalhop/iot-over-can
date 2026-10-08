@@ -15,6 +15,10 @@
 #include <esp_system.h>
 #endif
 
+#ifdef ESP_PLATFORM
+#include <atomic>   // fila de eventos do Wi-Fi (só no hardware; ver diagnóstico)
+#endif
+
 #include "can_ids.h"
 #include "net_metrics.h"
 #include "node_config.h"
@@ -360,6 +364,107 @@ void publishConfig(const Link& link, uint8_t status) {
 
 /* ------------------------------------------------------- rádio do Node */
 
+/* -------------------------------------------------------- diagnóstico */
+
+// Uma linha no monitor serial do Node para cada passo do enlace com o
+// sensor: anúncio da oferta, estações no ponto de acesso, HELLO recebido e o
+// resultado da conferência. Essas linhas não vão ao barramento; servem para
+// localizar, em bancada, a etapa em que a associação para. Mensagens de
+// recusa repetidas saem no máximo uma vez por segundo.
+constexpr uint32_t DIAG_MIN_INTERVAL_MS = 1000;
+uint32_t diagRejectMs = 0;
+uint64_t diagOfferUuid = 0;
+bool diagOfferOk = false;
+
+void formatIp(const IPAddress& ip, char* out, size_t len) {
+  snprintf(out, len, "%u.%u.%u.%u", static_cast<unsigned>(ip[0]), static_cast<unsigned>(ip[1]),
+           static_cast<unsigned>(ip[2]), static_cast<unsigned>(ip[3]));
+}
+
+bool diagRejectAllowed() {
+  const uint32_t now = millis();
+  if (diagRejectMs != 0 && now - diagRejectMs < DIAG_MIN_INTERVAL_MS) return false;
+  diagRejectMs = now ? now : 1u;
+  return true;
+}
+
+void diagDatagram(const char* kind, const IPAddress& ip, uint16_t port, uint64_t uuid, const char* outcome,
+                  bool reject) {
+  if (reject && !diagRejectAllowed()) return;
+  char addr[16];
+  formatIp(ip, addr, sizeof(addr));
+  Serial.printf("[NODE %u] [WLINK] %s de %s:%u uuid=0x%016llX: %s\n", NODE_ID, kind, addr,
+                static_cast<unsigned>(port), static_cast<unsigned long long>(uuid), outcome);
+}
+
+#ifdef ESP_PLATFORM
+// Os eventos do ponto de acesso chegam na tarefa do driver Wi-Fi. São
+// guardados nesta fila (um produtor, um consumidor) e impressos pelo laço
+// principal, que é quem escreve na serial.
+struct StationEvent {
+  uint8_t kind;      // 1 conectada, 2 desconectada, 3 endereço atribuído
+  uint8_t mac[6];
+  uint32_t ip;       // ordem de rede
+};
+constexpr uint8_t STATION_EVENTS = 8;
+StationEvent stationEvents[STATION_EVENTS];
+std::atomic<uint8_t> stationHead{0};
+std::atomic<uint8_t> stationTail{0};
+bool stationEventsRegistered = false;
+
+void onWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
+  StationEvent e{};
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+      e.kind = 1;
+      memcpy(e.mac, info.wifi_ap_staconnected.mac, sizeof(e.mac));
+      break;
+    case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+      e.kind = 2;
+      memcpy(e.mac, info.wifi_ap_stadisconnected.mac, sizeof(e.mac));
+      break;
+    case ARDUINO_EVENT_WIFI_AP_STAIPASSIGNED:
+      e.kind = 3;
+      e.ip = info.wifi_ap_staipassigned.ip.addr;
+      break;
+    default:
+      return;
+  }
+  const uint8_t head = stationHead.load(std::memory_order_relaxed);
+  const uint8_t next = static_cast<uint8_t>((head + 1u) % STATION_EVENTS);
+  if (next == stationTail.load(std::memory_order_acquire)) return;   // fila cheia: descarta
+  stationEvents[head] = e;
+  stationHead.store(next, std::memory_order_release);
+}
+
+void registerStationEvents() {
+  if (stationEventsRegistered) return;
+  WiFi.onEvent(onWiFiEvent);
+  stationEventsRegistered = true;
+}
+
+void printStationEvents() {
+  uint8_t tail = stationTail.load(std::memory_order_relaxed);
+  while (tail != stationHead.load(std::memory_order_acquire)) {
+    const StationEvent& e = stationEvents[tail];
+    if (e.kind == 3) {
+      Serial.printf("[NODE %u] [WLINK] estacao recebeu ip=%u.%u.%u.%u\n", NODE_ID,
+                    static_cast<unsigned>(e.ip & 0xFFu), static_cast<unsigned>((e.ip >> 8) & 0xFFu),
+                    static_cast<unsigned>((e.ip >> 16) & 0xFFu), static_cast<unsigned>((e.ip >> 24) & 0xFFu));
+    } else {
+      Serial.printf("[NODE %u] [WLINK] estacao %s mac=%02X:%02X:%02X:%02X:%02X:%02X\n", NODE_ID,
+                    e.kind == 1 ? "conectada" : "desconectada", e.mac[0], e.mac[1], e.mac[2], e.mac[3],
+                    e.mac[4], e.mac[5]);
+    }
+    tail = static_cast<uint8_t>((tail + 1u) % STATION_EVENTS);
+    stationTail.store(tail, std::memory_order_release);
+  }
+}
+#else
+void registerStationEvents() {}
+void printStationEvents() {}
+#endif
+
 void startAccessPoint() {
   apStopPending = false; // um novo vínculo cancela o desligamento agendado
   if (apRunning || !haveKey || apOutageActive || radioOff) return;
@@ -369,6 +474,7 @@ void startAccessPoint() {
   ioc_link_wifi_ssid(NODE_ID, ssid);
   ioc_link_wifi_psk(networkKey, NODE_ID, psk);
   WiFi.persistent(false); // SSID e senha derivados não são gravados na NVS
+  registerStationEvents();
   WiFi.mode(WIFI_AP);
   const bool ok = WiFi.softAP(ssid, psk, ioc_link_wifi_channel(NODE_ID), 0, AP_MAX_STATIONS);
   ioc_secure_zero(psk, sizeof(psk));
@@ -376,10 +482,13 @@ void startAccessPoint() {
     Serial.printf("[NODE %u] [WLINK] AP=ERROR\n", NODE_ID);
     return;
   }
-  udp.begin(IOC_LINK_UDP_PORT);
+  const bool listening = udp.begin(IOC_LINK_UDP_PORT);
   apRunning = true;
-  Serial.printf("[NODE %u] [WLINK] AP=ON ssid=%s channel=%u\n", NODE_ID, ssid,
-                static_cast<unsigned>(ioc_link_wifi_channel(NODE_ID)));
+  char addr[16];
+  formatIp(WiFi.softAPIP(), addr, sizeof(addr));
+  Serial.printf("[NODE %u] [WLINK] AP=ON ssid=%s channel=%u ip=%s udp=%u%s\n", NODE_ID, ssid,
+                static_cast<unsigned>(ioc_link_wifi_channel(NODE_ID)), addr,
+                static_cast<unsigned>(IOC_LINK_UDP_PORT), listening ? "" : " (falha ao abrir a porta)");
 }
 
 void stopAccessPoint() {
@@ -396,6 +505,8 @@ void stopOfferAdvertising() {
   if (!offerAdvertising) return;
   NimBLEDevice::getAdvertising()->stop();
   offerAdvertising = false;
+  diagOfferUuid = 0;
+  Serial.printf("[NODE %u] [WLINK] OFERTA encerrada\n", NODE_ID);
 }
 
 // Anuncia a oferta de um sensor que ainda não tem sessão. Havendo mais de um,
@@ -449,6 +560,13 @@ void updateOfferAdvertising() {
   adv->setAdvertisementData(data);
   offerAdvertising = adv->start();
   lastOfferRotateMs = now;
+  if (target->uuid != diagOfferUuid || offerAdvertising != diagOfferOk) {
+    diagOfferUuid = target->uuid;
+    diagOfferOk = offerAdvertising;
+    Serial.printf("[NODE %u] [WLINK] OFERTA uuid=0x%016llX canal=%u: %s\n", NODE_ID,
+                  static_cast<unsigned long long>(target->uuid), static_cast<unsigned>(offer.channel),
+                  offerAdvertising ? "anunciando por BLE" : "falha ao iniciar o anuncio BLE");
+  }
 }
 
 /* ----------------------------------------------------- envio ao sensor */
@@ -718,17 +836,27 @@ void handleSensorPayload(Link& link, const uint8_t* inner, size_t len) {
 void handleHello(const uint8_t* datagram, size_t len, const ioc_env_view& view,
                  const IPAddress& ip, uint16_t port) {
   ioc_hello_t hello;
-  if (!ioc_hello_decode(view.payload, view.payload_len, &hello)) return;
+  if (!ioc_hello_decode(view.payload, view.payload_len, &hello)) {
+    diagDatagram("HELLO", ip, port, 0, "formato invalido", true);
+    return;
+  }
 
   // Só existe chave para sensores que o operador associou a este Node. Um
   // HELLO de UUID desconhecido é ignorado sem resposta.
   Link* link = findLinkByUuid(hello.uuid);
-  if (!link) return;
-  if (!ioc_env_verify(link->devKey, datagram, len)) {
-    if (link->authFailures < 0xFFFF) ++link->authFailures;
+  if (!link) {
+    diagDatagram("HELLO", ip, port, hello.uuid, "sensor nao associado a este Node", true);
     return;
   }
-  if (hello.protocol != IOC_LINK_VERSION) return;
+  if (!ioc_env_verify(link->devKey, datagram, len)) {
+    if (link->authFailures < 0xFFFF) ++link->authFailures;
+    diagDatagram("HELLO", ip, port, hello.uuid, "chave nao confere", true);
+    return;
+  }
+  if (hello.protocol != IOC_LINK_VERSION) {
+    diagDatagram("HELLO", ip, port, hello.uuid, "versao de protocolo diferente", true);
+    return;
+  }
 
   // O HELLO não carrega nada que o Node possa conferir quanto à atualidade,
   // então uma cópia capturada continua autêntica. Três regras limitam o que
@@ -739,11 +867,15 @@ void handleHello(const uint8_t* datagram, size_t len, const ioc_env_view& view,
   PendingHandshake& pending = link->pending;
   if (link->secure && ioc_ct_equal(hello.sensor_nonce, link->sessionSensorNonce, IOC_LINK_NONCE_LEN)) {
     if (link->replayDrops < 0xFFFF) ++link->replayDrops;
+    diagDatagram("HELLO", ip, port, hello.uuid, "repeticao do HELLO da sessao em vigor, ignorado", true);
     return;
   }
   const bool sameHello = pending.active &&
                          ioc_ct_equal(hello.sensor_nonce, pending.sensorNonce, IOC_LINK_NONCE_LEN);
-  if (pending.active && !sameHello && millis() - pending.startedMs < HELLO_GUARD_MS) return;
+  if (pending.active && !sameHello && millis() - pending.startedMs < HELLO_GUARD_MS) {
+    diagDatagram("HELLO", ip, port, hello.uuid, "autenticacao anterior em andamento, ignorado", true);
+    return;
+  }
 
   if (!sameHello) {
     pending.active = true;
@@ -763,7 +895,9 @@ void handleHello(const uint8_t* datagram, size_t len, const ioc_env_view& view,
   memcpy(challenge.sensor_nonce, pending.sensorNonce, IOC_LINK_NONCE_LEN);
   uint8_t raw[IOC_CHALLENGE_LEN];
   ioc_challenge_encode(&challenge, raw);
-  sendEnvelope(link->devKey, IOC_MSG_CHALLENGE, 0, raw, sizeof(raw), ip, port);
+  const bool sent = sendEnvelope(link->devKey, IOC_MSG_CHALLENGE, 0, raw, sizeof(raw), ip, port);
+  diagDatagram("HELLO", ip, port, hello.uuid, sent ? "conferido, CHALLENGE enviado" : "conferido, falha ao enviar o CHALLENGE",
+               false);
   publishLink(*link);
 }
 
@@ -821,6 +955,7 @@ void handleConfirm(const uint8_t* datagram, size_t len, const ioc_env_view& view
     promotePending(link, ip, port, view.counter);
     return;
   }
+  diagDatagram("CONFIRM", ip, port, 0, "nao confere com nenhuma autenticacao em andamento", true);
 }
 
 void handleDataUp(const uint8_t* datagram, size_t len, const ioc_env_view& view,
@@ -872,12 +1007,13 @@ void receiveDatagrams() {
       continue;
     }
     const int got = udp.read(rxDatagram, sizeof(rxDatagram));
-    if (got < static_cast<int>(IOC_ENV_OVERHEAD)) continue;
     const IPAddress ip = udp.remoteIP();
     const uint16_t port = udp.remotePort();
-
     ioc_env_view view;
-    if (!ioc_env_parse(rxDatagram, static_cast<size_t>(got), &view)) continue;
+    if (got < static_cast<int>(IOC_ENV_OVERHEAD) || !ioc_env_parse(rxDatagram, static_cast<size_t>(got), &view)) {
+      diagDatagram("datagrama", ip, port, 0, "formato desconhecido, descartado", true);
+      continue;
+    }
     switch (view.type) {
       case IOC_MSG_HELLO:   handleHello(rxDatagram, got, view, ip, port); break;
       case IOC_MSG_CONFIRM: handleConfirm(rxDatagram, got, view, ip, port); break;
@@ -1519,6 +1655,8 @@ void wirelessLinkOnUnbound(uint64_t uuid, uint8_t childId) {
   ioc_wd_link report;
   memset(&report, 0, sizeof(report));
   report.state = IOC_WD_LINK_DOWN;
+  report.rtt_100us = IOC_WD_RTT_UNKNOWN;       // sem sessão não há medida (antes saía 0,0 ms)
+  report.rtt_max_100us = IOC_WD_RTT_UNKNOWN;
   uint8_t raw[IOC_WD_LINK_LEN];
   ioc_wd_link_encode(&report, raw);
   queueTransfer(child, IOC_WD_KIND_LINK, raw, sizeof(raw));
@@ -1595,6 +1733,7 @@ void wirelessLinkPoll() {
       millis() - lastApAttemptMs >= AP_RETRY_MS) {
     startAccessPoint();
   }
+  printStationEvents();
   receiveDatagrams();
   maintainLinks();
   updateOfferAdvertising();

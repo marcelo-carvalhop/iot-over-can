@@ -19,6 +19,7 @@ class HostWiFi {
     return true;
   }
   bool softAPdisconnect(bool) { apUp = false; return true; }
+  IPAddress softAPIP() const { return IPAddress(192, 168, 4, 1); }
 };
 extern HostWiFi WiFi;
 
