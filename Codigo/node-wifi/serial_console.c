@@ -22,6 +22,7 @@
 #include "battery_monitor.h"
 #include "config_validation.h"
 #include "device_identity.h"
+#include "edge_link.h"
 
 extern OperationModeFSM main_get_active_fsm_mode(void);
 extern uint16_t         bite_get_current_status(void);
@@ -234,7 +235,7 @@ static void print_menu(void) {
     printf("  DTC CLEAR\n");
     printf("  NET\n");
     printf("  NET WIFI ON|OFF|STATUS       (wireless disabled at boot)\n");
-    printf("  NET WIFI PROVISION <ssid> <password>  (RAM only; future BLE uses same API)\n");
+    printf("  NET WIFI PROVISION <ssid> <password>  (RAM only; bancada)\n");
     printf("  NET WIFI CLEAR               (remove RAM provisioning)\n");
     printf("  AUTH STATUS|UNLOCK <token>|LOCK\n");
     printf("  VERSION\n");
@@ -587,9 +588,13 @@ static void process_line(char *line) {
             return;
         }
 
-        printf("NET STATE=%s WIFI=%s PROVISIONED=%s BLE_BEACON=%s\n", net_state_name(edge_net_get_state()),
+        printf("NET STATE=%s WIFI=%s PROVISIONED=%s BLE_BEACON=%s LINK_KEYS=%s PARENT_NODE=%u CHILD=%u "
+               "AUTH_REJECT=%u REPLAY_REJECT=%u\n", net_state_name(edge_net_get_state()),
                edge_net_is_enabled() ? "ON" : "OFF", yes_no(edge_net_is_wifi_provisioned()),
-               edge_ble_beacon_is_active() ? "ON" : "OFF");
+               edge_ble_beacon_is_active() ? "ON" : "OFF",
+               edge_link_key_mode_name(),
+               (unsigned)edge_net_parent_node_id(), (unsigned)edge_net_child_id(),
+               (unsigned)edge_net_auth_reject_count(), (unsigned)edge_net_replay_reject_count());
         return;
     }
 

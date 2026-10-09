@@ -161,6 +161,7 @@ ACTIONS: tuple[CommandAction, ...] = (
         "sensor.dtc_refresh", "sensor", "Consultar",
         "Atualizar diagnósticos (DTC)",
         "Lê novamente os códigos de diagnóstico ativos no sensor.",
+        modes=frozenset({"SENSOR_DIRECT", "DEMO"}),
     ),
     CommandAction(
         "sensor.wifi_status", "sensor", "Consultar",
@@ -213,6 +214,7 @@ ACTIONS: tuple[CommandAction, ...] = (
         "Reiniciar aquisição (POLLING)",
         "Reinicia a leitura do acelerômetro no modo operacional POLLING.",
         protected=True,
+        modes=frozenset({"SENSOR_DIRECT", "DEMO"}),
     ),
     CommandAction(
         "sensor.dtc_clear", "sensor", "Manutenção",
@@ -227,12 +229,14 @@ ACTIONS: tuple[CommandAction, ...] = (
         "Ativa o rádio Wi-Fi, desligado por padrão por segurança.",
         confirm="O Wi-Fi do sensor ficará ativo e visível na rede local. Continuar?",
         protected=True,
+        modes=frozenset({"SENSOR_DIRECT", "DEMO"}),
     ),
     CommandAction(
         "sensor.wifi_off", "sensor", "Manutenção",
         "Desligar Wi-Fi do sensor",
         "Desativa o rádio Wi-Fi e mantém o BLE disponível para descoberta.",
         protected=True,
+        modes=frozenset({"SENSOR_DIRECT", "DEMO"}),
     ),
 )
 

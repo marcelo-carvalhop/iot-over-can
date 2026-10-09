@@ -109,6 +109,31 @@ class AttentionItem:
 # ---------------------------------------------------------------------------
 
 
+DATA_LINK_LABELS = {
+    "NONE": "sem informação do módulo",
+    "DOWN": "sem canal de dados",
+    "OFFERING": "módulo anunciando a oferta ao sensor",
+    "HANDSHAKE": "autenticação em andamento",
+    "SECURE": "sessão autenticada ativa",
+    "NO_KEY": "módulo sem chave de enlace",
+}
+
+
+def data_link_label(state: str) -> str:
+    return DATA_LINK_LABELS.get((state or "NONE").upper(), (state or "desconhecido").lower())
+
+
+def failover_label(policy: str) -> str:
+    return {"AUTO": "automática", "MANUAL": "manual"}.get(policy.upper(), "não informada")
+
+
+def failover_help(policy: str) -> str:
+    return {
+        "AUTO": "o líder entrega o sensor a outro módulo se o responsável falhar",
+        "MANUAL": "só o operador muda o módulo responsável",
+    }.get(policy.upper(), "o módulo não informou a política (firmware anterior à versão 0.18)")
+
+
 def sensor_condition(sensor: SensorNode) -> Condition:
     reasons_critical: list[str] = []
     reasons_attention: list[str] = []
@@ -132,6 +157,9 @@ def sensor_condition(sensor: SensorNode) -> Condition:
         reasons_attention.append("Acelerômetro saturado")
     if sensor.quality in {DataQuality.DEGRADED, DataQuality.INVALID}:
         reasons_attention.append(f"Qualidade do dado {quality_label(sensor.quality).lower()}")
+
+    if sensor.data_link_state.upper() == "NO_KEY":
+        reasons_attention.append("Módulo sem chave de enlace: plano de dados desabilitado")
 
     if reasons_critical:
         return Condition(Level.CRITICAL, reasons_critical + reasons_attention)

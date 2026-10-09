@@ -1,8 +1,8 @@
 """Diálogos modais da TUI.
 
 Mantêm decisões curtas e locais fora das telas de contexto: conexão serial,
-confirmação de ações, parâmetros, configuração, escolha de alvo e escolha do
-módulo responsável por uma associação wireless.
+confirmação de ações, parâmetros, configuração, escolha de alvo, escolha do
+módulo responsável por uma associação wireless e escolhas simples em lista.
 """
 from __future__ import annotations
 
@@ -455,6 +455,41 @@ class WirelessNodeScreen(ModalScreen[int | None]):
             self.dismiss(int(str(event.option.id)))
         except (TypeError, ValueError):
             self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class ChoiceScreen(ModalScreen[str | None]):
+    """Escolha de uma opção em lista curta (política de reassociação, módulo de um ensaio)."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancelar", show=False)]
+
+    def __init__(self, title: str, hint: str, options: list[tuple[str, str]], current: str | None = None) -> None:
+        super().__init__()
+        self.dialog_title = title
+        self.hint = hint
+        self.options = options      # (rótulo, valor)
+        self.current = current
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="choice-dialog", classes="dialog"):
+            yield Static(self.dialog_title, classes="dialog-title")
+            if self.hint:
+                yield Static(self.hint, classes="dialog-hint")
+            yield OptionList(*[Option(label, id=value) for label, value in self.options], id="choice-list")
+            yield Static("Enter escolhe, Esc cancela.", classes="dialog-hint")
+
+    def on_mount(self) -> None:
+        widget = self.query_one("#choice-list", OptionList)
+        values = [value for _label, value in self.options]
+        if widget.option_count:
+            widget.highlighted = values.index(self.current) if self.current in values else 0
+        widget.focus()
+
+    @on(OptionList.OptionSelected, "#choice-list")
+    def _chosen(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(str(event.option.id))
 
     def action_cancel(self) -> None:
         self.dismiss(None)

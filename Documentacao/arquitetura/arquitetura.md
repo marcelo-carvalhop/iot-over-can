@@ -11,6 +11,7 @@ O **sensor wireless** é um Raspberry Pi Pico W com MPU6050. Ele executa aquisi�
 ```text
                  BLE advertising
 Pico W  ─────────────────────────────► Nodes CAN
+        ◄═════ Wi-Fi/UDP autenticado ═► Node responsável
                                            │
                                            │ CAN clássico 500 kbit/s
                                            ▼
@@ -22,15 +23,21 @@ Pico W  ────────────────────────
 
 ## Domínios de comunicação
 
-O CAN coordena os módulos funcionais. BLE transporta identidade, perfil, versão de protocolo e presença do sensor wireless. A associação atribui um UUID a um Node responsável; não cria, por si só, canal de telemetria.
+O CAN coordena os módulos funcionais. BLE transporta identidade, perfil, versão de protocolo e presença do sensor wireless, além da oferta de vínculo que o Node responsável dirige ao sensor. A associação atribui um UUID a um Node responsável; não cria, por si só, canal de telemetria.
 
-O plano de dados Pico W ↔ Node CAN é uma camada separada e permanece pendente. A TUI não representa associação como se fosse esse plano de dados.
+O plano de dados Pico W ↔ Node CAN é uma camada separada, sobre Wi-Fi/UDP, com sessão autenticada por HMAC-SHA256. Ele só existe enquanto o Node informa o estado `SECURE` para o filho; a TUI distingue os dois e não representa associação como se fosse plano de dados. O desenho completo está em [`plano-de-dados-wireless.md`](plano-de-dados-wireless.md).
 
 ## Liderança e liveness CAN
 
-Nodes funcionais podem assumir `LEADER` ou `FOLLOWER`. O líder publica presença; ausência dentro do lease leva à detecção de falha e pode iniciar eleição. A Probe 00 é excluída desse mecanismo.
+Nodes funcionais podem assumir `LEADER` ou `FOLLOWER`. O líder publica presença e declara ausente o seguidor que deixa de responder por cinco períodos. A Probe 00 não participa da eleição, do ciclo TDMA nem do sensoriamento.
 
-A chegada de um Node não substitui automaticamente o líder atual. Entre candidatos elegíveis, o firmware usa o critério implementado no protocolo de eleição.
+A falta do líder é percebida pelos próprios seguidores: sem sinal de presença por seis períodos, o seguidor de maior identificador pede a eleição. A Probe 00, quando ligada, faz o mesmo pedido antes, com quatro períodos; ela acelera a recuperação, mas a rede não depende dela. Até a versão 0.17 só a Probe fazia esse pedido, o que tornava a instrumentação necessária ao funcionamento.
+
+A chegada de um Node não substitui automaticamente o líder atual. Entre candidatos elegíveis, vence o de maior identificador. Se dois líderes coexistem por um instante (um líder que travou e retomou, por exemplo), prevalece o de maior identificador, tanto entre os líderes quanto para os seguidores.
+
+## Medição e ensaios
+
+A Probe 00 mede a ocupação do barramento e o período de cada identificador; os Nodes informam o tempo de ida e volta de cada enlace sem fio. A TUI reúne essas medidas, calcula o pior tempo de resposta de cada mensagem e conduz ensaios de falha (queda de módulo, módulo congelado, queda do ponto de acesso, carga no barramento), medindo a reação da rede. O firmware do Node pode ser executado no computador, em vários Nodes ao mesmo tempo, para verificar esse comportamento sem hardware. Tudo isso está em [`metricas-e-ensaios.md`](metricas-e-ensaios.md).
 
 ## Funções locais dos Nodes
 
@@ -126,7 +133,10 @@ Essa distinção é obrigatória para interpretar o estado atual:
 | escolher Node responsável | implementado |
 | criar/remover filho lógico | implementado |
 | liveness do vínculo | implementado |
-| telemetria Pico → Node → CAN → TUI | pendente |
-| comando TUI → CAN → Node → Pico | pendente |
+| oferta de vínculo e sessão autenticada Pico ↔ Node | funcionou em bancada física (08/10/2026); falha em aberto com um dos Nodes |
+| telemetria Pico → Node → CAN → TUI | funcionou em bancada física (08/10/2026), inclusive espectro sob pedido |
+| comando TUI → CAN → Node → Pico | implementado; validação em bancada pendente |
+| reassociação automática a outro Node, quando autorizada | funcionou uma vez em bancada física (08/10/2026) |
+| persistência do vínculo após reinício do Node | pendente |
 
-A interface filtra ações conforme essa matriz. Um filho associado aparece e pode ser desassociado, mas não oferece telemetria/FFT/configuração via Node enquanto o plano de dados não existir.
+A interface filtra ações conforme o estado informado pelo Node. Um filho associado aparece e pode ser desassociado; telemetria, FFT e configuração via Node só são oferecidas enquanto o plano de dados está em `SECURE`.

@@ -8,9 +8,14 @@ A documentação oficial é organizada por assunto, sem cópias paralelas ou rel
 | [`estrutura-do-projeto.md`](estrutura-do-projeto.md) | organização do repositório |
 | [`requisitos.md`](requisitos.md) | requisitos funcionais, de interface, software e segurança |
 | [`build_e_teste.md`](build_e_teste.md) | instalação, execução, build, upload e validação |
+| [`validacao-em-bancada.md`](validacao-em-bancada.md) | registro das sessões de teste com o hardware real |
 | [`modelo_de_seguranca.md`](modelo_de_seguranca.md) | autorização, arquivos locais, provisionamento e renovação |
 | [`desafios_e_resolucoes.md`](desafios_e_resolucoes.md) | problemas técnicos com impacto arquitetural e soluções |
 | [`arquitetura/arquitetura.md`](arquitetura/arquitetura.md) | elementos físicos, domínios, associação e camadas de software |
+| [`arquitetura/plano-de-dados-wireless.md`](arquitetura/plano-de-dados-wireless.md) | enlace autenticado sensor ↔ Node, transporte no CAN, modelo de ameaças e roteiro de bancada |
+| [`arquitetura/metricas-e-ensaios.md`](arquitetura/metricas-e-ensaios.md) | medição do barramento, análise de tempo de resposta, reassociação automática, vigilância do líder, ensaios de falha e bancada virtual |
+| [`arquitetura/predisposicao-can-fd.md`](arquitetura/predisposicao-can-fd.md) | o que está preparado para CAN FD, o que a migração exigiria e a recomendação atual |
+| [`arquitetura/comissionamento-de-sensores.md`](arquitetura/comissionamento-de-sensores.md) | proposta (não implementada) para entregar a chave ao sensor pela rede, sem compilar o firmware |
 | [`protocolo/protocolo.md`](protocolo/protocolo.md) | CAN, Probe 00, BLE, associação, sensor, DTC e fragmentação |
 | [`interface/tui.md`](interface/tui.md) | especificação completa da TUI, telas, comandos, wireless, layout e cores |
 | [`modulo-can/modulo-can.md`](modulo-can/modulo-can.md) | firmware e comportamento dos Nodes CAN |

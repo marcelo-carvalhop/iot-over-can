@@ -7,10 +7,12 @@ iot-over-can/
 ├── Front/
 │   ├── pico_tui/
 │   │   ├── core/
+│   │   ├── metrics/
 │   │   ├── protocol/
 │   │   ├── services/
 │   │   ├── app.py
 │   │   ├── screens.py
+│   │   ├── metrics_screens.py
 │   │   ├── dialogs.py
 │   │   ├── widgets.py
 │   │   ├── presentation.py
@@ -21,13 +23,18 @@ iot-over-can/
 │   │   ├── security.py
 │   │   ├── serial_client.py
 │   │   └── app.tcss
+│   ├── replays/
 │   ├── tests/
 │   ├── pyproject.toml
 │   └── README.md
 ├── Codigo/
+│   ├── common/
+│   │   ├── ioc_link/
+│   │   └── tests/
 │   ├── node-can/
 │   │   ├── include/
 │   │   ├── src/
+│   │   ├── test/host/
 │   │   ├── tools/
 │   │   └── platformio.ini
 │   ├── node-wifi/
@@ -36,7 +43,11 @@ iot-over-can/
 │   │   └── fontes do firmware
 │   └── scripts/
 ├── Documentacao/
-│   ├── arquitetura/arquitetura.md
+│   ├── arquitetura/
+│   │   ├── arquitetura.md
+│   │   ├── plano-de-dados-wireless.md
+│   │   ├── metricas-e-ensaios.md
+│   │   └── predisposicao-can-fd.md
 │   ├── protocolo/protocolo.md
 │   ├── interface/
 │   │   ├── tui.md
@@ -59,6 +70,7 @@ Responsabilidades principais:
 |---|---|
 | `app.py` | ciclo de vida, navegação, autorização e execução de ações |
 | `screens.py` | telas cheias de contexto |
+| `metrics_screens.py` | telas Métricas da rede e Ensaios |
 | `dialogs.py` | decisões modais curtas |
 | `widgets.py` | componentes responsivos e sem truncamento |
 | `presentation.py` | regras de condição, rótulos e formatação |
@@ -68,21 +80,38 @@ Responsabilidades principais:
 | `palette.py` | identidade Aço industrial |
 | `security.py` | autorização da TUI |
 | `core/` | modelos, eventos e store |
+| `metrics/` | acúmulo das medições (`service.py`), análise de tempo de resposta (`rta.py`), catálogo e medição dos ensaios (`experiments.py`), nomes dos identificadores (`catalog.py`) e exportação (`export.py`) |
 | `protocol/` | decodificação dos contratos seriais/CAN |
 | `services/` | domínio, demonstração e persistência de log |
+| `replays/` | saída da Probe 00 em cada cenário da bancada virtual; entrada dos testes e de `--replay` |
 | `tests/` | testes automatizados e contratos |
+
+## `Codigo/common/`
+
+Código C portátil compartilhado pelos dois firmwares e testado no computador.
+
+| Arquivo | Responsabilidade |
+|---|---|
+| `ioc_link/ioc_sha256.*` | SHA-256 e HMAC-SHA256 |
+| `ioc_link/ioc_link.*` | derivação de chaves, oferta de vínculo, envelope autenticado e handshake |
+| `ioc_link/ioc_wdata.*` | segmentação no CAN e formatos de telemetria, espectro, confirmação, DTC, enlace e configuração |
+| `ioc_link/ioc_canbits.*` | duração exata de um quadro CAN clássico (CRC-15 e bits de preenchimento), para a medição do barramento |
+| `ioc_link/ioc_failover.*` | decisão de reassociação de sensores, sem entrada nem saída |
+| `ioc_link/ioc_secpdu.*` | PDU autenticada para o barramento (predisposição; não usada pelo firmware) |
+| `tests/test_ioc_link.c` | testes nativos e vetores para conferência com Python |
+| `tests/test_ioc_net.c` | testes nativos da medição, da PDU autenticada, da segmentação em quadros maiores e da reassociação |
 
 ## `Codigo/node-can/`
 
-Firmware dos ESP32 + MCP2515. Inclui eleição, liveness CAN, função local, descoberta BLE, associação wireless e publicação dos estados do vínculo. O diretório local `legacy/`, quando existir, é ignorado e não integra build/repositório público.
+Firmware dos ESP32 + MCP2515. Inclui eleição, liveness CAN, função local, descoberta BLE, associação wireless, publicação dos estados do vínculo, o plano de dados dos sensores associados (`wireless_link.cpp`), a medição do barramento na Probe 00 (`net_metrics.cpp`) e os ensaios de falha (`fault_injection.cpp`). `test/host/` contém duas simulações: a que executa `wireless_link.cpp` no computador com rádio, UDP e CAN substituídos, e a bancada virtual (`sim_network.cpp`), que executa o firmware completo de vários Nodes em um mesmo processo. O diretório local `legacy/`, quando existir, é ignorado e não integra build/repositório público.
 
 ## `Codigo/node-wifi/`
 
-Firmware do Raspberry Pi Pico W: MPU6050, aquisição, DSP, DTC, BLE advertising, console serial, rede e segurança.
+Firmware do Raspberry Pi Pico W: MPU6050, aquisição, DSP, DTC, BLE advertising e varredura de ofertas, console serial, sessão autenticada com o Node (`edge_network_driver.c`, `edge_link.c`) e segurança. `edge_protocol_definitions.h` é a definição única dos payloads do sensor e também é incluído pelo firmware dos Nodes.
 
 ## `Codigo/scripts/`
 
-Scripts de setup da TUI, testes, build, upload e provisionamento. Não contém scripts de inicialização de repositório Git.
+Scripts de setup da TUI, testes, build, upload e provisionamento. `build_network_sim.sh` compila a bancada virtual e `record_network_scenarios.sh` regrava `Front/replays/`. Não contém scripts de inicialização de repositório Git.
 
 ## `Documentacao/`
 

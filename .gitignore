@@ -24,6 +24,8 @@ htmlcov/
 # Logs and runtime data
 logs/
 *.log
+# Gravações da bancada virtual, usadas pelos testes e pelo modo --replay da TUI.
+!Front/replays/*.log
 *.csv
 *.jsonl
 *.binlog
@@ -49,3 +51,6 @@ yubikey_*.txt
 # Conteúdo mantido apenas na estação local de desenvolvimento
 Codigo/node-can/legacy/
 Documentacao/release-v*.md
+
+# Patches de trabalho não pertencem ao repositório
+*.patch

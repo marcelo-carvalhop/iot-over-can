@@ -5,6 +5,7 @@
 #include "node_types.h"
 #include "protocolo.h"
 #include "comandos.h"
+#include "net_metrics.h"
 
 /* =========================================================
  * VARIAVEIS DEFINIDAS NO ARQUIVO PRINCIPAL .ino
@@ -221,7 +222,7 @@ void sendStatusResponse() {
   msg.data[2] = NODE_ID;
   msg.data[3] = getLocalStatusCode();
 
-  can.tryToSend(msg);
+  if (can.tryToSend(msg)) netMetricsOnTransmit(msg);
 
   updateNetworkStatusLocal(NODE_ID, msg.data[3]);
 

@@ -5,6 +5,7 @@ import time
 
 from pico_tui.core.event_bus import EventBus
 from pico_tui.core.events import (
+    BusStatsReceived,
     CanFrameReceived,
     ConnectionClosed,
     ConnectionModeDetected,
@@ -29,6 +30,9 @@ from pico_tui.core.events import (
     TransferFailed,
     WirelessCandidateReceived,
     WirelessAssociationReceived,
+    WirelessConfigReceived,
+    WirelessFailoverReceived,
+    WirelessLinkReceived,
 )
 from pico_tui.core.models import (
     AcquisitionMode,
@@ -74,6 +78,10 @@ class DomainController:
             (PhysicalNodeReceived, self._physical_node),
             (WirelessCandidateReceived, self._wireless_candidate),
             (WirelessAssociationReceived, self._wireless_association),
+            (WirelessLinkReceived, self._wireless_link),
+            (WirelessFailoverReceived, self._wireless_failover),
+            (BusStatsReceived, self._bus_stats),
+            (WirelessConfigReceived, self._wireless_config),
             (SensorStatusReceived, self._sensor_status),
             (DirectSensorVersionReceived, self._direct_version),
             (DirectSensorStatusReceived, self._direct_status),
@@ -222,12 +230,34 @@ class DomainController:
             "STALE": NodeStatus.STALE,
             "LOST": NodeStatus.LOST,
         }
+        # Um sensor tem um único módulo responsável. Quando outro módulo passa
+        # a publicar o vínculo (reassociação), o registro anterior é retirado
+        # sem esperar o UNBOUND, que não chega se o módulo antigo saiu do ar.
+        if state in {"ASSOCIATING", "BOUND", "ONLINE"}:
+            for other_id, other in list(self.state.snapshot(history=0, frames=0).nodes.items()):
+                if other_id == event.parent_node_id:
+                    continue
+                for child_id, existing in list(other.sensors.items()):
+                    if existing.wireless_uuid and existing.wireless_uuid.lower() == event.wireless_uuid.lower():
+                        self.state.remove_sensor(other_id, child_id)
+                        await self.bus.publish(
+                            LogEvent(
+                                "WARNING",
+                                f"{event.wireless_uuid}: responsável passou do Módulo {other_id:02d} "
+                                f"para o Módulo {event.parent_node_id:02d}",
+                                "BLE",
+                            )
+                        )
+
         sensor = self.state.ensure_sensor(
             event.parent_node_id,
             event.child_id,
             wireless_uuid=event.wireless_uuid,
         )
         previous_assoc = sensor.association_state
+        policy = sensor.failover_policy
+        if event.failover_auto is not None:
+            policy = "AUTO" if event.failover_auto else "MANUAL"
         self.state.update_sensor(
             event.parent_node_id,
             event.child_id,
@@ -236,6 +266,7 @@ class DomainController:
             protocol_version=event.protocol_version,
             association_state=state,
             association_rssi_dbm=event.rssi_dbm,
+            failover_policy=policy,
             status=status_map.get(state, NodeStatus.UNKNOWN),
         )
         if previous_assoc != state:
@@ -246,6 +277,134 @@ class DomainController:
                     f"(RSSI={event.rssi_dbm} dBm)",
                     "BLE",
                 )
+            )
+
+    async def _wireless_link(self, event: WirelessLinkReceived) -> None:
+        """Atualiza o estado do plano de dados informado pelo Node responsável."""
+
+        node = self.state.find_node(event.parent_node_id)
+        sensor = node.sensors.get(event.child_id) if node else None
+        if sensor is None:
+            # O filho lógico só existe depois de WIRELESS_ASSOC. Um relatório de
+            # enlace isolado não cria sensor, senão um UNBIND já processado
+            # ressuscitaria o filho.
+            return
+        state = event.state.upper()
+        previous_state = sensor.data_link_state
+        previous_auth = sensor.data_link_auth_failures
+        previous_replay = sensor.data_link_replay_drops
+        self.state.update_sensor(
+            event.parent_node_id,
+            event.child_id,
+            data_link_state=state,
+            data_link_rssi_dbm=event.rssi_dbm,
+            data_link_session_age_s=event.session_age_s,
+            data_link_rx_datagrams=event.rx_datagrams,
+            data_link_auth_failures=event.auth_failures,
+            data_link_replay_drops=event.replay_drops,
+            data_link_lost_datagrams=event.lost_datagrams,
+            data_link_rtt_ms=event.rtt_ms,
+            data_link_rtt_max_ms=event.rtt_max_ms,
+        )
+        self.state.update_sensor_health(
+            event.parent_node_id,
+            event.child_id,
+            network_state="BOUND" if state == "SECURE" else "DISCOVERY",
+            telemetry_enabled=event.stream_enabled and state == "SECURE",
+            telemetry_period_ms=event.stream_period_ms,
+        )
+        ident = f"{event.parent_node_id:02d}.{event.child_id:02d}"
+        if state != previous_state:
+            if state == "SECURE":
+                level, text = "INFO", "sessão autenticada estabelecida com o módulo"
+            elif state == "NO_KEY":
+                level, text = "WARNING", "módulo sem chave de enlace; plano de dados desabilitado"
+            elif previous_state == "SECURE":
+                level, text = "WARNING", "sessão de dados encerrada; aguardando nova autenticação"
+            else:
+                level, text = "INFO", f"plano de dados em {state}"
+            if previous_state == "SECURE" or state in {"SECURE", "NO_KEY"}:
+                self.state.add_sensor_incident(
+                    event.parent_node_id,
+                    event.child_id,
+                    Severity.INFO if level == "INFO" else Severity.WARNING,
+                    "ENLACE",
+                    f"Plano de dados: {text}",
+                    key=f"link:{state}",
+                )
+            await self.bus.publish(LogEvent(level, f"{ident}: {text}", "LINK"))
+        # Os contadores zeram a cada novo vínculo; só interessa o crescimento.
+        rejected = max(0, event.auth_failures - previous_auth) + max(0, event.replay_drops - previous_replay)
+        if rejected:
+            message = (
+                f"{rejected} datagrama(s) rejeitado(s) pelo módulo "
+                f"(autenticação={event.auth_failures}, repetição={event.replay_drops})"
+            )
+            self.state.add_sensor_incident(
+                event.parent_node_id,
+                event.child_id,
+                Severity.WARNING,
+                "SEGURANCA",
+                message,
+                key="link:rejected",
+            )
+            await self.bus.publish(LogEvent("WARNING", f"{ident}: {message}", "SECURITY"))
+
+    async def _bus_stats(self, event: BusStatsReceived) -> None:
+        """Medição da Probe 00: ocupação e estado de erro do barramento."""
+
+        self.state.update_network(
+            utilization_percent=event.load_percent,
+            bus_off=bool(event.error_flags & 0x20),
+            error_passive=event.rx_errors >= 128 or event.tx_errors >= 128,
+            error_warning=event.rx_errors >= 96 or event.tx_errors >= 96,
+        )
+
+    async def _wireless_failover(self, event: WirelessFailoverReceived) -> None:
+        reason = {
+            "OWNER_LOST": "o módulo responsável saiu do ar",
+            "SENSOR_LOST": "o sensor saiu do alcance do módulo responsável",
+        }.get(event.reason, event.reason)
+        message = (
+            f"Reassociação automática de {event.wireless_uuid}: Módulo {event.from_node_id:02d} → "
+            f"Módulo {event.to_node_id:02d} ({reason})"
+        )
+        for node_id in {event.from_node_id, event.to_node_id}:
+            if self.state.find_node(node_id) is not None:
+                self.state.add_node_incident(node_id, Severity.WARNING, "REASSOCIACAO", message, key=f"failover:{event.wireless_uuid}")
+        await self.bus.publish(LogEvent("WARNING", message, "BLE"))
+
+    async def _wireless_config(self, event: WirelessConfigReceived) -> None:
+        node = self.state.find_node(event.parent_node_id)
+        if node is None or event.child_id not in node.sensors:
+            return
+        payload = event.payload
+        status = event.status.upper()
+        mode = _sensor_mode(payload.get("MODE"))
+        values: dict[str, object] = {
+            "mode": mode,
+            "sample_rate_requested_hz": parse_float(payload.get("RATE_REQ_HZ")),
+            "sample_rate_effective_hz": parse_float(payload.get("RATE_EFF_HZ")),
+            "window_type": payload.get("WINDOW"),
+            "window_size": parse_int(payload.get("WINDOW_SIZE")),
+            "stalta_threshold": parse_float(payload.get("STALTA")),
+            "calibration_gain": parse_float(payload.get("GAIN")),
+        }
+        # CURRENT é apenas sincronização de estado e não altera o resultado da
+        # última alteração pedida pelo operador.
+        if status in {"APPLIED", "REJECTED"}:
+            values["transaction_state"] = status
+        self.state.update_sensor_configuration(event.parent_node_id, event.child_id, **values)
+        if mode != SensorMode.UNKNOWN:
+            self.state.update_sensor(event.parent_node_id, event.child_id, sensor_mode=mode, profile_id="VIBRATION")
+        if status == "REJECTED":
+            self.state.add_sensor_incident(
+                event.parent_node_id,
+                event.child_id,
+                Severity.WARNING,
+                "CONFIGURACAO",
+                "Configuração recusada pelo sensor; valores anteriores mantidos",
+                key="config:rejected",
             )
 
     async def _sensor_status(self, event: SensorStatusReceived) -> None:
@@ -545,10 +704,10 @@ class DomainController:
         )
 
     async def _legacy_heartbeat(self, event: LegacyHeartbeatReceived) -> None:
+        # O sinal de presença não é uma ação do operador: "Última ação" continua
+        # mostrando o último comando. Líder, período e intervalos ficam na tela
+        # de métricas (pico_tui.metrics.service).
         self.state.update_node(event.leader, node_type="CAN_NODE", role="LEADER", status=NodeStatus.ONLINE, legacy_last_round=event.round_number)
-        self.state.set_last_action(
-            f"Heartbeat líder={event.leader} rodada={event.round_number} período={event.period_ms} ms"
-        )
 
     async def _fragment(self, event: FragmentReceived) -> None:
         key = (*event.source, event.transfer_type, event.transfer_id)
@@ -606,6 +765,16 @@ class DomainController:
                     raise ValueError("payload F32 não múltiplo de 4")
                 magnitudes = list(struct.unpack(f"<{len(payload) // 4}f", payload))
                 unit = "float"
+            elif fmt == "U16_SCALED":
+                # Espectro reduzido pelo Node: cada valor é a fração do pico
+                # (SCALE) em 16 bits. A magnitude original é recuperada aqui.
+                if len(payload) % 2:
+                    raise ValueError("payload U16 não múltiplo de 2")
+                scale = _as_float(metadata.get("SCALE")) or 0.0
+                magnitudes = [
+                    v * scale / 65535.0 for v in struct.unpack(f"<{len(payload) // 2}H", payload)
+                ]
+                unit = "raw"
             else:
                 if len(payload) % 2:
                     raise ValueError("payload U16 não múltiplo de 2")

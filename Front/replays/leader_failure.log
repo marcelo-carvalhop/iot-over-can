@@ -1,0 +1,217 @@
+# cenario=leader_failure: lider sai do ar e volta como seguidor
+@301 ========================================
+@301 Iniciando NODE 0
+@301 ========================================
+@301 [LEDS] IDLE: todos acesos. Logica invertida: LOW=ligado, HIGH=desligado
+@301 [PROBE 00] CAPS=CAN_MONITOR,SERIAL_INSTRUMENTATION LOCAL_PROFILE=NONE
+@301 [NODE 0] [FALHA] Modulo de falha real inicializado; simulacao por software removida
+@301 [NODE 0] [HB] modo=3 periodo=1000 ms
+@301 [GW] BLE scanner disabled on Probe 00
+@301 [GW] Plano de dados wireless: CMD TARGET=NN.CC ACTION=... TX=...
+@301 [GW] Metricas do barramento: METRICS ON|OFF|RESET
+@301 [GW] Ensaios: FAULT POWER_CYCLE|SILENCE|AP_OUTAGE|DROP_SESSION|LOAD|CANCEL
+@301 [GW] Probe 00 ativada
+@301 [GW] Instrumentacao externa: nao participa da eleicao, TDMA ou sensoriamento
+@301 [GW] Interface serial da Probe 00 pronta
+@301 [GW] Iniciar eleicao: 22 00 FF 01
+@301 [GW] Solicitar status: 22 20 FF 00
+@301 [GW] Velocidade heartbeat: 22 30 FF 01..05
+@301 [PROBE 00] FIRMWARE=0.18.0 FEATURES=WIRELESS_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER
+# t=601 node=1 ligado
+# t=901 node=2 ligado
+# t=1201 node=3 ligado
+# t=1201 comando: 22 00 FF 01
+@1201 [GW] Comando enviado: 22 00 FF 01
+@1201 [GW] Gateway nao participa da eleicao
+@1202 [GW] No descoberto: NODE 1
+@1202 [GW] ELEICAO recebida de NODE 1
+@1202 [GW] No descoberto: NODE 2
+@1202 [GW] ELEICAO recebida de NODE 2
+@1202 [GW] No descoberto: NODE 3
+@1202 [GW] ELEICAO recebida de NODE 3
+@1301 [GW] BUS_STATS t_ms=1300 win_ms=1000 frames=4 bits=264 load=0.05 peak=0.52 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=2 xfer_ok=0 xfer_err=0 own=1 untracked=0
+@2301 [GW] BUS_STATS t_ms=2300 win_ms=1000 frames=0 bits=0 load=0.00 peak=0.00 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=2 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@3301 [GW] BUS_STATS t_ms=3300 win_ms=1000 frames=0 bits=0 load=0.00 peak=0.00 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=2 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@4301 [GW] BUS_STATS t_ms=4300 win_ms=1000 frames=0 bits=0 load=0.00 peak=0.00 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=2 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@5301 [GW] BUS_STATS t_ms=5300 win_ms=1000 frames=0 bits=0 load=0.00 peak=0.00 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=2 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@6201 [GW] ID_STATS id=0x080 win_ms=5000 n=1 dlc=4 bits=84 dt_min_us=0 dt_avg_us=0 dt_max_us=0
+@6201 [GW] CONTROLE RX 23 50 1 1
+@6201 [GW] Atualizacao de status recebida: [STATUS] NODE 1 estado=ATIVO
+@6201 [GW] CONTROLE RX 23 50 2 1
+@6201 [GW] Atualizacao de status recebida: [STATUS] NODE 2 estado=ATIVO
+@6201 [GW] CONTROLE RX 23 50 3 0
+@6201 [GW] Atualizacao de status recebida: [STATUS] NODE 3 estado=LIDER
+@6202 [GW] CONTROLE RX 22 20 FF 0
+@6202 [NODE 0] [STATUS TX] codigo=4
+@6202 [GW] CONTROLE RX 23 21 1 1
+@6202 [NODE 0] [STATUS RX] NODE 1 estado=ATIVO
+@6202 [GW] CONTROLE RX 23 21 2 1
+@6202 [NODE 0] [STATUS RX] NODE 2 estado=ATIVO
+@6241 [GW] ID_STATS id=0x050 win_ms=5039 n=3 dlc=1 bits=180 dt_min_us=37 dt_avg_us=37 dt_max_us=37
+@6301 [GW] BUS_STATS t_ms=6300 win_ms=1000 frames=7 bits=588 load=0.11 peak=1.17 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=2 xfer_ok=0 xfer_err=0 own=1 untracked=0
+@7301 [GW] BUS_STATS t_ms=7300 win_ms=1000 frames=0 bits=0 load=0.00 peak=0.00 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=2 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@7701 [GW] Lider anunciado: NODE 3
+@7701 [GW] CONTROLE RX 23 50 3 0
+@7701 [GW] Atualizacao de status recebida: [STATUS] NODE 3 estado=LIDER
+@8301 [GW] BUS_STATS t_ms=8300 win_ms=1000 frames=2 bits=144 load=0.02 peak=0.28 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=3 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@8701 [GW] CONTROLE RX 23 50 3 0
+@8701 [GW] Atualizacao de status recebida: [STATUS] NODE 3 estado=LIDER
+@8701 [GW] HEARTBEAT lider=3 rodada=0 sensores_ativos=2 modo=3 periodo=1000 ms
+@9301 [GW] BUS_STATS t_ms=9300 win_ms=1000 frames=2 bits=179 load=0.03 peak=0.35 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=4 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@9701 [GW] HEARTBEAT lider=3 rodada=1 sensores_ativos=2 modo=3 periodo=1000 ms
+@9702 [GW] SENSOR sensor=2 rodada=1 valor=0xAA ativo=1
+@10002 [STATUS TX] Requisicao global de status enviada
+@10003 [GW] CONTROLE RX 23 21 1 1
+@10003 [NODE 0] [STATUS RX] NODE 1 estado=ATIVO
+@10003 [GW] CONTROLE RX 23 21 2 1
+@10003 [NODE 0] [STATUS RX] NODE 2 estado=ATIVO
+@10003 [GW] CONTROLE RX 23 21 3 0
+@10003 [NODE 0] [STATUS RX] NODE 3 estado=LIDER
+@10301 [GW] BUS_STATS t_ms=10300 win_ms=1000 frames=6 bits=523 load=0.10 peak=0.66 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=5 xfer_ok=0 xfer_err=0 own=1 untracked=0
+@10701 [GW] HEARTBEAT lider=3 rodada=2 sensores_ativos=2 modo=3 periodo=1000 ms
+@10702 [GW] SENSOR sensor=1 rodada=2 valor=0xAA ativo=1
+@11201 [GW] ID_STATS id=0x080 win_ms=5000 n=13 dlc=4 bits=1090 dt_min_us=37 dt_avg_us=677082 dt_max_us=5000500
+@11301 [GW] BUS_STATS t_ms=11300 win_ms=1000 frames=2 bits=187 load=0.03 peak=0.37 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=5 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@11701 [GW] HEARTBEAT lider=3 rodada=3 sensores_ativos=2 modo=3 periodo=1000 ms
+@11702 [GW] SENSOR sensor=2 rodada=3 valor=0xAA ativo=1
+@12301 [GW] BUS_STATS t_ms=12300 win_ms=1000 frames=2 bits=187 load=0.03 peak=0.37 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=5 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@12701 [GW] ID_STATS id=0x060 win_ms=5000 n=1 dlc=1 bits=60 dt_min_us=0 dt_avg_us=0 dt_max_us=0
+@12701 [GW] HEARTBEAT lider=3 rodada=4 sensores_ativos=2 modo=3 periodo=1000 ms
+@12702 [GW] SENSOR sensor=1 rodada=4 valor=0xAA ativo=1
+@13301 [GW] BUS_STATS t_ms=13300 win_ms=1000 frames=2 bits=188 load=0.03 peak=0.37 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=5 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@13701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=472 dt_min_us=999963 dt_avg_us=999990 dt_max_us=1000000
+@13701 [GW] HEARTBEAT lider=3 rodada=5 sensores_ativos=2 modo=3 periodo=1000 ms
+# t=13702 comando: FAULT POWER_CYCLE 3 20
+@13702 [GW] FAULT_TX kind=POWER_CYCLE node=3 duration_ms=20000 seq=1
+@13702 [GW] SENSOR sensor=2 rodada=5 valor=0xAA ativo=1
+@13714 [GW] FAULT_EVENT node=3 kind=POWER_CYCLE state=STARTED duration_ms=20000 seq=1
+@14301 [GW] BUS_STATS t_ms=14300 win_ms=1000 frames=4 bits=431 load=0.08 peak=0.86 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=1 untracked=0
+@14702 [GW] ID_STATS id=0x200 win_ms=5000 n=5 dlc=5 bits=468 dt_min_us=1000000 dt_avg_us=1000009 dt_max_us=1000037
+@15301 [GW] BUS_STATS t_ms=15300 win_ms=1000 frames=0 bits=0 load=0.00 peak=0.00 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@16301 [GW] BUS_STATS t_ms=16300 win_ms=1000 frames=0 bits=0 load=0.00 peak=0.00 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@17301 [GW] BUS_STATS t_ms=17300 win_ms=1000 frames=0 bits=0 load=0.00 peak=0.00 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@17702 [GW] Falha detectada no lider NODE 3
+@17702 [GW] Comando enviado: 22 00 FF 01
+@17703 [GW] ELEICAO recebida de NODE 1
+@17703 [GW] ELEICAO recebida de NODE 2
+@18301 [GW] BUS_STATS t_ms=18300 win_ms=1000 frames=3 bits=204 load=0.04 peak=0.40 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=1 untracked=0
+@18701 [GW] ID_STATS id=0x100 win_ms=5000 n=1 dlc=5 bits=95 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+@18741 [GW] ID_STATS id=0x305 win_ms=5039 n=1 dlc=8 bits=121 dt_min_us=0 dt_avg_us=0 dt_max_us=0
+@18781 [GW] ID_STATS id=0x306 win_ms=5067 n=1 dlc=8 bits=121 dt_min_us=0 dt_avg_us=0 dt_max_us=0
+@19301 [GW] BUS_STATS t_ms=19300 win_ms=1000 frames=0 bits=0 load=0.00 peak=0.00 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@20301 [GW] BUS_STATS t_ms=20300 win_ms=1000 frames=0 bits=0 load=0.00 peak=0.00 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@21201 [GW] ID_STATS id=0x080 win_ms=5000 n=1 dlc=4 bits=84 dt_min_us=7698926 dt_avg_us=7698926 dt_max_us=7698926
+@21241 [GW] ID_STATS id=0x050 win_ms=5000 n=2 dlc=1 bits=120 dt_min_us=37 dt_avg_us=8250481 dt_max_us=16500926
+@21301 [GW] BUS_STATS t_ms=21300 win_ms=1000 frames=0 bits=0 load=0.00 peak=0.00 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@22301 [GW] BUS_STATS t_ms=22300 win_ms=1000 frames=0 bits=0 load=0.00 peak=0.00 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@22702 [GW] CONTROLE RX 23 50 1 1
+@22702 [GW] Atualizacao de status recebida: [STATUS] NODE 1 estado=ATIVO
+@22702 [GW] CONTROLE RX 23 50 2 0
+@22702 [GW] Atualizacao de status recebida: [STATUS] NODE 2 estado=LIDER
+@22702 [GW] CONTROLE RX 22 20 FF 0
+@22702 [NODE 0] [STATUS TX] codigo=4
+@22703 [GW] CONTROLE RX 23 21 1 1
+@22703 [NODE 0] [STATUS RX] NODE 1 estado=ATIVO
+@23301 [GW] BUS_STATS t_ms=23300 win_ms=1000 frames=5 bits=421 load=0.08 peak=0.84 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=1 untracked=0
+@24202 [GW] Lider anunciado: NODE 2
+@24202 [GW] CONTROLE RX 23 50 2 0
+@24202 [GW] Atualizacao de status recebida: [STATUS] NODE 2 estado=LIDER
+@24202 [STATUS TX] Requisicao global de status enviada
+@24203 [GW] CONTROLE RX 23 21 1 1
+@24203 [NODE 0] [STATUS RX] NODE 1 estado=ATIVO
+@24203 [GW] CONTROLE RX 23 21 2 0
+@24203 [NODE 0] [STATUS RX] NODE 2 estado=LIDER
+@24301 [GW] BUS_STATS t_ms=24300 win_ms=1000 frames=5 bits=397 load=0.07 peak=0.79 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=1 untracked=0
+@25202 [GW] CONTROLE RX 23 50 2 0
+@25202 [GW] Atualizacao de status recebida: [STATUS] NODE 2 estado=LIDER
+@25202 [GW] HEARTBEAT lider=2 rodada=0 sensores_ativos=1 modo=3 periodo=1000 ms
+# t=25203 lider substituido em 11500 ms
+@25301 [GW] BUS_STATS t_ms=25300 win_ms=1000 frames=2 bits=182 load=0.03 peak=0.36 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@26201 [GW] ID_STATS id=0x080 win_ms=5000 n=10 dlc=4 bits=845 dt_min_us=37 dt_avg_us=750050 dt_max_us=5000500
+@26202 [GW] HEARTBEAT lider=2 rodada=1 sensores_ativos=1 modo=3 periodo=1000 ms
+@26203 [GW] SENSOR sensor=1 rodada=1 valor=0xAA ativo=1
+@26301 [GW] BUS_STATS t_ms=26300 win_ms=1000 frames=2 bits=188 load=0.03 peak=0.37 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@27202 [GW] HEARTBEAT lider=2 rodada=2 sensores_ativos=1 modo=3 periodo=1000 ms
+@27203 [GW] SENSOR sensor=1 rodada=2 valor=0xAA ativo=1
+@27301 [GW] BUS_STATS t_ms=27300 win_ms=1000 frames=2 bits=188 load=0.03 peak=0.37 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@27701 [GW] ID_STATS id=0x060 win_ms=5000 n=1 dlc=1 bits=59 dt_min_us=16501000 dt_avg_us=16501000 dt_max_us=16501000
+@28202 [GW] HEARTBEAT lider=2 rodada=3 sensores_ativos=1 modo=3 periodo=1000 ms
+@28203 [GW] SENSOR sensor=1 rodada=3 valor=0xAA ativo=1
+@28301 [GW] BUS_STATS t_ms=28300 win_ms=1000 frames=2 bits=187 load=0.03 peak=0.37 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@28701 [GW] ID_STATS id=0x100 win_ms=5000 n=4 dlc=5 bits=380 dt_min_us=999963 dt_avg_us=3625250 dt_max_us=11501037
+@29202 [GW] HEARTBEAT lider=2 rodada=4 sensores_ativos=1 modo=3 periodo=1000 ms
+@29203 [GW] SENSOR sensor=1 rodada=4 valor=0xAA ativo=1
+@29301 [GW] BUS_STATS t_ms=29300 win_ms=1000 frames=2 bits=188 load=0.03 peak=0.37 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@29702 [GW] ID_STATS id=0x200 win_ms=5000 n=4 dlc=5 bits=373 dt_min_us=1000000 dt_avg_us=3875240 dt_max_us=12500963
+@30202 [GW] HEARTBEAT lider=2 rodada=5 sensores_ativos=1 modo=3 periodo=1000 ms
+@30203 [GW] SENSOR sensor=1 rodada=5 valor=0xAA ativo=1
+@30301 [GW] BUS_STATS t_ms=30300 win_ms=1000 frames=2 bits=189 load=0.03 peak=0.37 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@31202 [GW] HEARTBEAT lider=2 rodada=6 sensores_ativos=1 modo=3 periodo=1000 ms
+@31203 [GW] SENSOR sensor=1 rodada=6 valor=0xAA ativo=1
+@31301 [GW] BUS_STATS t_ms=31300 win_ms=1000 frames=2 bits=187 load=0.03 peak=0.37 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@32202 [GW] HEARTBEAT lider=2 rodada=7 sensores_ativos=1 modo=3 periodo=1000 ms
+@32203 [GW] SENSOR sensor=1 rodada=7 valor=0xAA ativo=1
+@32301 [GW] BUS_STATS t_ms=32300 win_ms=1000 frames=2 bits=188 load=0.03 peak=0.37 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@33202 [GW] HEARTBEAT lider=2 rodada=8 sensores_ativos=1 modo=3 periodo=1000 ms
+@33203 [GW] SENSOR sensor=1 rodada=8 valor=0xAA ativo=1
+@33301 [GW] BUS_STATS t_ms=33300 win_ms=1000 frames=2 bits=187 load=0.03 peak=0.37 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@33701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=472 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+# t=33713 node=3 reiniciando
+@34202 [GW] HEARTBEAT lider=2 rodada=9 sensores_ativos=1 modo=3 periodo=1000 ms
+@34203 [GW] SENSOR sensor=1 rodada=9 valor=0xAA ativo=1
+@34203 [STATUS TX] Requisicao global de status enviada
+@34204 [GW] CONTROLE RX 23 21 1 1
+@34204 [NODE 0] [STATUS RX] NODE 1 estado=ATIVO
+@34204 [GW] CONTROLE RX 23 21 2 0
+@34204 [NODE 0] [STATUS RX] NODE 2 estado=LIDER
+@34301 [GW] BUS_STATS t_ms=34300 win_ms=1000 frames=5 bits=440 load=0.08 peak=0.88 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=1 untracked=0
+@34702 [GW] ID_STATS id=0x200 win_ms=5000 n=5 dlc=5 bits=465 dt_min_us=1000000 dt_avg_us=1000000 dt_max_us=1000000
+# t=35213 node=3 ligado
+@35213 [GW] HEARTBEAT lider=2 rodada=10 sensores_ativos=1 modo=3 periodo=1000 ms
+@35214 [GW] SENSOR sensor=1 rodada=10 valor=0xAA ativo=1
+@35301 [GW] BUS_STATS t_ms=35300 win_ms=1000 frames=2 bits=186 load=0.03 peak=0.37 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@36201 [GW] ID_STATS id=0x080 win_ms=5000 n=3 dlc=4 bits=252 dt_min_us=37 dt_avg_us=3000512 dt_max_us=9000537
+@36213 [GW] HEARTBEAT lider=2 rodada=11 sensores_ativos=1 modo=3 periodo=1000 ms
+@36214 [GW] SENSOR sensor=1 rodada=11 valor=0xAA ativo=1
+@36301 [GW] BUS_STATS t_ms=36300 win_ms=1000 frames=2 bits=187 load=0.03 peak=0.37 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@36913 [GW] CONTROLE RX 22 40 3 0
+@36913 [STATUS] Transicao protegida ignorada para NODE 3
+@36913 [GW] JOIN observado de NODE 3
+@36914 [GW] CONTROLE RX 23 41 3 2
+@36914 [GW] CONTROLE RX 22 30 3 3
+@36914 [CTRL RX] Heartbeat ignorado: alvo deve ser FF
+@36914 [GW] CONTROLE RX 23 50 3 1
+@36914 [STATUS] Transicao protegida ignorada para NODE 3
+@36914 [GW] Atualizacao de status recebida: [STATUS] NODE 3 estado=ATIVO
+@36914 [GW] CONTROLE RX 23 50 2 0
+@36914 [GW] Atualizacao de status recebida: [STATUS] NODE 2 estado=LIDER
+@36914 [GW] CONTROLE RX 23 50 1 1
+@36914 [GW] Atualizacao de status recebida: [STATUS] NODE 1 estado=ATIVO
+@36914 [GW] CONTROLE RX 23 50 3 1
+@36914 [STATUS] Transicao protegida ignorada para NODE 3
+@36914 [GW] Atualizacao de status recebida: [STATUS] NODE 3 estado=ATIVO
+@36915 [GW] CONTROLE RX 23 50 0 4
+@36915 [GW] Atualizacao de status recebida: [STATUS] NODE 0 estado=GATEWAY
+@37213 [GW] HEARTBEAT lider=2 rodada=12 sensores_ativos=2 modo=3 periodo=1000 ms
+@37214 [GW] CONTROLE RX 23 50 3 1
+@37214 [STATUS] Transicao protegida ignorada para NODE 3
+@37214 [GW] Atualizacao de status recebida: [STATUS] NODE 3 estado=ATIVO
+@37214 [GW] SENSOR sensor=1 rodada=12 valor=0xAA ativo=1
+@37301 [GW] BUS_STATS t_ms=37300 win_ms=1000 frames=11 bits=949 load=0.18 peak=1.35 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@38213 [GW] HEARTBEAT lider=2 rodada=13 sensores_ativos=2 modo=3 periodo=1000 ms
+@38214 [GW] SENSOR sensor=3 rodada=13 valor=0xAA ativo=1
+@38301 [GW] BUS_STATS t_ms=38300 win_ms=1000 frames=2 bits=186 load=0.03 peak=0.37 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@38701 [GW] ID_STATS id=0x100 win_ms=5000 n=5 dlc=5 bits=472 dt_min_us=1000000 dt_avg_us=1002200 dt_max_us=1011000
+@39213 [GW] HEARTBEAT lider=2 rodada=14 sensores_ativos=2 modo=3 periodo=1000 ms
+@39214 [GW] SENSOR sensor=1 rodada=14 valor=0xAA ativo=1
+@39301 [GW] BUS_STATS t_ms=39300 win_ms=1000 frames=2 bits=187 load=0.03 peak=0.37 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@39702 [GW] ID_STATS id=0x200 win_ms=5000 n=5 dlc=5 bits=462 dt_min_us=999963 dt_avg_us=1002200 dt_max_us=1011000
+@40213 [GW] HEARTBEAT lider=2 rodada=15 sensores_ativos=2 modo=3 periodo=1000 ms
+@40214 [GW] SENSOR sensor=3 rodada=15 valor=0xAA ativo=1
+@40301 [GW] BUS_STATS t_ms=40300 win_ms=1000 frames=2 bits=189 load=0.03 peak=0.37 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@41201 [GW] ID_STATS id=0x080 win_ms=5000 n=9 dlc=4 bits=763 dt_min_us=37 dt_avg_us=334440 dt_max_us=2709463
+@41213 [GW] HEARTBEAT lider=2 rodada=16 sensores_ativos=2 modo=3 periodo=1000 ms
+@41214 [GW] SENSOR sensor=1 rodada=16 valor=0xAA ativo=1
+@41301 [GW] BUS_STATS t_ms=41300 win_ms=1000 frames=2 bits=188 load=0.03 peak=0.37 rx_err=0 tx_err=0 eflg=0x00 rx_peak=3 ids=7 xfer_ok=0 xfer_err=0 own=0 untracked=0
+@42213 [GW] HEARTBEAT lider=2 rodada=17 sensores_ativos=2 modo=3 periodo=1000 ms
+# fim t=42214 quadros=92 falhas=0

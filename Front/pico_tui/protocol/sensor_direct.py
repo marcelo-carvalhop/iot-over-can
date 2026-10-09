@@ -99,6 +99,10 @@ class SensorDirectDecoder:
             await self.bus.publish(LogEvent("INFO", line, "SENSOR"))
         elif token in {"NOTE", "PONG"}:
             await self.bus.publish(LogEvent("INFO", line, "SENSOR"))
+        elif token == "[NET]":
+            # Diagnóstico do caminho até a sessão com o Node (oferta, Wi-Fi,
+            # endereço, HELLO, recusas). Visível em Mensagens sem modo de depuração.
+            await self.bus.publish(LogEvent("INFO", line, "REDE"))
         else:
             # Banner, HELP e extensões desconhecidas permanecem disponíveis.
             level = "DEBUG" if token.isupper() else "INFO"

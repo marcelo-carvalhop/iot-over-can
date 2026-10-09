@@ -9,6 +9,9 @@
 #include "comandos.h"
 #include "falhas.h"
 #include "wireless_discovery.h"
+#include "wireless_link.h"
+#include "net_metrics.h"
+#include "fault_injection.h"
 
 /* =========================================================
  * CONFIGURACAO LOCAL DO NO
@@ -32,6 +35,24 @@ const uint8_t NODE_ID = (uint8_t) IOT_NODE_ID;   // NODE_ID 0 = Probe 00; NODE_I
 
 #define GATEWAY_LEADER_TIMEOUT_MULTIPLIER  4
 #define NODE_ABSENCE_HEARTBEATS            5
+
+/*
+ * Vigilancia do lider pelos proprios seguidores.
+ *
+ * Um seguidor que deixa de ouvir o heartbeat do lider por
+ * FOLLOWER_LEADER_TIMEOUT_MULTIPLIER periodos pede nova eleicao, sem depender
+ * da Probe 00. O prazo e maior que o da Probe (4 periodos): com ela presente
+ * o comportamento de bancada continua o mesmo; sem ela, a rede se recupera
+ * sozinha. O escalonamento faz o seguidor de maior identificador reagir
+ * primeiro, evitando pedidos simultaneos.
+ *
+ * -D IOT_FOLLOWER_LEADER_WATCHDOG=0 desativa a vigilancia.
+ */
+#ifndef IOT_FOLLOWER_LEADER_WATCHDOG
+#define IOT_FOLLOWER_LEADER_WATCHDOG 1
+#endif
+#define FOLLOWER_LEADER_TIMEOUT_MULTIPLIER 6
+#define FOLLOWER_LEADER_STAGGER_MS         20
 #define GATEWAY_STATUS_REQUEST_DELAY_MS    1000
 #define GATEWAY_STATUS_REFRESH_MS          10000
 
@@ -70,7 +91,7 @@ static const byte MCP_CS  = 5;
 static const byte MCP_INT = 4;
 
 static const uint32_t MCP_QUARTZ_HZ = 8000000;
-static const uint32_t CAN_BITRATE   = 500UL * 1000UL;
+static const uint32_t CAN_BITRATE   = CAN_NOMINAL_BITRATE;
 
 ACAN2515 can(MCP_CS, SPI, MCP_INT);
 
@@ -93,6 +114,16 @@ unsigned long lastHeartbeatTime = 0;
 unsigned long lastHeartbeatLedPulse = 0;
 
 bool faultDetected = false;
+
+/* Lider em exercicio quando a ultima eleicao comecou (0 = nenhum). */
+uint8_t previousLeaderId = 0;
+
+/* Vigilancia do lider pelos seguidores. */
+unsigned long followerLastLeaderSeenMs = 0;
+bool followerWatchdogArmed = false;
+
+/* Ultima passagem completa pelo laco principal (0 = nenhuma ainda). */
+unsigned long lastLoopMs = 0;
 
 /* =========================================================
  * ESTADO DE JOIN
@@ -135,6 +166,13 @@ uint8_t networkLastValue[MAX_KNOWN_NODES];
 uint8_t networkLastTick[MAX_KNOWN_NODES];
 unsigned long networkLastSeenMs[MAX_KNOWN_NODES];
 bool networkKnown[MAX_KNOWN_NODES];
+
+/*
+ * Declaracoes antecipadas: o arquivo tambem e compilado como C++ comum na
+ * bancada virtual (test/host), sem os prototipos automaticos do Arduino.
+ */
+unsigned long nodeAbsenceTimeoutMs();
+unsigned long gatewayLeaderTimeoutMs();
 
 /* =========================================================
  * TABELA DE STATUS
@@ -528,7 +566,7 @@ void sendControlFrame(uint8_t subcmd, uint8_t targetId, uint8_t action) {
   msg.data[2] = targetId;
   msg.data[3] = action;
 
-  can.tryToSend(msg);
+  if (can.tryToSend(msg)) netMetricsOnTransmit(msg);
 }
 
 void sendStatusFrame(uint8_t subcmd, uint8_t targetId, uint8_t value) {
@@ -542,7 +580,7 @@ void sendStatusFrame(uint8_t subcmd, uint8_t targetId, uint8_t value) {
   msg.data[2] = targetId;
   msg.data[3] = value;
 
-  can.tryToSend(msg);
+  if (can.tryToSend(msg)) netMetricsOnTransmit(msg);
 }
 
 void publishStateUpdate(uint8_t nodeId, uint8_t status) {
@@ -682,6 +720,10 @@ void startElection() {
 
   state = STATE_ELECTION;
 
+  if (leaderId != 0) {
+    previousLeaderId = leaderId;
+  }
+
   leaderId = 0;
   heartbeatTick = 0;
 
@@ -711,6 +753,17 @@ void finishElection() {
   uint8_t elected = getHighestKnownNodeId();
 
   leaderId = elected;
+
+  /*
+   * O lider anterior nao se apresentou nesta eleicao: os sensores wireless
+   * dele com reassociacao autorizada podem ser atribuidos a outro Node.
+   */
+  if (previousLeaderId != 0 &&
+      previousLeaderId != NODE_ID &&
+      !isKnownNode(previousLeaderId)) {
+    wirelessFailoverOnNodeFault(previousLeaderId);
+  }
+  previousLeaderId = 0;
 
   if (elected == NODE_ID) {
     state = STATE_RECOVERING;
@@ -1009,8 +1062,96 @@ void leaderCheckNodeAbsence() {
 
       updateNetworkStatusLocal(nodeId, STATUS_FOLLOWER_FAULT);
       publishStateUpdate(nodeId, STATUS_FOLLOWER_FAULT);
+      wirelessFailoverOnNodeFault(nodeId);
     }
   }
+}
+
+/* =========================================================
+ * VIGILANCIA DO LIDER PELOS SEGUIDORES
+ * ========================================================= */
+
+unsigned long followerLeaderTimeoutMs() {
+  uint8_t rank = NODE_ID > 31 ? 0 : (uint8_t)(31 - NODE_ID);
+
+  return heartbeatPeriodMs * FOLLOWER_LEADER_TIMEOUT_MULTIPLIER +
+         (unsigned long) rank * FOLLOWER_LEADER_STAGGER_MS;
+}
+
+void followerNoteLeaderAlive() {
+  followerLastLeaderSeenMs = millis();
+  followerWatchdogArmed = true;
+}
+
+void followerCheckLeaderFailure() {
+#if IOT_FOLLOWER_LEADER_WATCHDOG
+  if (state != STATE_FOLLOWER) {
+    followerWatchdogArmed = false;
+    return;
+  }
+
+  /* A contagem comeca quando o no passa a seguidor. */
+  if (!followerWatchdogArmed) {
+    followerNoteLeaderAlive();
+    return;
+  }
+
+  unsigned long silentMs = millis() - followerLastLeaderSeenMs;
+
+  if (silentMs <= followerLeaderTimeoutMs()) {
+    return;
+  }
+
+  Serial.print("[NODE ");
+  Serial.print(NODE_ID);
+  Serial.print("] [VIGILANCIA] Lider NODE ");
+  Serial.print(leaderId);
+  Serial.print(" sem heartbeat ha ");
+  Serial.print(silentMs);
+  Serial.println(" ms. Nova eleicao solicitada");
+
+  followerWatchdogArmed = false;
+
+  sendControlFrame(
+    CTRL_SUBCMD_ELECTION,
+    CTRL_TARGET_BROADCAST,
+    CTRL_ACTION_START
+  );
+
+  startElection();
+#endif
+}
+
+/*
+ * O proprio no ficou sem executar o laco (travamento, ensaio de silencio):
+ * o tempo decorrido nao diz nada sobre os demais. Sem isto, um lider que
+ * volta de uma parada declararia todos os seguidores ausentes de uma vez.
+ */
+void rearmWatchdogsAfterStall(unsigned long stalledMs) {
+  unsigned long now = millis();
+
+  for (uint8_t i = 0; i < MAX_KNOWN_NODES; i++) {
+    if (networkKnown[i]) {
+      networkLastSeenMs[i] = now;
+    }
+  }
+
+  if (followerWatchdogArmed) {
+    followerLastLeaderSeenMs = now;
+  }
+
+  if (gatewayHasLeader) {
+    gatewayLastHeartbeatTime = now;
+  }
+
+  /* O mesmo vale para a visao dos vinculos wireless e das observacoes BLE. */
+  wirelessFailoverOnLocalStall();
+
+  Serial.print("[NODE ");
+  Serial.print(NODE_ID);
+  Serial.print("] [LACO] Parado por ");
+  Serial.print(stalledMs);
+  Serial.println(" ms. Vigilancias rearmadas");
 }
 
 /* =========================================================
@@ -1205,6 +1346,13 @@ void handleElectionMessage(const CANMessage& rx) {
     updateNetworkStatusLocal(otherNode, STATUS_JOINING);
     markNodeSeen(otherNode);
 
+    /*
+     * Ha uma eleicao em curso, pedida por outro no. A Probe aguarda o novo
+     * lider em vez de pedir outra eleicao por falta de heartbeat.
+     */
+    gatewayHasLeader = false;
+    gatewayObservedLeader = 0;
+
     Serial.print("[GW] ELEICAO recebida de NODE ");
     Serial.println(otherNode);
     return;
@@ -1245,6 +1393,7 @@ void handleLeaderMessage(const CANMessage& rx) {
   }
 
   leaderId = announcedLeader;
+  followerNoteLeaderAlive();
 
   if (announcedLeader == NODE_ID) {
     state = STATE_LEADER;
@@ -1326,8 +1475,26 @@ void handleHeartbeatMessage(const CANMessage& rx) {
   }
 
   if (state != STATE_FOLLOWER) return;
+
+  /*
+   * Dois lideres por um instante (por exemplo, um lider que travou e
+   * retomou): o seguidor aplica a mesma regra que os lideres usam entre si
+   * e passa a seguir o de maior identificador. Sem isto ele ignoraria o
+   * heartbeat do lider que prevaleceu, deixaria de transmitir e seria
+   * declarado ausente.
+   */
+  if (senderLeader != leaderId && senderLeader > leaderId) {
+    Serial.print("[NODE ");
+    Serial.print(NODE_ID);
+    Serial.print("] [LIDER RX] Heartbeat de lider com maior ID. Novo lider: NODE ");
+    Serial.println(senderLeader);
+
+    leaderId = senderLeader;
+  }
+
   if (senderLeader != leaderId) return;
 
+  followerNoteLeaderAlive();
   pulseHeartbeatLed();
 
   if (isReplicaSyncTick(tick)) {
@@ -1480,7 +1647,17 @@ void handleControlCanMessage(const CANMessage& rx) {
 }
 
 void handleReceivedCanMessage(const CANMessage& rx) {
+  netMetricsOnReceive(rx);
+
+  if (faultInjectionHandleCanMessage(rx)) {
+    return;
+  }
+
   if (wirelessDiscoveryHandleCanMessage(rx)) {
+    return;
+  }
+
+  if (wirelessLinkHandleCanMessage(rx)) {
     return;
   }
 
@@ -1518,6 +1695,9 @@ void setup() {
 
   turnAllLedsOff();
 
+  // A Probe 00 escreve linhas longas (espectro) enquanto o barramento continua
+  // ativo; o buffer de transmissão evita que a escrita bloqueie o laço.
+  Serial.setTxBufferSize(2048);
   Serial.begin(115200);
   delay(300);
 
@@ -1543,6 +1723,9 @@ void setup() {
   SPI.begin(13, 19, 23, MCP_CS);
 
   ACAN2515Settings settings(MCP_QUARTZ_HZ, CAN_BITRATE);
+  // Um espectro de sensor wireless chega em rajadas de até 30 quadros por
+  // bloco; o padrão de 32 quadros não deixa folga para o restante do tráfego.
+  settings.mReceiveBufferSize = 128;
   const uint16_t errorCode = can.begin(settings, [] { can.isr(); });
 
   if (errorCode != 0) {
@@ -1562,6 +1745,9 @@ void setup() {
   }
 
   wirelessDiscoveryInit();
+  wirelessLinkInit();
+  netMetricsInit();
+  faultInjectionInit();
 
   if (isGateway()) {
     state = STATE_GATEWAY;
@@ -1580,6 +1766,7 @@ void setup() {
     Serial.println("[GW] Iniciar eleicao: 22 00 FF 01");
     Serial.println("[GW] Solicitar status: 22 20 FF 00");
     Serial.println("[GW] Velocidade heartbeat: 22 30 FF 01..05");
+    Serial.println("[PROBE 00] FIRMWARE=0.18.0 FEATURES=WIRELESS_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER");
   } else {
     state = STATE_IDLE;
     forceNetworkStatusLocal(NODE_ID, STATUS_UNKNOWN);
@@ -1605,6 +1792,32 @@ void loop() {
 
   handleSerialCommands();
 
+  faultInjectionPoll();
+
+  /*
+   * Ensaio de falha em curso: o no nao transmite nem processa mensagens.
+   * Os quadros recebidos sao descartados, exceto o cancelamento do ensaio.
+   */
+  if (faultInjectionSilent()) {
+    CANMessage discarded;
+
+    while (can.receive(discarded)) {
+      if (discarded.id == CAN_ID_TEST_CMD) {
+        faultInjectionHandleCanMessage(discarded);
+      }
+    }
+
+    return;
+  }
+
+  unsigned long loopNow = millis();
+
+  if (lastLoopMs != 0 && loopNow - lastLoopMs > heartbeatPeriodMs) {
+    rearmWatchdogsAfterStall(loopNow - lastLoopMs);
+  }
+
+  lastLoopMs = loopNow;
+
   handleJoinProcess();
 
   finishRecoveryIfNeeded();
@@ -1615,12 +1828,22 @@ void loop() {
     sendHeartbeat();
   }
 
+  /*
+   * O plano de dados e atualizado antes dos vinculos: uma sessao que expirou
+   * e encerrada antes de o estado do vinculo ser publicado.
+   */
+  wirelessLinkPoll();
   wirelessDiscoveryPoll();
 
   CANMessage rx;
 
   while (can.receive(rx)) {
     handleReceivedCanMessage(rx);
+
+    /* Um ensaio de silencio comecou: os quadros seguintes nao sao tratados. */
+    if (faultInjectionSilent()) {
+      return;
+    }
   }
 
   if (state == STATE_ELECTION &&
@@ -1629,7 +1852,10 @@ void loop() {
   }
 
   leaderCheckNodeAbsence();
+  followerCheckLeaderFailure();
 
   gatewayCheckLeaderFailure();
   gatewayStatusMaintenance();
+
+  netMetricsPoll();
 }

@@ -30,15 +30,14 @@
 
 #define NET_UDP_PORT_DISCOVERY  4242
 #define NET_MAGIC_HEADER        0xAA55
-#define NET_PROTOCOL_VERSION    0x05 // UUID64 + token64 + counters; incompatible with v0x04
-
-
-// Compatibilidade temporária do handshake UDP legado. A chave nunca possui
-// valor default no repositório: deve ser provisionada no build. Valor 0 desabilita
-// CLAIM legado. A arquitetura alvo substituirá este caminho pelo vínculo BLE/HMAC.
-#ifndef EDGE_NODE_PRESHARED_KEY
-#define EDGE_NODE_PRESHARED_KEY 0ULL
-#endif
+// v0x06: todo datagrama passa a trafegar dentro do envelope autenticado
+// definido em Codigo/common/ioc_link/ioc_link.h (HMAC-SHA256 com chave por
+// dispositivo e chave de sessão). O CLAIM por chave compartilhada de 64 bits
+// e o controle UDP sem autenticação da v0x05 foram removidos. As estruturas
+// abaixo continuam sendo o conteúdo ("payload interno") do envelope; os
+// campos session_token e request_counter permanecem por compatibilidade de
+// layout, mas a proteção contra repetição é feita pelo contador do envelope.
+#define NET_PROTOCOL_VERSION    0x06
 
 // Tamanho máximo recomendado de payload UDP para evitar fragmentação IP em
 // Wi-Fi (MTU típico 1500 - cabeçalhos IP/UDP ~28 bytes = ~1472 bytes úteis).
@@ -50,6 +49,19 @@
 // (CMD_SET_CONFIG ou CMD_PING) dentro desse intervalo, o sensor assume que a
 // sessão caiu/reiniciou e volta para NET_STATE_DISCOVERY.
 #define NET_SESSION_TIMEOUT_MS   10000
+// Tempo máximo em DISCOVERY, após entrar em um AP por oferta, sem conseguir
+// autenticar. Depois disso o Wi-Fi é desligado e o sensor volta a aguardar
+// uma nova oferta BLE (o Node pode ter reiniciado ou removido o vínculo).
+#define NET_DISCOVERY_GIVEUP_MS  60000
+// Intervalo entre novas tentativas de associação ao AP quando o rádio
+// reporta falha (AP ainda não ativo, senha recusada, fora de alcance).
+#define NET_WIFI_REJOIN_MS       5000
+// Em DISCOVERY, tempo sem enlace Wi-Fi ativo antes de refazer a associação
+// ao AP por completo (o AP do Node pode ter reiniciado).
+#define NET_WIFI_LINK_DOWN_MS    10000
+// Depois de entrar no AP de um Node por oferta, ofertas de outro Node só são
+// seguidas após este tempo. Limita o efeito de uma oferta antiga repetida.
+#define NET_OFFER_SWITCH_HOLD_MS 15000
 // Intervalo alvo em que o nó CAN pai deveria mandar CMD_PING.
 #define NET_LIVENESS_INTERVAL_MS 3000
 
@@ -77,8 +89,8 @@ typedef enum {
 } NodeProfileID;
 
 typedef enum {
-    CMD_BEACON_BROADCAST    = 0x01, // RP2350 -> Todos: "Estou disponível nesta sub-rede"
-    CMD_CLAIM_NODE          = 0x10, // nó CAN selecionado -> RP2350: inicia vínculo de sessão
+    CMD_BEACON_BROADCAST    = 0x01, // reservado (v0x05); substituído pelo HELLO autenticado
+    CMD_CLAIM_NODE          = 0x10, // reservado (v0x05); substituído por CHALLENGE/CONFIRM
     CMD_ACK_CAPABILITIES    = 0x11, // RP2350 -> ESP32: "Vínculo aceito. Estrutura anexa"
     CMD_SET_CONFIG          = 0x12, // ESP32 -> RP2350: "Atualize os parâmetros operacionais DSP"
     CMD_ACK_CONFIG          = 0x13, // RP2350 -> ESP32: "Configuração DSP aplicada com sucesso"
@@ -89,6 +101,7 @@ typedef enum {
                                      // (enviado automaticamente logo após CMD_ACK_CAPABILITIES)
     CMD_CLEAR_DTC           = 0x18, // ESP32 -> RP2350: limpa DTCs ativos sob sessão válida
     CMD_DTC_SNAPSHOT        = 0x19, // RP2350 -> ESP32: snapshot compacto da tabela de DTC
+    CMD_RELEASE             = 0x1B, // ESP32 -> RP2350: vínculo removido; encerre a sessão e desligue o Wi-Fi
     CMD_TELEMETRY_STREAM    = 0x20, // RP2350 -> ESP32: "Pacote de telemetria contínua / FFT"
     CMD_URGENT_DTC_ALARM    = 0xFF  // RP2350 -> ESP32: "Alerta crítico BITE / Falha de hardware"
 } NetworkCommandID;
@@ -191,7 +204,7 @@ typedef struct __attribute__((packed)) {
     uint8_t          cmd_type;       // CMD_CLAIM_NODE (0x10)
     uint64_t         session_token;
     uint8_t          protocol_ver;   // deve bater com NET_PROTOCOL_VERSION
-    uint64_t         auth_key;       // EDGE_NODE_PRESHARED_KEY provisionado no build
+    uint64_t         auth_key;       // sem uso na v0x06
 } Payload_ClaimCommand;
 
 typedef struct __attribute__((packed)) {
