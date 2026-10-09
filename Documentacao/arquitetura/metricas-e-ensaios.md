@@ -319,6 +319,26 @@ cd Front && python -m pico_tui --replay replays/owner_failover.log --replay-spee
 
 **O que a bancada virtual não reproduz:** temporização de rádio, coexistência BLE/Wi-Fi, perda de quadros por ruído, a temporização real do MCP2515 por SPI, a latência da serial. Ela verifica a lógica do firmware e a integração com a TUI. Tempos de rádio e de reinício são parâmetros da simulação.
 
+### 8.1 Ferramentas de simulação (futuro, prioridade muito baixa)
+
+Registro de recomendação, sem compromisso de implementação. Nada aqui é necessário para o TCC: a bancada virtual atual já executa o firmware real dos Nodes e cobre os cenários da seção 8. Os itens abaixo só fazem sentido se sobrar tempo depois das pendências de bancada física, alimentação e comissionamento.
+
+**Princípio.** A bancada em C++ continua sendo a simulação do sistema inteiro, porque roda o mesmo código que vai para o ESP32. As ferramentas abaixo a complementam; nenhuma a substitui.
+
+| Ordem | Ferramenta (código aberto) | Papel | Observação |
+|---|---|---|---|
+| 1 | SocketCAN `vcan`, `can-utils`, `python-can`, Wireshark | ligar a bancada a um barramento CAN virtual do Linux, para observar os quadros com `candump` e Wireshark e injetar quadros com `cansend` ou scripts | com um adaptador USB-CAN compatível com SocketCAN (CANable ou candleLight, firmware aberto), os mesmos scripts de teste rodam contra o barramento físico |
+| 2 | Robot Framework ou pytest | escrever os cenários como roteiros legíveis (passos, esperas, verificações) e gerar relatório | pytest já é usado na TUI; Robot Framework só se os roteiros tiverem de ser lidos por quem não programa |
+| 3 | GNU Octave | analisar as exportações de Métricas e Ensaios (CSV/JSON), fazer varreduras de parâmetros chamando a bancada (`system()` ou `mkoctfile`) e modelos matemáticos: tempo de resposta no pior caso, ocupação do barramento, probabilidade de colisão de canais Wi-Fi | não reescrever a bancada em Octave: perderia o firmware real e laços com passos de 0,5 ms seriam lentos |
+| 4 | OMNeT++ com INET e FiCo4OMNeT | estudos de escala (dezenas de Nodes e sensores, carga, falhas aleatórias), em que modelos substituem o firmware | FiCo4OMNeT modela CAN e FlexRay; licença acadêmica do OMNeT++. ns-3 (GPL) é alternativa, mas não tem CAN nativo |
+| 5 | Renode | emular as placas no nível de instruções, com vários nós, CAN e BLE, e roteiros em Robot Framework | só para uma geração futura de hardware com microcontroladores suportados (por exemplo nRF52840) |
+
+**Por que não emular as placas atuais.** O firmware dos rádios do ESP32 e do CYW43 do Pico W é fechado, e nenhum emulador aberto reproduz esses rádios. No Renode, o suporte a Xtensa se limita aos núcleos DSP do projeto SOF, não ao ESP32; o RP2040 tem modelos da comunidade, sem o CYW43. Por isso o comportamento de rádio continua a ser verificado em bancada física (seção 9 e `../validacao-em-bancada.md`).
+
+**Primeiro passo, se um dia for feito.** Uma ponte entre a bancada e `vcan0`: cada quadro simulado é copiado para o barramento virtual do Linux, e quadros escritos em `vcan0` entram na simulação. É o item de menor custo e o que mais aproxima os testes virtuais dos físicos.
+
+Referências: [Xtensa no Renode (SOF)](https://antmicro.com/blog/2022/01/xtensa-isa-in-renode-for-sof-project), [comunicação sem fio multibanda no Renode](https://antmicro.com/blog/2020/10/multi-band-wireless-communication-in-renode), [BLE no nRF52840 com Renode e Zephyr](https://zephyrproject.org/developing-and-testing-bluetooth-low-energy-products-on-nrf52840-in-renode-and-zephyr/), [modelos do RP2040 para Renode](https://xiao-seeed-rp2040-renode.readthedocs.io/en/latest/ROADMAP/), [FiCo4OMNeT](https://github.com/CoRE-RG/FiCo4OMNeT), [artigo do FiCo4OMNeT](https://arxiv.org/pdf/1609.05179).
+
 ## 9. Roteiro de bancada
 
 Grave todos os Nodes e a Probe 00 com a mesma versão: o byte de estado do vínculo e o relatório de enlace mudaram de formato.

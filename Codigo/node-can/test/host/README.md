@@ -71,3 +71,5 @@ Cada cenário é uma execução, por causa dos reinícios. Uma verificação que
 ## Limites
 
 Os substitutos não reproduzem temporização de rádio, coexistência BLE/Wi-Fi, perda de quadros por ruído, a comunicação SPI com o MCP2515 nem a latência da serial. Os tempos de associação Wi-Fi e de reinício são parâmetros da bancada. O que se verifica aqui é a lógica do firmware e a integração com a TUI; a compilação para o ESP32 é verificada pelo PlatformIO na integração contínua, e o comportamento em rádio, em bancada física.
+
+Ferramentas que poderiam complementar esta bancada no futuro (SocketCAN, GNU Octave, OMNeT++, Renode), com prioridade muito baixa, estão em `Documentacao/arquitetura/metricas-e-ensaios.md`, seção 8.1.
