@@ -32,6 +32,7 @@
 | Verificação do firmware do Node CAN em bancada virtual | Implementado |
 | Persistência e recuperação da associação | Pendente |
 | Monitoramento da alimentação dos Nodes, com aviso na TUI | Pendente; proposta em `modulo-can/modulo-can.md` |
+| Comissionamento de sensores sem compilar o firmware, com aprovação do operador | Pendente; proposta em `arquitetura/comissionamento-de-sensores.md` |
 | Registro, no monitor serial, de cada passo do enlace sensor ↔ Node | Implementado no Node (`[WLINK]`) e no sensor (`[NET]`) |
 | CAN FD no hardware final | Pendente; predisposição em biblioteca |
 

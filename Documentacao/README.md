@@ -15,6 +15,7 @@ A documentação oficial é organizada por assunto, sem cópias paralelas ou rel
 | [`arquitetura/plano-de-dados-wireless.md`](arquitetura/plano-de-dados-wireless.md) | enlace autenticado sensor ↔ Node, transporte no CAN, modelo de ameaças e roteiro de bancada |
 | [`arquitetura/metricas-e-ensaios.md`](arquitetura/metricas-e-ensaios.md) | medição do barramento, análise de tempo de resposta, reassociação automática, vigilância do líder, ensaios de falha e bancada virtual |
 | [`arquitetura/predisposicao-can-fd.md`](arquitetura/predisposicao-can-fd.md) | o que está preparado para CAN FD, o que a migração exigiria e a recomendação atual |
+| [`arquitetura/comissionamento-de-sensores.md`](arquitetura/comissionamento-de-sensores.md) | proposta (não implementada) para entregar a chave ao sensor pela rede, sem compilar o firmware |
 | [`protocolo/protocolo.md`](protocolo/protocolo.md) | CAN, Probe 00, BLE, associação, sensor, DTC e fragmentação |
 | [`interface/tui.md`](interface/tui.md) | especificação completa da TUI, telas, comandos, wireless, layout e cores |
 | [`modulo-can/modulo-can.md`](modulo-can/modulo-can.md) | firmware e comportamento dos Nodes CAN |

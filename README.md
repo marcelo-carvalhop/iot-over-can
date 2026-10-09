@@ -197,7 +197,7 @@ O índice oficial está em [`Documentacao/README.md`](Documentacao/README.md). A
 - monitoramento da alimentação de cada Node (motivo do último reinício, contagem de reinícios e, com um divisor resistivo, tensão de entrada), com aviso na TUI; e ajustes de consumo no firmware (potência do Wi-Fi, partida escalonada dos rádios);
 - persistência e recuperação dos vínculos após reinicialização dos Nodes;
 - autenticação de origem dos comandos e dados no barramento CAN;
-- entrega da chave do sensor pela estação no momento da associação, retirando a chave mestra dos Nodes;
+- comissionamento de sensores sem compilação: firmware único, código de instalação na etiqueta e chave entregue pela rede após a aprovação do operador (proposta em [`Documentacao/arquitetura/comissionamento-de-sensores.md`](Documentacao/arquitetura/comissionamento-de-sensores.md));
 - verificação FIDO2/OTP real da chave física do operador;
 - segundo sensor (áudio, INMP441) e painel de estado em papel eletrônico (M5Stack PaperColor) via Wi-Fi;
 - experimento comparativo em CAN FD com MCP2518FD, com as métricas e os ensaios atuais como linha de base.

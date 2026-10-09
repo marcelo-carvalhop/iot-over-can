@@ -163,6 +163,8 @@ O modelo de ameaças completo está em [`arquitetura/plano-de-dados-wireless.md`
 
 ## Rede
 
+A chave do sensor ainda entra no binário dele no momento da compilação. A proposta para entregá-la pela rede, depois de o operador provar a posse do sensor com um código de instalação, está em [`arquitetura/comissionamento-de-sensores.md`](arquitetura/comissionamento-de-sensores.md).
+
 SSID, senha e chaves não ficam fixos no código-fonte público. O SSID (`IOC-NN`) e a senha do ponto de acesso de cada Node são derivados de `K_net` nos dois lados e não trafegam pelo ar. O sensor usa DHCP. O Wi-Fi do sensor permanece desligado até uma oferta autêntica, e é desligado novamente na desassociação.
 
 O CLAIM por chave compartilhada de 64 bits e a opção de build `EDGE_ALLOW_LEGACY_INSECURE_UDP_CONTROL` do protocolo `0x05` foram removidos. `NET WIFI PROVISION` continua no console USB para diagnóstico de rádio em bancada; sem a chave de enlace, a associação a um ponto de acesso qualquer não abre sessão.
