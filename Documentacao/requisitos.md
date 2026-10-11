@@ -34,6 +34,7 @@
 | Monitoramento da alimentação dos Nodes, com aviso na TUI | Pendente; proposta em `modulo-can/modulo-can.md` |
 | Comissionamento de sensores sem compilar o firmware, com aprovação do operador | Pendente; proposta em `arquitetura/comissionamento-de-sensores.md` |
 | Registro, no monitor serial, de cada passo do enlace sensor ↔ Node | Implementado no Node (`[WLINK]`) e no sensor (`[NET]`) |
+| Simulação complementar (SocketCAN `vcan`, GNU Octave, OMNeT++) | Pendente, prioridade muito baixa; recomendação em `arquitetura/metricas-e-ensaios.md`, seção 8.1 |
 | CAN FD no hardware final | Pendente; predisposição em biblioteca |
 
 ## Requisitos da interface

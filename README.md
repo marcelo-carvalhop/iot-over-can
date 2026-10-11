@@ -200,4 +200,5 @@ O índice oficial está em [`Documentacao/README.md`](Documentacao/README.md). A
 - comissionamento de sensores sem compilação: firmware único, código de instalação na etiqueta e chave entregue pela rede após a aprovação do operador (proposta em [`Documentacao/arquitetura/comissionamento-de-sensores.md`](Documentacao/arquitetura/comissionamento-de-sensores.md));
 - verificação FIDO2/OTP real da chave física do operador;
 - segundo sensor (áudio, INMP441) e painel de estado em papel eletrônico (M5Stack PaperColor) via Wi-Fi;
-- experimento comparativo em CAN FD com MCP2518FD, com as métricas e os ensaios atuais como linha de base.
+- experimento comparativo em CAN FD com MCP2518FD, com as métricas e os ensaios atuais como linha de base;
+- *(prioridade muito baixa)* ferramentas de simulação complementares à bancada virtual: ponte com SocketCAN (`vcan`) para rodar os mesmos testes no barramento virtual e no físico, GNU Octave para análise e varreduras de parâmetros, OMNeT++/FiCo4OMNeT para estudos de escala (recomendação em [`Documentacao/arquitetura/metricas-e-ensaios.md`](Documentacao/arquitetura/metricas-e-ensaios.md), seção 8.1).
