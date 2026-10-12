@@ -25,8 +25,13 @@
  *
  * O novo responsável é o Node com melhor RSSI recente. No caso SENSOR_LOST o
  * responsável atual não concorre. No caso OWNER_LOST ele concorre: um Node
- * que reiniciou perde os vínculos (ficam em RAM), volta a observar o sensor
- * e pode recebê-lo de volta quando nenhum outro Node o alcança melhor.
+ * que reiniciou volta a observar o sensor e pode recebê-lo de volta quando
+ * nenhum outro Node o alcança melhor.
+ *
+ * Um Node que reiniciou também retoma da NVS os vínculos gravados
+ * (ioc_bindstore.h), mas só depois de ouvir a rede por mais que um período de
+ * republicação: o que outro Node assumiu durante a ausência é descartado, e um
+ * vínculo retomado ainda sem sessão cede em qualquer disputa.
  */
 #ifndef IOC_FAILOVER_H
 #define IOC_FAILOVER_H

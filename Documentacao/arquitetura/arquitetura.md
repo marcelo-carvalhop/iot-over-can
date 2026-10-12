@@ -143,6 +143,6 @@ Essa distinção é obrigatória para interpretar o estado atual:
 | telemetria Pico → Node → CAN → TUI | funcionou em bancada física (08/10/2026), inclusive espectro sob pedido |
 | comando TUI → CAN → Node → Pico | implementado; validação em bancada pendente |
 | reassociação automática a outro Node, quando autorizada | funcionou uma vez em bancada física (08/10/2026) |
-| persistência do vínculo após reinício do Node | pendente |
+| persistência do vínculo após reinício do Node | implementada (NVS, com espera de 12 s pela rede); verificada na bancada virtual (`restart_keeps_binding`, `owner_failover`), validação em bancada física pendente |
 
 A interface filtra ações conforme o estado informado pelo Node. Um filho associado aparece e pode ser desassociado; telemetria, FFT e configuração via Node só são oferecidas enquanto o plano de dados está em `SECURE`.

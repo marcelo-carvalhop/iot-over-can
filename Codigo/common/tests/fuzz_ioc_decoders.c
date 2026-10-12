@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ioc_bindstore.h"
 #include "ioc_canbits.h"
 #include "ioc_link.h"
 #include "ioc_secpdu.h"
@@ -128,6 +129,13 @@ static void decode_all(const uint8_t *src, size_t len, const uint8_t key[IOC_LIN
         for (size_t i = 0; i < 2u * hdr.count; ++i) sink += bins[i];
     }
 
+    ioc_bs_entry stored[IOC_BS_MAX];
+    uint8_t stored_count = 0;
+    if (ioc_bs_decode(buf, len, (uint8_t)(rnd() % 4), stored, IOC_BS_MAX, &stored_count) == 1) {
+        CHECK(stored_count <= IOC_BS_MAX);
+        for (uint8_t i = 0; i < stored_count; ++i) CHECK(stored[i].uuid != 0 && stored[i].child_id >= 1);
+    }
+
     uint64_t freshness = rnd();
     size_t payload_len = 0;
     if (ioc_secpdu_verify(key, (uint16_t)rnd(), buf, len, &freshness, (uint8_t)(4 + rnd() % 13), &payload_len) == 1) {
@@ -166,7 +174,7 @@ static void fuzz_reassembly(void) {
 static void fuzz_valid_then_mutated(const uint8_t key[IOC_LINK_KEY_LEN]) {
     uint8_t buf[512];
     size_t len = 0;
-    switch (rnd() % 7) {
+    switch (rnd() % 8) {
     case 0: {
         uint8_t payload[64];
         size_t plen = rnd() % sizeof(payload);
@@ -207,6 +215,19 @@ static void fuzz_valid_then_mutated(const uint8_t key[IOC_LINK_KEY_LEN]) {
         hdr.count = (uint8_t)(rnd() % (IOC_WD_SPECTRUM_CHUNK_BINS + 1));
         fill((uint8_t *)bins, sizeof(bins));
         len = ioc_wd_spectrum_encode(&hdr, bins, buf, sizeof(buf));
+        break;
+    }
+    case 6: {
+        ioc_bs_entry entries[IOC_BS_MAX];
+        uint8_t count = (uint8_t)(rnd() % (IOC_BS_MAX + 1));
+        for (uint8_t i = 0; i < count; ++i) {
+            entries[i].uuid = ((uint64_t)rnd() << 32) | rnd() | 1u;
+            entries[i].child_id = (uint8_t)(i + 1);
+            entries[i].profile = (uint8_t)rnd();
+            entries[i].protocol = (uint8_t)rnd();
+            entries[i].flags = (uint8_t)(rnd() & 1u);
+        }
+        len = ioc_bs_encode((uint8_t)(rnd() % 4), entries, count, buf, sizeof(buf));
         break;
     }
     default: {

@@ -41,7 +41,7 @@ run() {
   fi
 }
 
-for src in ioc_sha256 ioc_link ioc_wdata ioc_canbits ioc_failover; do
+for src in ioc_sha256 ioc_link ioc_wdata ioc_canbits ioc_failover ioc_bindstore; do
   run cc -std=c11 -O1 -Wall -Wextra -Werror -I"$LINK" -c "$LINK/$src.c" -o "$OBJ_DIR/$src.o"
 done
 run c++ "${CXXFLAGS[@]}" -c "$HOST/sim_network.cpp" -o "$OBJ_DIR/sim_network.o"

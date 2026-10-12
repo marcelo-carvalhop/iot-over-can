@@ -3,6 +3,7 @@
 #include "SPI.h"
 #include "ACAN2515.h"
 #include "NimBLEDevice.h"
+#include "Preferences.h"
 #include "WiFi.h"
 #include "WiFiUdp.h"
 #include "esp_wifi.h"

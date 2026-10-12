@@ -684,7 +684,7 @@ As imagens `antes_*` servem apenas para registrar o problema de densidade visual
 - a variação de período medida pela Probe 00 inclui a latência do laço dela, da ordem de 1 ms;
 - a análise de tempo de resposta usa o tráfego observado, não um pior caso de projeto;
 - no modo demonstração a rede simulada não reage aos ensaios;
-- associação ainda não é persistida no Node após reinicialização;
+- o Node retoma os vínculos gravados 12 s depois de reiniciar; nesse intervalo o sensor aparece sem sessão;
 - só os perfis `VIBRATION` e `ACOUSTIC` possuem visualização especializada de telemetria;
 - as leituras acústicas (dose, curva NC, conversa, tacômetro) são indicativas: o INMP441 não é um medidor de nível sonoro normatizado;
 - preferências e intercorrências do modelo visual não substituem o JSONL técnico da sessão;

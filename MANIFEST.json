@@ -66,7 +66,7 @@
     "reassociação automática de sensores, autorizada por sensor",
     "vigilância do líder pelos seguidores",
     "ensaios de injeção de falhas com medição do resultado na TUI",
-    "bancada virtual: firmware completo de vários Nodes CAN em um processo, com dezesseis cenários",
+    "bancada virtual: firmware completo de vários Nodes CAN em um processo, com dezessete cenários",
     "reprodução de gravações na TUI (--replay)",
     "predisposição para CAN FD em biblioteca: segmentação até 64 bytes e PDU autenticada",
     "módulos de rede, enlace e diagnóstico compartilhados pelos firmwares de sensor (ganchos edge_app.h)",
@@ -77,14 +77,14 @@
     "supervisório na TUI: até cinco painéis (rede, módulos CAN e sensores), com alarme na borda e uso do barramento por módulo",
     "alarmes por limiar definidos pelo operador para cada sensor, com histerese, intercorrências e persistência",
     "gravação das sessões seriais reais no formato de --replay, com segredos mascarados",
-    "fuzz determinístico dos decodificadores do enlace e do plano de dados (ASan/UBSan) e das linhas da TUI"
+    "fuzz determinístico dos decodificadores do enlace e do plano de dados (ASan/UBSan) e das linhas da TUI",
+    "vínculos dos sensores gravados na NVS dos Nodes e retomados depois de um reinício, sem disputar o que outro Node assumiu"
   ],
   "pending": [
     "validação em bancada do plano de dados wireless",
     "validação em bancada de métricas, vigilância do líder, reassociação e ensaios",
     "ajuste dos tempos de espera do sensor que limitam a reassociação",
     "detecção de isolamento do barramento pelo próprio Node",
-    "persistência da associação",
     "autenticação de origem no barramento CAN",
     "entrega da chave do sensor pela estação, sem chave mestra nos Nodes",
     "verificação FIDO2/OTP real da chave física",
@@ -93,7 +93,7 @@
     "experimento comparativo em CAN FD"
   ],
   "validation": {
-    "automated": "testes nativos (incluindo o DSP acústico e o fuzz dos decodificadores), simulação do plano de dados, simulação da PIO I2S, bancada virtual com dezesseis cenários e suíte da TUI",
+    "automated": "testes nativos (incluindo o DSP acústico e o fuzz dos decodificadores), simulação do plano de dados, simulação da PIO I2S, bancada virtual com dezessete cenários e suíte da TUI",
     "compiled": "sensor acústico para pico_w e pico2_w (Pico SDK 2.3.1, sem avisos de compilação) e sensor de vibração para pico_w; firmware do Node CAN e da Probe 00 compilado no computador pela bancada virtual, e para ESP32 (arduino-esp32 2.0.17) pela integração contínua",
     "hardware": "plano de dados wireless, métricas, reassociação, ensaios e sensor acústico ainda não validados em bancada"
   }

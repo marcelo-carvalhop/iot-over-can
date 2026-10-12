@@ -293,7 +293,7 @@ O script executa, no computador, sete verificações. Requer `cc` e `c++`.
 4. Fuzz determinístico dos decodificadores (`Codigo/common/tests/fuzz_ioc_decoders.c`): oferta BLE, envelope UDP, handshake, relatórios, remontagem de segmentos e PDU autenticada recebem entradas aleatórias e mensagens válidas mutadas, em buffers do tamanho exato, com AddressSanitizer e UBSan quando disponíveis (`fuzz_ioc_decoders <iterações> <semente>` roda campanhas maiores).
 5. Sensor acústico (`Codigo/node-audio/tests`): motor de DSP e validação da configuração; o DSP roda também com AddressSanitizer e UBSan quando o compilador os oferece.
 6. Simulação sensor ↔ Node ↔ Probe, que compila `Codigo/node-can/src/wireless_link.cpp` com os substitutos de `Codigo/node-can/test/host/stubs/`, com um sensor de vibração e um acústico.
-7. Bancada virtual: a Probe 00 e três Nodes, cada um o firmware completo, em dezesseis cenários (o último, `acoustic_sensor`, com o sensor acústico).
+7. Bancada virtual: a Probe 00 e três Nodes, cada um o firmware completo, em dezessete cenários (entre eles `acoustic_sensor`, com o sensor acústico, e `restart_keeps_binding`, em que o Node reinicia e retoma da NVS o vínculo gravado).
 
 Para inspecionar a saída que a Probe 00 produziria:
 

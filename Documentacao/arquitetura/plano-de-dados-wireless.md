@@ -235,7 +235,7 @@ Limites conhecidos:
 - **Tag de 64 bits.** Adequada ao volume e à vida útil das sessões deste projeto; não é um parâmetro para uso geral.
 - **Chave mestra em todos os Nodes.** A extração da memória de um Node compromete o enlace inteiro. A entrega de `K_dev` pela estação no momento da associação eliminaria isso e fica como evolução.
 - **Sem elemento seguro.** As chaves ficam na memória flash dos microcontroladores.
-- **Vínculos não persistem.** A reinicialização de um Node apaga vínculos e sessões.
+- **Sessões não persistem.** Os vínculos ficam na NVS do Node e voltam depois de um reinício (ver `modulo-can/modulo-can.md`, Persistência); as sessões, não: o sensor sempre se reautentica.
 - **Negação de serviço por rádio está fora do escopo.** Além das repetições citadas na tabela, qualquer interferência em 2,4 GHz interrompe o plano de dados. O que o protocolo garante é que isso não resulta em dados ou comandos falsos.
 
 ## 9. Verificação automatizada

@@ -1259,6 +1259,50 @@ int scenarioTwoSensors() {
   return 0;
 }
 
+// O Node responsável reinicia e retoma o vínculo gravado na NVS, sem ação do
+// operador: mesmo filho, nova sessão autenticada e telemetria. Política MANUAL,
+// para que o líder não reassocie o sensor durante a queda. Um vínculo desfeito
+// antes do reinício (sensor B no Node 2) não volta.
+int scenarioRestartKeepsBinding() {
+  formNetwork();
+  bindSensorA(false);
+  CHECK(runUntilTrue([] { return logHas(node(1), "[WIRELESS ASSOC] tabela gravada: 1 vinculo(s)"); }, 2000));
+
+  Sensor& b = addSensor(SENSOR_B, 4243, 3);
+  b.rssi[2] = -55;
+  CHECK(runUntilTrue([] { return logHas(probe(), "WIRELESS_CANDIDATE reporter=2 uuid=0xE66164084327A12C"); }, 8000));
+  probeCommand("WIRELESS BIND 2 0xE66164084327A12C");
+  CHECK(runUntilTrue([] { return logHas(probe(), "TEL NODE=2 CHILD=1 "); }, 15000));
+  probeCommand("WIRELESS UNBIND 2 0xE66164084327A12C");
+  CHECK(runUntilTrue([] { return logHas(node(2), "[WIRELESS ASSOC] tabela gravada: 0 vinculo(s)"); }, 3000));
+  runFor(3000);
+
+  // Queda curta do Node 1: o vínculo volta depois da espera de 12 s.
+  const uint32_t t0 = nowMs();
+  probeCommand("FAULT POWER_CYCLE 1 3");
+  CHECK(runUntilTrue([t0] { return logHas(node(1), "1 vinculo(s) gravado(s); retomada em 12000 ms", t0); }, 15000));
+  CHECK(runUntilTrue([t0] {
+    return logHas(node(1), "vinculo retomado da NVS child=1 uuid=0xE6616408432B6F39 failover=MANUAL", t0);
+  }, 20000));
+  CHECK(runUntilTrue([t0] { return logHas(probe(), "[GW] WIRELESS_LINK node=1 child=1 state=SECURE", t0); }, 20000));
+  CHECK(runUntilTrue([t0] { return logHas(probe(), "TEL NODE=1 CHILD=1 ", t0); }, 20000));
+  CHECK(!logHas(probe(), "[GW] WIRELESS_FAILOVER"));
+  CHECK(g_sensors[0].parent == 1);
+  note("vinculo retomado e telemetria de volta %ld ms depois do pedido de reinicio",
+       logTime(probe(), "TEL NODE=1 CHILD=1 ", t0) - static_cast<long>(t0));
+
+  // Queda do Node 2: a tabela gravada está vazia; o sensor B continua livre.
+  const uint32_t t1 = nowMs();
+  probeCommand("FAULT POWER_CYCLE 2 3");
+  CHECK(runUntilTrue([] { return node(2).restarts == 1 && node(2).powered; }, 10000));
+  runFor(20000);
+  CHECK(!logHas(node(2), "gravado(s); retomada", t1));
+  CHECK(!logHas(node(2), "vinculo retomado da NVS", t1));
+  CHECK(!logHas(probe(), "TEL NODE=2 ", t1));
+  CHECK(runUntilTrue([] { return logHas(probe(), "TEL NODE=1 CHILD=1 ", nowMs() - 2000); }, 3000));
+  return 0;
+}
+
 // O Node escolhido para receber o sensor deixa de ouvi-lo logo antes da
 // decisão. O vínculo não pode ficar preso a ele: o líder tenta outro Node.
 int scenarioFailoverRetry() {
@@ -1435,6 +1479,7 @@ const Scenario SCENARIOS[] = {
   {"failover_dead_target", scenarioFailoverDeadTarget, "o Node escolhido sai do ar; o vinculo anterior e mantido"},
   {"silence_leader_with_sensor", scenarioSilenceLeaderWithSensor, "lider retoma de uma parada longa sem reassociar"},
   {"acoustic_sensor", scenarioAcousticSensor, "sensor acustico INMP441: niveis, maquina, eventos e espectro"},
+  {"restart_keeps_binding", scenarioRestartKeepsBinding, "Node reinicia e retoma o vinculo gravado na NVS"},
 };
 
 }  // namespace
@@ -1453,6 +1498,21 @@ void sim_delay_ms(uint32_t ms) {
 uint32_t sim_random32() {
   g_rng = g_rng * 1664525u + 1013904223u;
   return g_rng;
+}
+
+namespace {
+std::map<std::pair<int, std::string>, std::vector<uint8_t>> g_nvs;
+}
+
+size_t sim_nvs_get(int node_id, const std::string& key, uint8_t* buf, size_t cap) {
+  const auto it = g_nvs.find({node_id, key});
+  if (it == g_nvs.end() || it->second.size() > cap || !buf) return 0;
+  memcpy(buf, it->second.data(), it->second.size());
+  return it->second.size();
+}
+
+void sim_nvs_put(int node_id, const std::string& key, const uint8_t* data, size_t len) {
+  g_nvs[{node_id, key}] = std::vector<uint8_t>(data, data + len);
 }
 
 int main(int argc, char** argv) {

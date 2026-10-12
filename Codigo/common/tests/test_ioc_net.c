@@ -1,6 +1,7 @@
 /*
  * Testes nativos: duração de quadros CAN, PDU autenticada (predisposição
- * CAN FD), segmentação com quadros maiores e reassociação automática.
+ * CAN FD), segmentação com quadros maiores, reassociação automática e a
+ * tabela de vínculos gravada pelos Nodes.
  *
  *   test_ioc_net            executa as verificações
  *   test_ioc_net --vectors  imprime vetores para conferência com Python
@@ -9,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ioc_bindstore.h"
 #include "ioc_canbits.h"
 #include "ioc_failover.h"
 #include "ioc_secpdu.h"
@@ -396,6 +398,60 @@ static void print_vectors(void) {
     printf("secpdu=%s\n", hex);
 }
 
+static void test_bindstore(void) {
+    /* CRC-32 do zlib: vetor clássico. */
+    CHECK(ioc_bs_crc32((const uint8_t *)"123456789", 9) == 0xCBF43926u);
+
+    ioc_bs_entry in[3] = {
+        {0xE6616408432B7A11ull, 1, 0x02, 6, IOC_BS_FLAG_AUTO_FAILOVER},
+        {0xE6616408432B6F39ull, 2, 0x01, 6, 0},
+        {0x0000000000000001ull, 4, 0x01, 5, 0},
+    };
+    uint8_t buf[IOC_BS_MAX_BYTES];
+    const size_t len = ioc_bs_encode(2, in, 3, buf, sizeof(buf));
+    CHECK(len == IOC_BS_HEADER_LEN + 3 * IOC_BS_ENTRY_LEN + IOC_BS_CRC_LEN);
+
+    ioc_bs_entry out[IOC_BS_MAX];
+    uint8_t count = 99;
+    CHECK(ioc_bs_decode(buf, len, 2, out, IOC_BS_MAX, &count) == 1 && count == 3);
+    for (int i = 0; i < 3; ++i) {
+        CHECK(out[i].uuid == in[i].uuid && out[i].child_id == in[i].child_id);
+        CHECK(out[i].profile == in[i].profile && out[i].protocol == in[i].protocol && out[i].flags == in[i].flags);
+    }
+
+    /* Outro Node, espaço insuficiente, tamanho errado, corrupção. */
+    CHECK(ioc_bs_decode(buf, len, 3, out, IOC_BS_MAX, &count) == 0 && count == 0);
+    CHECK(ioc_bs_decode(buf, len, 2, out, 2, &count) == 0);
+    CHECK(ioc_bs_decode(buf, len - 1, 2, out, IOC_BS_MAX, &count) == 0);
+    for (size_t i = 0; i < len; ++i) {
+        buf[i] ^= 0x10;
+        CHECK(ioc_bs_decode(buf, len, 2, out, IOC_BS_MAX, &count) == 0);
+        buf[i] ^= 0x10;
+    }
+    CHECK(ioc_bs_decode(buf, len, 2, out, IOC_BS_MAX, &count) == 1);
+
+    /* Filho repetido, filho fora da faixa e UUID zero são recusados mesmo com CRC correto. */
+    ioc_bs_entry dup[2] = {{0x11, 1, 1, 6, 0}, {0x22, 1, 1, 6, 0}};
+    size_t n = ioc_bs_encode(2, dup, 2, buf, sizeof(buf));
+    CHECK(n > 0 && ioc_bs_decode(buf, n, 2, out, IOC_BS_MAX, &count) == 0);
+    ioc_bs_entry same_uuid[2] = {{0x11, 1, 1, 6, 0}, {0x11, 2, 1, 6, 0}};
+    n = ioc_bs_encode(2, same_uuid, 2, buf, sizeof(buf));
+    CHECK(ioc_bs_decode(buf, n, 2, out, IOC_BS_MAX, &count) == 0);
+    ioc_bs_entry bad_child[1] = {{0x11, IOC_BS_MAX + 1, 1, 6, 0}};
+    n = ioc_bs_encode(2, bad_child, 1, buf, sizeof(buf));
+    CHECK(ioc_bs_decode(buf, n, 2, out, IOC_BS_MAX, &count) == 0);
+    ioc_bs_entry zero[1] = {{0, 1, 1, 6, 0}};
+    n = ioc_bs_encode(2, zero, 1, buf, sizeof(buf));
+    CHECK(ioc_bs_decode(buf, n, 2, out, IOC_BS_MAX, &count) == 0);
+
+    /* Tabela vazia é válida (Node sem vínculos); limites de codificação. */
+    n = ioc_bs_encode(5, NULL, 0, buf, sizeof(buf));
+    CHECK(n == IOC_BS_HEADER_LEN + IOC_BS_CRC_LEN);
+    CHECK(ioc_bs_decode(buf, n, 5, out, IOC_BS_MAX, &count) == 1 && count == 0);
+    CHECK(ioc_bs_encode(5, in, IOC_BS_MAX + 1, buf, sizeof(buf)) == 0);
+    CHECK(ioc_bs_encode(5, in, 3, buf, 10) == 0);
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--vectors") == 0) {
         print_vectors();
@@ -406,6 +462,7 @@ int main(int argc, char **argv) {
     test_segmentation_fd();
     test_assoc_flags();
     test_failover();
+    test_bindstore();
     if (g_failures) {
         fprintf(stderr, "ioc_net: %d falha(s)\n", g_failures);
         return 1;

@@ -34,7 +34,7 @@ A versão 0.18 acrescenta medição e resiliência, também sem validação em h
 - **Reassociação automática.** Quando o operador autoriza, o líder entrega um sensor a outro Node que o alcance se o responsável sair do ar ou deixar de ouvi-lo.
 - **Recuperação sem a Probe.** Os seguidores vigiam o líder e pedem a eleição; a Probe 00 deixou de ser necessária para a rede se recuperar.
 - **Ensaios de falha.** Queda de módulo, módulo congelado, queda do ponto de acesso e carga no barramento, comandados pela TUI, que mede a reação da rede.
-- **Bancada virtual.** O firmware completo do Node CAN é executado no computador, em vários Nodes ao mesmo tempo, com barramento, rádios e sensores simulados. Dezesseis cenários (um deles com o sensor acústico, da versão 0.19) fazem parte dos testes, e a TUI os reproduz com `--replay`.
+- **Bancada virtual.** O firmware completo do Node CAN é executado no computador, em vários Nodes ao mesmo tempo, com barramento, rádios e sensores simulados. Dezessete cenários (um deles com o sensor acústico, da versão 0.19; outro, com o Node que reinicia e retoma os vínculos gravados) fazem parte dos testes, e a TUI os reproduz com `--replay`.
 
 A versão 0.19 acrescenta o **sensor acústico** (INMP441 em I2S, Pico W ou Pico 2 W), com DSP no segundo núcleo e três modos análogos aos do sensor de vibração: `LEVEL` (LAeq, Ln e doses NR-15/NHO-01), `MACHINE` (tacômetro acústico pela série harmônica, proeminência tonal e escore de anomalia contra uma assinatura aprendida) e `EVENTS` (detecção STA/LTA, classificação, pico e SEL). O relatório de um segundo atravessa o Node e a Probe como os dados do sensor de vibração, e a TUI o transforma em leituras de operador: projeção de dose e critério da NHO-01, curva NC, distância de conversa, hipótese de motor de indução, estatística de eventos e calibração com calibrador. Firmware compilado para as duas placas e verificado no computador; **validação em bancada pendente**. Ver [`Documentacao/sensor-acustico/sensor-acustico.md`](Documentacao/sensor-acustico/sensor-acustico.md).
 
@@ -205,7 +205,6 @@ O índice oficial está em [`Documentacao/README.md`](Documentacao/README.md). O
 - ajuste, com medição em bancada, dos tempos de espera do sensor que limitam a reassociação (hoje cerca de 25 s);
 - detecção, pelo próprio Node, de que ele está isolado do barramento, para liberar os sensores;
 - monitoramento da alimentação de cada Node (motivo do último reinício, contagem de reinícios e, com um divisor resistivo, tensão de entrada), com aviso na TUI; e ajustes de consumo no firmware (potência do Wi-Fi, partida escalonada dos rádios);
-- persistência e recuperação dos vínculos após reinicialização dos Nodes;
 - autenticação de origem dos comandos e dados no barramento CAN;
 - comissionamento de sensores sem compilação: firmware único, código de instalação na etiqueta e chave entregue pela rede após a aprovação do operador (proposta em [`Documentacao/arquitetura/comissionamento-de-sensores.md`](Documentacao/arquitetura/comissionamento-de-sensores.md));
 - verificação FIDO2/OTP real da chave física do operador;
