@@ -58,10 +58,13 @@ def test_draft_follows_the_outline_and_keeps_links_working(tmp_path: Path) -> No
     # A tabela de desafios chega ao livro com cabeçalho próprio.
     challenges = text[text.index("trecho: acustico-desafios") :]
     assert "| ID | Problema | Causa | Solução aplicada | Estado |" in challenges
-    # Links relativos reescritos para o local do rascunho.
+    # Links relativos reescritos para o local do rascunho; em [`caminho`](caminho), o texto acompanha.
     for target in re.findall(r"\]\(([^)\s#]+)", text):
         if "://" not in target:
             assert (out.parent / target).exists(), target
+    for label, target in re.findall(r"\[`([^`]+)`\]\(([^)\s]+)\)", text):
+        if label.endswith(".md"):
+            assert label == target
 
 
 def test_single_chapter_and_stdout(tmp_path: Path) -> None:

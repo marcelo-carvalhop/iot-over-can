@@ -207,6 +207,24 @@ def _reescrever_link(destino: str, origem: Path, saida: Path) -> str:
     return novo + separador + ancora
 
 
+def _reescrever_links(linha: str, origem: Path, saida: Path) -> str:
+    """Reescreve os destinos relativos; num link [`caminho`](caminho), também o texto."""
+
+    partes: list[str] = []
+    fim = 0
+    for link in LINK.finditer(linha):
+        antes = linha[fim : link.start()]
+        destino = link.group(2)
+        novo = _reescrever_link(destino, origem, saida)
+        rotulo = f"[`{destino}`"
+        if novo != destino and antes.endswith(rotulo):
+            antes = antes[: -len(rotulo)] + f"[`{novo}`"
+        partes += [antes, link.group(1), novo, link.group(3)]
+        fim = link.end()
+    partes.append(linha[fim:])
+    return "".join(partes)
+
+
 def ajustar(trecho: Trecho, docs: Path, saida: Path) -> list[str]:
     """Títulos a partir do nível 2, sem a numeração da origem, e links relativos à saída.
 
@@ -244,7 +262,7 @@ def ajustar(trecho: Trecho, docs: Path, saida: Path) -> list[str]:
                 if titulo_pendente is not None:
                     texto, titulo_pendente = titulo_pendente, None
                 linha = "#" * nivel + " " + texto
-            linha = LINK.sub(lambda m: m.group(1) + _reescrever_link(m.group(2), origem, saida) + m.group(3), linha)
+            linha = _reescrever_links(linha, origem, saida)
         resultado.append(linha)
     if titulo_pendente is not None and not niveis:
         resultado = [f"## {titulo_pendente}", "", *resultado]
