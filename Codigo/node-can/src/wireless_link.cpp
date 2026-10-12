@@ -5,6 +5,8 @@
 #include <NimBLEDevice.h>
 #include <esp_wifi.h>
 #include <cmath>
+#include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -72,6 +74,7 @@ constexpr uint32_t AP_RETRY_MS = 5000;          // nova tentativa quando o ponto
 constexpr uint32_t HELLO_GUARD_MS = 1000;       // um handshake recente não é substituído por outro HELLO
 constexpr uint16_t ACK_DETAIL_TIMEOUT = 0xFFFF;
 constexpr uint16_t ACK_DETAIL_CONFIG_UNKNOWN = 0xFFFE;
+constexpr uint16_t ACK_DETAIL_PROFILE_MISMATCH = 0xFFFD; // comando de outro tipo de sensor
 constexpr uint8_t  MAX_RX_DATAGRAMS_PER_POLL = 4;
 constexpr uint8_t  PROBE_PENDING_LEN = 12;
 
@@ -81,6 +84,7 @@ constexpr uint8_t  PROBE_PENDING_LEN = 12;
 
 struct PendingHandshake {
   bool active = false;
+  uint8_t profile = 0;        // perfil declarado no HELLO autenticado
   uint8_t sensorNonce[IOC_LINK_NONCE_LEN] = {0};
   uint8_t nodeNonce[IOC_LINK_NONCE_LEN] = {0};
   uint8_t sessionKey[IOC_LINK_KEY_LEN] = {0};
@@ -104,6 +108,9 @@ struct Link {
   bool used = false;
   uint64_t uuid = 0;
   uint8_t childId = 0;
+  // Perfil do sensor (0x01 vibração, 0x02 acústico), conhecido pelo HELLO da
+  // sessão em vigor; 0 enquanto não houve sessão.
+  uint8_t profile = 0;
   uint8_t devKey[IOC_LINK_KEY_LEN] = {0};
   uint32_t offerNonce = 0;
 
@@ -160,12 +167,18 @@ struct Link {
   SensorConfig current;
   SensorConfig staged;
   bool stagedDirty = false;
+  bool stagedMismatch = false;   // a edição trouxe um modo de outro perfil: o APPLY é recusado
   bool applyPending = false;
   uint8_t applySeq = 0;
   uint32_t applySentMs = 0;
   bool clearPending = false;
   uint8_t clearSeq = 0;
   uint32_t clearSentMs = 0;
+  // Comando acústico (reinício da medição, assinatura de referência) em andamento.
+  bool acousticPending = false;
+  uint8_t acousticSeq = 0;
+  uint32_t acousticCounter = 0;
+  uint32_t acousticSentMs = 0;
 };
 
 struct TxTransfer {
@@ -349,6 +362,7 @@ void publishLink(Link& link, bool force = false) {
 void publishConfig(const Link& link, uint8_t status) {
   if (!link.current.known) return;
   ioc_wd_config cfg;
+  cfg.profile = link.profile;
   cfg.mode = link.current.mode;
   cfg.window_type = link.current.windowType;
   cfg.window_size = link.current.windowSize;
@@ -634,9 +648,11 @@ void dropSession(Link& link) {
   link.clearPending = false;
   link.staged = link.current;
   link.stagedDirty = false;
+  link.stagedMismatch = false;
   link.pingPending = false;
   link.rtt100us = IOC_WD_RTT_UNKNOWN;
   link.rttMax100us = IOC_WD_RTT_UNKNOWN;
+  link.acousticPending = false;
 }
 
 /* ------------------------------------------------ dados vindos do sensor */
@@ -649,6 +665,47 @@ const char* modeName(uint8_t mode) {
     case FSM_MODE_SEISMIC_STALTA: return "SEISMIC";
     default: return "UNKNOWN";
   }
+}
+
+const char* acousticModeName(uint8_t mode) {
+  switch (mode) {
+    case ACOUSTIC_MODE_IDLE: return "IDLE";
+    case ACOUSTIC_MODE_LEVEL: return "LEVEL";
+    case ACOUSTIC_MODE_MACHINE: return "MACHINE";
+    case ACOUSTIC_MODE_EVENTS: return "EVENTS";
+    default: return "UNKNOWN";
+  }
+}
+
+// O número do modo só tem significado junto com o perfil do sensor.
+const char* modeNameFor(uint8_t profile, uint8_t mode) {
+  return profile == PROFILE_ACOUSTIC_MEMS ? acousticModeName(mode) : modeName(mode);
+}
+
+const char* profileTag(uint8_t profile) {
+  switch (profile) {
+    case PROFILE_ACCELEROMETER: return "VIBRATION";
+    case PROFILE_ACOUSTIC_MEMS: return "ACOUSTIC";
+    default: return "UNKNOWN";
+  }
+}
+
+// Perda no Wi-Fi: a numeração do sensor é contígua dentro da sessão.
+void noteSensorSequence(Link& link, uint16_t seq) {
+  if (link.haveSeq) {
+    const uint16_t gap = static_cast<uint16_t>(seq - link.lastSeq);
+    if (gap > 1u && gap < 0x8000u) {
+      const uint32_t lost = static_cast<uint32_t>(link.lostDatagrams) + (gap - 1u);
+      link.lostDatagrams = lost > 0xFFFFu ? 0xFFFFu : static_cast<uint16_t>(lost);
+    }
+  }
+  link.haveSeq = true;
+  link.lastSeq = seq;
+}
+
+// Uma amostra por período de encaminhamento (ou a única pedida) segue ao CAN.
+bool forwardDue(const Link& link, uint32_t now) {
+  return link.streamOnce || (link.streamEnabled && now - link.lastForwardMs >= link.streamPeriodMs);
 }
 
 void forwardSpectrum(Link& link, const uint8_t* fftBytes, uint16_t bins, float sampleRateHz) {
@@ -692,18 +749,10 @@ void handleTelemetry(Link& link, const uint8_t* inner, size_t len) {
   const size_t fftBytes = len - sizeof(t);
   if (fftBytes != static_cast<size_t>(t.fft_bins_count) * sizeof(float)) return; // tamanho incoerente
 
-  if (link.haveSeq) {
-    const uint16_t gap = static_cast<uint16_t>(t.seq_num - link.lastSeq);
-    if (gap > 1u && gap < 0x8000u) {
-      const uint32_t lost = static_cast<uint32_t>(link.lostDatagrams) + (gap - 1u);
-      link.lostDatagrams = lost > 0xFFFFu ? 0xFFFFu : static_cast<uint16_t>(lost);
-    }
-  }
-  link.haveSeq = true;
-  link.lastSeq = t.seq_num;
+  noteSensorSequence(link, t.seq_num);
 
   const uint32_t now = millis();
-  if (link.streamOnce || (link.streamEnabled && now - link.lastForwardMs >= link.streamPeriodMs)) {
+  if (forwardDue(link, now)) {
     ioc_wd_telemetry out;
     out.seq = link.forwardSeq++;
     out.mode = t.fsm_mode;
@@ -743,6 +792,97 @@ void handleTelemetry(Link& link, const uint8_t* inner, size_t len) {
       link.fftBinsWanted = 0;
     }
   }
+}
+
+// Relatório acústico (um por segundo): níveis já integrados no sensor seguem
+// como transferência de 108 bytes; o espectro anexado atende a um pedido de FFT.
+void handleAcoustic(Link& link, const uint8_t* inner, size_t len) {
+  Payload_AcousticStream a;
+  if (len < sizeof(a)) return;
+  memcpy(&a, inner, sizeof(a));
+  if (len - sizeof(a) != static_cast<size_t>(a.spectrum_bins) * sizeof(float)) return; // tamanho incoerente
+
+  noteSensorSequence(link, a.seq_num);
+
+  const uint32_t now = millis();
+  if (forwardDue(link, now)) {
+    ioc_wd_acoustic out;
+    memset(&out, 0, sizeof(out));
+    out.seq = link.forwardSeq++;
+    out.mode = a.mode;
+    out.flags = a.flags;
+    const float rate = std::isfinite(a.sample_rate_eff_hz) ? a.sample_rate_eff_hz : 0.0f;
+    out.rate_hz = rate <= 0.0f ? 0u : (rate >= 65535.0f ? 65535u : static_cast<uint16_t>(rate + 0.5f));
+    out.fft_size = a.fft_size;
+    out.interval_ms = a.interval_ms;
+    out.coverage_pct = a.coverage_pct;
+    out.cpu_pct = a.cpu_pct;
+    out.laeq_cb = a.laeq_cb;
+    out.lceq_cb = a.lceq_cb;
+    out.lzeq_cb = a.lzeq_cb;
+    out.lzpeak_cb = a.lzpeak_cb;
+    out.laf_cb = a.laf_cb;
+    out.lafmax_cb = a.lafmax_cb;
+    out.lafmin_cb = a.lafmin_cb;
+    out.crest_x100 = a.crest_x100;
+    out.kurtosis_x100 = a.kurtosis_x100;
+    out.peak_hz = a.peak_hz;
+    out.centroid_hz = a.centroid_hz;
+    out.flatness_x10000 = a.flatness_x10000;
+    out.leq_total_cb = a.leq_total_cb;
+    out.l10_cb = a.l10_cb;
+    out.l50_cb = a.l50_cb;
+    out.l90_cb = a.l90_cb;
+    out.dose_nr15_x10 = a.dose_nr15_x10;
+    out.dose_nho01_x10 = a.dose_nho01_x10;
+    out.elapsed_s = a.elapsed_s;
+    out.tonal_cb = a.tonal_cb;
+    out.f0_hz = a.f0_hz;
+    out.harmonics = a.harmonics;
+    out.anomaly_x100 = a.anomaly_x100;
+    out.baseline_pct = a.baseline_pct;
+    out.event_count = a.event_count;
+    out.events_interval = a.events_interval;
+    out.event_class = a.event_class;
+    out.event_peak_cb = a.event_peak_cb;
+    out.event_sel_cb = a.event_sel_cb;
+    out.event_duration_ms = a.event_duration_ms;
+    out.event_centroid_hz = a.event_centroid_hz;
+    out.event_age_s = a.event_age_s;
+    out.sta_lta_cb = a.sta_lta_cb;
+    out.background_cb = a.background_cb;
+    for (unsigned b = 0; b < IOC_WD_ACOUSTIC_BANDS; ++b) out.octave_cb[b] = a.octave_cb[b];
+    out.battery_pct = a.battery_pct;
+    out.battery_mv = a.battery_mv;
+    out.dtc_count = a.dtc_count;
+    out.dtc_code = a.dtc_active_code;
+    uint8_t raw[IOC_WD_ACOUSTIC_LEN];
+    ioc_wd_acoustic_encode(&out, raw);
+    if (queueTransfer(link.childId, IOC_WD_KIND_ACOUSTIC, raw, sizeof(raw))) {
+      link.lastForwardMs = now;
+      link.streamOnce = false;
+    }
+  }
+
+  if (link.fftBinsWanted > 0) {
+    if (a.spectrum_bins > 0) {
+      forwardSpectrum(link, inner + sizeof(a), a.spectrum_bins, a.sample_rate_eff_hz);
+    } else if (a.mode == ACOUSTIC_MODE_IDLE) {
+      publishAck(link.childId, link.fftSeq, IOC_WD_OP_FFT, IOC_WD_ACK_REJECTED, 0);
+      link.fftBinsWanted = 0;
+    }
+    // Sem espectro neste segundo (modo EVENTS sobrecarregado): espera o próximo.
+  }
+}
+
+void handleAcousticAck(Link& link, const uint8_t* inner, size_t len) {
+  Payload_AcousticControlAck ack;
+  if (len != sizeof(ack) || !link.acousticPending) return;
+  memcpy(&ack, inner, sizeof(ack));
+  if (ack.request_counter != link.acousticCounter) return; // resposta a um pedido antigo
+  publishAck(link.childId, link.acousticSeq, IOC_WD_OP_ACOUSTIC,
+             ack.status == 1 ? IOC_WD_ACK_APPLIED : IOC_WD_ACK_REJECTED, ack.action);
+  link.acousticPending = false;
 }
 
 void handleConfigMenu(Link& link, const uint8_t* inner, size_t len) {
@@ -826,6 +966,12 @@ void handleSensorPayload(Link& link, const uint8_t* inner, size_t len) {
     case CMD_PONG:
       handlePong(link, inner, len);
       break;
+    case CMD_ACOUSTIC_STREAM:
+      handleAcoustic(link, inner, len);
+      break;
+    case CMD_ACOUSTIC_CONTROL_ACK:
+      handleAcousticAck(link, inner, len);
+      break;
     default:
       break;
   }
@@ -879,6 +1025,7 @@ void handleHello(const uint8_t* datagram, size_t len, const ioc_env_view& view,
 
   if (!sameHello) {
     pending.active = true;
+    pending.profile = hello.profile;
     pending.startedMs = millis();
     memcpy(pending.sensorNonce, hello.sensor_nonce, IOC_LINK_NONCE_LEN);
     fillRandom(pending.nodeNonce, IOC_LINK_NONCE_LEN);
@@ -909,6 +1056,7 @@ void promotePending(Link& link, const IPAddress& ip, uint16_t port, uint32_t cou
   ioc_secure_zero(link.pending.sessionKey, IOC_LINK_KEY_LEN);
   link.pending.active = false;
   link.secure = true;
+  link.profile = link.pending.profile;
   link.peerIp = ip;
   link.peerPort = port;
   link.txCounter = 0;
@@ -920,6 +1068,7 @@ void promotePending(Link& link, const IPAddress& ip, uint16_t port, uint32_t cou
   link.lastForwardMs = 0;
   link.applyPending = false;
   link.clearPending = false;
+  link.acousticPending = false;
   link.fftBinsWanted = 0;
   link.pingPending = false;
   link.rtt100us = IOC_WD_RTT_UNKNOWN;
@@ -929,6 +1078,7 @@ void promotePending(Link& link, const IPAddress& ip, uint16_t port, uint32_t cou
   link.current.known = false;
   link.staged = link.current;
   link.stagedDirty = false;
+  link.stagedMismatch = false;
   // O sensor envia o menu de configuração após o CONFIRM, mas um datagrama
   // UDP pode se perder; o pedido explícito cobre esse caso.
   sendSimpleCommand(link, CMD_GET_CONFIG_MENU);
@@ -1059,6 +1209,10 @@ void maintainLinks() {
       publishAck(link.childId, link.fftSeq, IOC_WD_OP_FFT, IOC_WD_ACK_REJECTED, ACK_DETAIL_TIMEOUT);
       link.fftBinsWanted = 0;
     }
+    if (link.acousticPending && now - link.acousticSentMs > APPLY_TIMEOUT_MS) {
+      publishAck(link.childId, link.acousticSeq, IOC_WD_OP_ACOUSTIC, IOC_WD_ACK_REJECTED, ACK_DETAIL_TIMEOUT);
+      link.acousticPending = false;
+    }
 
     publishLink(link);
   }
@@ -1067,6 +1221,14 @@ void maintainLinks() {
 /* -------------------------------------------- comandos vindos do CAN */
 
 void applyStagedConfig(Link& link, uint8_t seq) {
+  if (link.stagedMismatch) {
+    // Um SET MODE desta edição pertencia a outro perfil: nada dela é aplicado.
+    link.stagedMismatch = false;
+    link.staged = link.current;
+    link.stagedDirty = false;
+    publishAck(link.childId, seq, IOC_WD_OP_APPLY, IOC_WD_ACK_REJECTED, ACK_DETAIL_PROFILE_MISMATCH);
+    return;
+  }
   if (!link.current.known || !link.staged.known) {
     // Sem a configuração atual do sensor não há base para montar a nova.
     sendSimpleCommand(link, CMD_GET_CONFIG_MENU);
@@ -1153,6 +1315,13 @@ void handleDataCommand(const ioc_wd_command& cmd) {
       break;
     }
     case IOC_WD_OP_SET_MODE:
+      // arg1 traz o perfil a que o nome do modo pertence: 1 (ROTATING) e 1
+      // (LEVEL) são o mesmo número em sensores diferentes.
+      if (cmd.arg[1] != 0 && link->profile != 0 && cmd.arg[1] != link->profile) {
+        link->stagedMismatch = true;
+        publishAck(link->childId, cmd.seq, cmd.opcode, IOC_WD_ACK_REJECTED, ACK_DETAIL_PROFILE_MISMATCH);
+        break;
+      }
       link->staged.mode = cmd.arg[0];
       link->stagedDirty = true;
       publishAck(link->childId, cmd.seq, cmd.opcode, IOC_WD_ACK_ACCEPTED, 0);
@@ -1183,6 +1352,29 @@ void handleDataCommand(const ioc_wd_command& cmd) {
     case IOC_WD_OP_APPLY:
       applyStagedConfig(*link, cmd.seq);
       break;
+    case IOC_WD_OP_ACOUSTIC: {
+      if (link->profile != PROFILE_ACOUSTIC_MEMS) {
+        publishAck(link->childId, cmd.seq, cmd.opcode, IOC_WD_ACK_REJECTED, ACK_DETAIL_PROFILE_MISMATCH);
+        break;
+      }
+      Payload_AcousticControl ctrl;
+      memset(&ctrl, 0, sizeof(ctrl));
+      ctrl.magic_header = NET_MAGIC_HEADER;
+      ctrl.cmd_type = CMD_ACOUSTIC_CONTROL;
+      ctrl.request_counter = ++link->configCounter;
+      ctrl.action = cmd.arg[0];
+      ctrl.argument = ioc_wd_arg_u16(&cmd.arg[1]);
+      if (sendToSensor(*link, &ctrl, sizeof(ctrl))) {
+        link->acousticPending = true;
+        link->acousticSeq = cmd.seq;
+        link->acousticCounter = ctrl.request_counter;
+        link->acousticSentMs = millis();
+        publishAck(link->childId, cmd.seq, cmd.opcode, IOC_WD_ACK_ACCEPTED, 0);
+      } else {
+        publishAck(link->childId, cmd.seq, cmd.opcode, IOC_WD_ACK_NO_LINK, 0);
+      }
+      break;
+    }
     case IOC_WD_OP_DTC_CLEAR: {
       Payload_ClearDTC clear;
       memset(&clear, 0, sizeof(clear));
@@ -1272,6 +1464,7 @@ const char* ackReason(const ioc_wd_ack& ack) {
   if (ack.status == IOC_WD_ACK_UNKNOWN) return "UNKNOWN_TARGET_OR_OPCODE";
   if (ack.status == IOC_WD_ACK_REJECTED && ack.detail == ACK_DETAIL_TIMEOUT) return "SENSOR_TIMEOUT";
   if (ack.status == IOC_WD_ACK_REJECTED && ack.detail == ACK_DETAIL_CONFIG_UNKNOWN) return "CONFIG_UNKNOWN";
+  if (ack.status == IOC_WD_ACK_REJECTED && ack.detail == ACK_DETAIL_PROFILE_MISMATCH) return "PROFILE_MISMATCH";
   if (ack.status == IOC_WD_ACK_REJECTED) return "SENSOR_REJECTED";
   return "";
 }
@@ -1329,6 +1522,118 @@ void probePrintSpectrum(uint8_t node, uint8_t child, const ioc_wd_spectrum_heade
   Serial.println(line);
 }
 
+// Acrescenta texto à linha montada em `line`, sem ultrapassar o buffer.
+struct LineBuilder {
+  char* buf;
+  size_t cap;
+  size_t len;
+  void add(const char* fmt, ...) __attribute__((format(printf, 2, 3))) {
+    if (len + 1 >= cap) return;
+    va_list ap;
+    va_start(ap, fmt);
+    const int n = vsnprintf(buf + len, cap - len, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    len += static_cast<size_t>(n);
+    if (len >= cap) len = cap - 1;
+  }
+  // Nível em centésimos de dB; ausente quando o modo não o calcula.
+  void db(const char* key, int16_t cb) {
+    if (cb != IOC_WD_CB_NA) add(" %s=%.2f", key, static_cast<double>(cb) / 100.0);
+  }
+};
+
+const char* acousticEventName(uint8_t cls) {
+  switch (cls) {
+    case ACOUSTIC_EVENT_IMPACT: return "IMPACT";
+    case ACOUSTIC_EVENT_CRACK: return "CRACK";
+    case ACOUSTIC_EVENT_TONAL: return "TONAL";
+    case ACOUSTIC_EVENT_TRANSIENT: return "TRANSIENT";
+    default: return "NONE";
+  }
+}
+
+const char* yesNo(bool value) {
+  return value ? "YES" : "NO";
+}
+
+// Mesmas chaves do console USB do sensor acústico, para que a TUI interprete
+// as duas origens com um único analisador.
+void probePrintAcoustic(uint8_t node, uint8_t child, const ioc_wd_acoustic& a) {
+  static char line[960];
+  LineBuilder out{line, sizeof(line), 0};
+  const bool spectrum = (a.flags & ACOUSTIC_FLAG_SPECTRUM_VALID) != 0;
+  out.add("TEL NODE=%u CHILD=%u SEQ=%u GW_TS_MS=%lu PROFILE=ACOUSTIC MODE=%s ACQ=I2S WIN=%u "
+          "RATE_EFF_HZ=%u INTERVAL_MS=%u COVERAGE_PCT=%u CPU_PCT=%u SPECTRUM_VALID=%s OVERLOAD=%s MIC_FAULT=%s",
+          static_cast<unsigned>(node), static_cast<unsigned>(child), static_cast<unsigned>(a.seq),
+          static_cast<unsigned long>(millis()), acousticModeName(a.mode), static_cast<unsigned>(a.fft_size),
+          static_cast<unsigned>(a.rate_hz), static_cast<unsigned>(a.interval_ms),
+          static_cast<unsigned>(a.coverage_pct), static_cast<unsigned>(a.cpu_pct), yesNo(spectrum),
+          yesNo(a.flags & ACOUSTIC_FLAG_OVERLOAD), yesNo(a.flags & ACOUSTIC_FLAG_MIC_FAULT));
+  out.db("LAEQ_DB", a.laeq_cb);
+  out.db("LCEQ_DB", a.lceq_cb);
+  out.db("LZEQ_DB", a.lzeq_cb);
+  out.db("LZPEAK_DB", a.lzpeak_cb);
+  out.db("LAF_DB", a.laf_cb);
+  out.db("LAFMAX_DB", a.lafmax_cb);
+  out.db("LAFMIN_DB", a.lafmin_cb);
+  if (a.crest_x100 != IOC_WD_CB_NA) out.add(" CREST=%.2f", static_cast<double>(a.crest_x100) / 100.0);
+  if (a.kurtosis_x100 != IOC_WD_CB_NA) out.add(" KURT=%.2f", static_cast<double>(a.kurtosis_x100) / 100.0);
+  if (spectrum) {
+    out.add(" PEAK_HZ=%.1f", static_cast<double>(finiteOrZero(a.peak_hz)));
+    if (a.centroid_hz) out.add(" CENTROID_HZ=%u", static_cast<unsigned>(a.centroid_hz));
+    out.add(" FLATNESS=%.4f", static_cast<double>(a.flatness_x10000) / 10000.0);
+  }
+  out.add(" OCT_DB=");
+  for (unsigned b = 0; b < IOC_WD_ACOUSTIC_BANDS; ++b) {
+    if (a.octave_cb[b] != IOC_WD_CB_NA) out.add("%s%.1f", b ? "," : "", static_cast<double>(a.octave_cb[b]) / 100.0);
+    else out.add("%s-", b ? "," : "");
+  }
+  switch (a.mode) {
+    case ACOUSTIC_MODE_LEVEL:
+      out.db("LEQ_T_DB", a.leq_total_cb);
+      out.db("L10_DB", a.l10_cb);
+      out.db("L50_DB", a.l50_cb);
+      out.db("L90_DB", a.l90_cb);
+      out.add(" DOSE_NR15_PCT=%.1f DOSE_NHO01_PCT=%.1f ELAPSED_S=%lu DOSE_LIMIT=%s",
+              static_cast<double>(a.dose_nr15_x10) / 10.0, static_cast<double>(a.dose_nho01_x10) / 10.0,
+              static_cast<unsigned long>(a.elapsed_s), yesNo(a.flags & ACOUSTIC_FLAG_DOSE_LIMIT));
+      break;
+    case ACOUSTIC_MODE_MACHINE: {
+      const char* baseline = (a.flags & ACOUSTIC_FLAG_BASELINE_READY)      ? "READY"
+                             : (a.flags & ACOUSTIC_FLAG_BASELINE_LEARNING) ? "LEARNING"
+                                                                             : "NONE";
+      out.db("TONAL_DB", a.tonal_cb);
+      out.add(" F0_HZ=%.2f HARMONICS=%u", static_cast<double>(finiteOrZero(a.f0_hz)),
+              static_cast<unsigned>(a.harmonics));
+      if (a.anomaly_x100 != IOC_WD_CB_NA) out.add(" ANOMALY_Z=%.2f", static_cast<double>(a.anomaly_x100) / 100.0);
+      out.add(" BASELINE=%s BASELINE_PCT=%u ANOMALY=%s", baseline, static_cast<unsigned>(a.baseline_pct),
+              yesNo(a.flags & ACOUSTIC_FLAG_ANOMALY));
+      break;
+    }
+    case ACOUSTIC_MODE_EVENTS:
+      out.add(" EVENTS=%u EVENTS_INTERVAL=%u EVENT_ACTIVE=%s", static_cast<unsigned>(a.event_count),
+              static_cast<unsigned>(a.events_interval), yesNo(a.flags & ACOUSTIC_FLAG_EVENT_ACTIVE));
+      out.db("STA_LTA_DB", a.sta_lta_cb);
+      out.db("BACKGROUND_DB", a.background_cb);
+      if (a.event_age_s != ACOUSTIC_AGE_NONE) {
+        out.add(" EVENT_CLASS=%s", acousticEventName(a.event_class));
+        out.db("EVENT_PEAK_DB", a.event_peak_cb);
+        out.db("EVENT_SEL_DB", a.event_sel_cb);
+        out.add(" EVENT_DURATION_MS=%u", static_cast<unsigned>(a.event_duration_ms));
+        if (a.event_centroid_hz) out.add(" EVENT_CENTROID_HZ=%u", static_cast<unsigned>(a.event_centroid_hz));
+        out.add(" EVENT_AGE_S=%u", static_cast<unsigned>(a.event_age_s));
+      }
+      break;
+    default:
+      break;
+  }
+  out.add(" BATT_PCT=%u BATT_MV=%u DTC=0x%04X DTC_COUNT=%u", static_cast<unsigned>(a.battery_pct),
+          static_cast<unsigned>(a.battery_mv), static_cast<unsigned>(a.dtc_code),
+          static_cast<unsigned>(a.dtc_count));
+  Serial.println(line);
+}
+
 void probePrintAck(uint8_t node, uint8_t child, const ioc_wd_ack& ack) {
   for (uint8_t i = 0; i < PROBE_PENDING_LEN; ++i) {
     ProbePending& pending = probePending[i];
@@ -1364,6 +1669,11 @@ void probeHandleTransfer(uint8_t node, const ioc_wd_rx_slot& slot) {
       if (ioc_wd_spectrum_decode(slot.data, slot.total_len, &hdr, &bins)) {
         probePrintSpectrum(node, child, hdr, bins);
       }
+      break;
+    }
+    case IOC_WD_KIND_ACOUSTIC: {
+      ioc_wd_acoustic a;
+      if (ioc_wd_acoustic_decode(slot.data, slot.total_len, &a)) probePrintAcoustic(node, child, a);
       break;
     }
     case IOC_WD_KIND_CMD_ACK: {
@@ -1409,14 +1719,17 @@ void probeHandleTransfer(uint8_t node, const ioc_wd_rx_slot& slot) {
     case IOC_WD_KIND_CONFIG: {
       ioc_wd_config cfg;
       if (ioc_wd_config_decode(slot.data, slot.total_len, &cfg)) {
+        // O perfil vai no fim: leitores antigos continuam encontrando as mesmas chaves.
+        // Um Node v0.18 não o informa, e então os nomes são os da vibração.
         Serial.printf("[GW] WIRELESS_CONFIG node=%u child=%u status=%s mode=%s rate_req_hz=%.2f "
-                      "rate_eff_hz=%.2f window=%s window_size=%u stalta=%.3f gain=%.4f\n",
+                      "rate_eff_hz=%.2f window=%s window_size=%u stalta=%.3f gain=%.4f%s%s\n",
                       static_cast<unsigned>(node), static_cast<unsigned>(child),
                       cfg.status == 1 ? "APPLIED" : (cfg.status == 2 ? "REJECTED" : "CURRENT"),
-                      modeName(cfg.mode), static_cast<double>(finiteOrZero(cfg.rate_req_hz)),
+                      modeNameFor(cfg.profile, cfg.mode), static_cast<double>(finiteOrZero(cfg.rate_req_hz)),
                       static_cast<double>(finiteOrZero(cfg.rate_eff_hz)), windowName(cfg.window_type),
                       static_cast<unsigned>(cfg.window_size), static_cast<double>(finiteOrZero(cfg.stalta)),
-                      static_cast<double>(finiteOrZero(cfg.gain)));
+                      static_cast<double>(finiteOrZero(cfg.gain)), cfg.profile ? " profile=" : "",
+                      cfg.profile ? profileTag(cfg.profile) : "");
       }
       break;
     }
@@ -1480,6 +1793,7 @@ void probeReject(const char* action, const char* tx, const char* reason) {
 
 void probeHandleCommandLine(char* tokens[], uint8_t count) {
   static const char* const MODES[] = {"IDLE", "ROTATING", "STRUCTURAL", "SEISMIC"};
+  static const char* const ACOUSTIC_MODES[] = {"IDLE", "LEVEL", "MACHINE", "EVENTS"};
   static const char* const WINDOWS[] = {"RECT", "HANN", "HAMMING", "FLATTOP", "BLACKMAN"};
 
   const char* target = findValue(tokens, count, "TARGET");
@@ -1539,16 +1853,47 @@ void probeHandleCommandLine(char* tokens[], uint8_t count) {
     return;
   }
 
+  // Sensor acústico: reinício da medição e assinatura de referência (MACHINE).
+  uint8_t acousticAction = 0;
+  if (strcasecmp(action, "MEASURE_RESET") == 0) acousticAction = ACOUSTIC_CTRL_MEASURE_RESET;
+  else if (strcasecmp(action, "BASELINE_LEARN") == 0) acousticAction = ACOUSTIC_CTRL_BASELINE_LEARN;
+  else if (strcasecmp(action, "BASELINE_CLEAR") == 0) acousticAction = ACOUSTIC_CTRL_BASELINE_CLEAR;
+  if (acousticAction != 0) {
+    uint16_t argument = 0;
+    if (acousticAction == ACOUSTIC_CTRL_BASELINE_LEARN) {
+      const char* secondsText = findValue(tokens, count, "SECONDS");
+      const unsigned long seconds = secondsText ? strtoul(secondsText, nullptr, 10) : 60ul;
+      if (seconds < 5ul || seconds > 3600ul) {
+        probeReject(action, tx, "INVALID_FIELD");
+        return;
+      }
+      argument = static_cast<uint16_t>(seconds);
+    }
+    arg[0] = acousticAction;
+    ioc_wd_put_arg_u16(&arg[1], argument);
+    probeSendCommand(n, c, IOC_WD_OP_ACOUSTIC, arg, tx, action, true);
+    return;
+  }
+
   if (strcasecmp(action, "CONFIG") == 0) {
     const char* modeText = findValue(tokens, count, "MODE");
     const char* rateText = findValue(tokens, count, "RATE_HZ");
     if (!rateText) rateText = findValue(tokens, count, "RATE");
     const char* windowText = findValue(tokens, count, "WINDOW");
     const char* sizeText = findValue(tokens, count, "WINDOW_SIZE");
+    if (!sizeText) sizeText = findValue(tokens, count, "FFT_SIZE");
     const char* staltaText = findValue(tokens, count, "STALTA");
+    if (!staltaText) staltaText = findValue(tokens, count, "THRESHOLD");
     const char* gainText = findValue(tokens, count, "GAIN");
 
-    const int mode = lookupName(modeText, MODES, 4);
+    // O nome escolhe o perfil: o Node recusa um modo de vibração para o
+    // microfone (e vice-versa) em vez de aplicar o número de outro sensor.
+    int mode = lookupName(modeText, MODES, 4);
+    uint8_t modeProfile = PROFILE_ACCELEROMETER;
+    if (mode < 0) {
+      mode = lookupName(modeText, ACOUSTIC_MODES, 4);
+      modeProfile = PROFILE_ACOUSTIC_MEMS;
+    }
     const int window = lookupName(windowText, WINDOWS, 5);
     if ((modeText && mode < 0) || (windowText && window < 0)) {
       probeReject(action, tx, "INVALID_FIELD");
@@ -1557,6 +1902,7 @@ void probeHandleCommandLine(char* tokens[], uint8_t count) {
     if (mode >= 0) {
       memset(arg, 0, 4);
       arg[0] = static_cast<uint8_t>(mode);
+      arg[1] = mode == 0 ? 0 : modeProfile; // IDLE vale para os dois perfis
       probeSendCommand(n, c, IOC_WD_OP_SET_MODE, arg, tx, action, false);
     }
     if (rateText) {

@@ -41,6 +41,10 @@ iot-over-can/
 │   │   ├── tests/
 │   │   ├── CMakeLists.txt
 │   │   └── fontes do firmware
+│   ├── node-audio/
+│   │   ├── tests/
+│   │   ├── CMakeLists.txt
+│   │   └── fontes do sensor acústico
 │   └── scripts/
 ├── Documentacao/
 │   ├── arquitetura/
@@ -54,6 +58,8 @@ iot-over-can/
 │   │   └── img/
 │   ├── modulo-can/modulo-can.md
 │   ├── sensor-wireless/sensor-wireless.md
+│   ├── sensor-acustico/sensor-acustico.md
+│   ├── livro.md
 │   └── documentos gerais
 ├── .github/workflows/
 ├── README.md
@@ -75,7 +81,9 @@ Responsabilidades principais:
 | `widgets.py` | componentes responsivos e sem truncamento |
 | `presentation.py` | regras de condição, rótulos e formatação |
 | `command_catalog.py` | catálogo declarativo de comandos |
-| `spectrum.py` | representação FFT |
+| `spectrum.py` | representação FFT (magnitude ou dB SPL) |
+| `acoustics.py` | análises do sensor acústico: exposição (NR-15, NHO-01), curvas NC, conversa, tacômetro, eventos e calibração |
+| `acoustic_view.py` | campos e textos da tela do sensor acústico |
 | `preferences.py` | preferências não sensíveis |
 | `palette.py` | identidade Aço industrial |
 | `security.py` | autorização da TUI |
@@ -94,7 +102,7 @@ Código C portátil compartilhado pelos dois firmwares e testado no computador.
 |---|---|
 | `ioc_link/ioc_sha256.*` | SHA-256 e HMAC-SHA256 |
 | `ioc_link/ioc_link.*` | derivação de chaves, oferta de vínculo, envelope autenticado e handshake |
-| `ioc_link/ioc_wdata.*` | segmentação no CAN e formatos de telemetria, espectro, confirmação, DTC, enlace e configuração |
+| `ioc_link/ioc_wdata.*` | segmentação no CAN e formatos de telemetria, espectro, confirmação, DTC, enlace, configuração e relatório acústico |
 | `ioc_link/ioc_canbits.*` | duração exata de um quadro CAN clássico (CRC-15 e bits de preenchimento), para a medição do barramento |
 | `ioc_link/ioc_failover.*` | decisão de reassociação de sensores, sem entrada nem saída |
 | `ioc_link/ioc_secpdu.*` | PDU autenticada para o barramento (predisposição; não usada pelo firmware) |
@@ -109,9 +117,13 @@ Firmware dos ESP32 + MCP2515. Inclui eleição, liveness CAN, função local, de
 
 Firmware do Raspberry Pi Pico W: MPU6050, aquisição, DSP, DTC, BLE advertising e varredura de ofertas, console serial, sessão autenticada com o Node (`edge_network_driver.c`, `edge_link.c`) e segurança. `edge_protocol_definitions.h` é a definição única dos payloads do sensor e também é incluído pelo firmware dos Nodes.
 
+## `Codigo/node-audio/`
+
+Firmware do sensor acústico INMP441, para Pico W e Pico 2 W. `inmp441_i2s.pio`/`.c` geram o I2S na PIO e copiam o áudio por DMA; `audio_core1.c` roda o DSP no núcleo 1; `acoustic_dsp.c` e `audio_fft.c` são C puro, testados no computador; `audio_app.c` implementa os ganchos de `edge_app.h` e o envio dos relatórios; `audio_console.c` é o console USB. O enlace, o BLE, a identidade, a bateria e os DTCs vêm de `Codigo/node-wifi`.
+
 ## `Codigo/scripts/`
 
-Scripts de setup da TUI, testes, build, upload e provisionamento. `build_network_sim.sh` compila a bancada virtual e `record_network_scenarios.sh` regrava `Front/replays/`. Não contém scripts de inicialização de repositório Git.
+Scripts de setup da TUI, testes, build, upload e provisionamento. `build_pico.sh --audio` compila o sensor acústico; `extrair_livro.py` reúne os trechos marcados para o livro. `build_network_sim.sh` compila a bancada virtual e `record_network_scenarios.sh` regrava `Front/replays/`. Não contém scripts de inicialização de repositório Git.
 
 ## `Documentacao/`
 

@@ -36,7 +36,7 @@ PROBE_VERSION
 PROBE_STATUS
 ```
 
-Os aliases `VERSION` e `STATUS` podem ser usados durante autodetecção da porta. A resposta contém versão de firmware, protocolo, estado CAN e uptime. A partir da versão 0.18, `PROBE_VERSION` traz também `FEATURES=WIRELESS_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER`.
+Os aliases `VERSION` e `STATUS` podem ser usados durante autodetecção da porta. A resposta contém versão de firmware, protocolo, estado CAN e uptime. A partir da versão 0.18, `PROBE_VERSION` traz também a lista `FEATURES`; na 0.19 ela é `FEATURES=WIRELESS_DATA,ACOUSTIC_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER`, em que `ACOUSTIC_DATA` indica que o firmware do Node entende o relatório do sensor acústico (tipo 7).
 
 ### Métricas do barramento
 
@@ -84,7 +84,7 @@ Manufacturer Data do Pico W:
 company-id(2) | "IC"(2) | adv-version(1) | profile(1) | protocol(1) | UUID64(8)
 ```
 
-O perfil `0x01` representa `VIBRATION`. O protocolo atual é `6`.
+O perfil `0x01` representa `VIBRATION` (MPU6050) e `0x02`, `ACOUSTIC` (INMP441, desde a versão 0.19; ver [`../sensor-acustico/sensor-acustico.md`](../sensor-acustico/sensor-acustico.md)). O protocolo atual é `6`: o sensor acústico usa o mesmo enlace e acrescenta mensagens próprias de dados, sem mudar o que já existia.
 
 Cada Node CAN envia a observação em dois frames clássicos consecutivos. Para o Node `N`:
 
@@ -195,7 +195,7 @@ Quadros CAN:
              índice 0: tamanho total, CRC-8, 4 bytes de dados
 ```
 
-Tipos de transferência: `1` telemetria, `2` espectro, `3` confirmação de comando, `4` DTC, `5` estado do enlace, `6` configuração. Opcodes: `0x01` encaminhamento, `0x02` espectro, `0x03` estado, `0x10`–`0x14` preparação de configuração, `0x1F` aplicar, `0x20` limpar DTC.
+Tipos de transferência: `1` telemetria, `2` espectro, `3` confirmação de comando, `4` DTC, `5` estado do enlace, `6` configuração, `7` relatório acústico. Opcodes: `0x01` encaminhamento, `0x02` espectro, `0x03` estado, `0x10`–`0x14` preparação de configuração, `0x1F` aplicar, `0x20` limpar DTC, `0x21` controle do sensor acústico.
 
 Linhas trocadas entre a TUI e a Probe 00:
 
@@ -207,10 +207,36 @@ FRAG NODE=N CHILD=C TYPE=FFT TRANSFER=... INDEX=... COUNT=... FORMAT=U16_SCALED 
 DTC NODE=N CHILD=C CODE=0x.... SYMPTOM=0x.. SEVERITY=. TS_MS=...
 ACK COMMAND=<ação> STATE=ACCEPTED|APPLIED|REJECTED TX=<id> NODE=N CHILD=C DETAIL=... [REASON=...] RTT_MS=...
 [GW] WIRELESS_LINK node=N child=C state=DOWN|OFFERING|HANDSHAKE|SECURE|NO_KEY rssi=... age_s=... rx=... auth_fail=... replay=... lost=... stream=ON|OFF period_ms=... rtt_ms=... rtt_max_ms=...
-[GW] WIRELESS_CONFIG node=N child=C status=CURRENT|APPLIED|REJECTED mode=... rate_req_hz=... rate_eff_hz=... window=... window_size=... stalta=... gain=...
+[GW] WIRELESS_CONFIG node=N child=C status=CURRENT|APPLIED|REJECTED mode=... rate_req_hz=... rate_eff_hz=... window=... window_size=... stalta=... gain=... [profile=VIBRATION|ACOUSTIC]
 ```
 
 No formato `U16_SCALED`, cada valor de 16 bits é a fração do pico; a magnitude é `valor × SCALE / 65535`.
+
+<!-- livro:inicio id="acustico-protocolo" capitulo="Sensor acústico INMP441" titulo="Protocolo do plano de dados" -->
+### Sensor acústico no plano de dados
+
+O relatório acústico de um segundo (`Payload_AcousticStream`, comando `0x21` do sensor) chega ao CAN como transferência do tipo `7`: 108 bytes, 19 quadros, níveis em centésimos de dB e `-32768` para o que o modo não calcula. A Probe 00 o imprime como
+
+```text
+TEL NODE=N CHILD=C SEQ=... GW_TS_MS=... PROFILE=ACOUSTIC MODE=LEVEL|MACHINE|EVENTS ACQ=I2S WIN=... RATE_EFF_HZ=...
+    INTERVAL_MS=... COVERAGE_PCT=... CPU_PCT=... SPECTRUM_VALID=... OVERLOAD=... MIC_FAULT=...
+    LAEQ_DB=... LCEQ_DB=... LZEQ_DB=... LZPEAK_DB=... LAF_DB=... LAFMAX_DB=... LAFMIN_DB=... CREST=... KURT=...
+    PEAK_HZ=... CENTROID_HZ=... FLATNESS=... OCT_DB=b1,b2,...,b10 <chaves do modo> BATT_PCT=... BATT_MV=... DTC=... DTC_COUNT=...
+```
+
+em uma linha, com as mesmas chaves do console USB do sensor; chave ausente é valor não calculado e `-` em `OCT_DB` é banda acima de fs/2. As chaves de cada modo estão em [`../sensor-acustico/sensor-acustico.md`](../sensor-acustico/sensor-acustico.md), seção 8.2.
+
+Comandos acrescentados:
+
+```text
+CMD TARGET=NN.CC ACTION=CONFIG MODE=LEVEL|MACHINE|EVENTS [RATE_HZ=...] [FFT_SIZE=...] [THRESHOLD=...] [GAIN=...] TX=<id>
+CMD TARGET=NN.CC ACTION=MEASURE_RESET TX=<id>
+CMD TARGET=NN.CC ACTION=BASELINE_LEARN SECONDS=5..3600 TX=<id>
+CMD TARGET=NN.CC ACTION=BASELINE_CLEAR TX=<id>
+```
+
+`THRESHOLD` e `FFT_SIZE` são sinônimos de `STALTA` e `WINDOW_SIZE`. O nome do modo define o perfil, levado no argumento 1 do opcode `0x10` (1 vibração, 2 acústico, 0 para `IDLE`): o Node recusa o modo de um perfil enviado ao sensor do outro (`REASON=PROFILE_MISMATCH`, `DETAIL=65533`) e descarta a edição inteira no `APPLY`. As três ações acústicas usam o opcode `0x21` (argumento 0: ação 1, 2 ou 3; argumentos 1–2: segundos) e são confirmadas pelo sensor com `CMD_ACOUSTIC_CONTROL_ACK`; o `DETAIL` da confirmação final é o número da ação. A configuração (tipo `6`) ganhou um byte com o perfil do sensor; a Probe aceita também o formato anterior, de 21 bytes.
+<!-- livro:fim id="acustico-protocolo" -->
 
 `RTT_MS` é o tempo entre o envio do comando pela Probe 00 e a chegada da confirmação. `rtt_ms` e `rtt_max_ms` são o tempo de ida e volta entre o Node e o sensor, medido pelo par `PING`/`PONG`; `-1` indica que ainda não há medida. O relatório de estado do enlace (tipo `5`) tem 19 bytes desde a versão 0.18; a Probe aceita também os 15 bytes da versão anterior.
 
@@ -230,6 +256,8 @@ DTC
 
 Comandos que alteram estado exigem uma sessão de manutenção autorizada. A aquisição operacional é `POLLING`; `DRDY` não está habilitado no fluxo atual.
 
+O console do sensor acústico (`EDGE DSP ACOUSTIC CONSOLE`) segue o mesmo formato, com `PROFILE=ACOUSTIC` em `VERSION` e `STATUS`, aquisição `I2S` e os comandos `SET MODE LEVEL|MACHINE|EVENTS`, `SET FFT`, `SET THRESHOLD`, `CAL <dB>`, `MEASURE RESET` e `BASELINE LEARN|CLEAR`; a lista completa está em [`../sensor-acustico/sensor-acustico.md`](../sensor-acustico/sensor-acustico.md).
+
 ## Telemetria de vibração
 
 A telemetria pode incluir RMS, excesso de curtose, fator de crista, frequência e amplitude do pico espectral, entropia espectral, PPV, STA/LTA, clipping, bateria, modo, janela, tamanho do buffer e qualidade da FFT.
@@ -243,9 +271,12 @@ Bateria `255%` e `65535 mV` representam informação indisponível quando não e
 | `0x0000` | sem DTC ativo |
 | `0x1001` | comunicação I²C com MPU6050 |
 | `0x1002` | barramento I²C bloqueado |
+| `0x1003` | microfone INMP441 sem dados válidos no I2S (sensor acústico) |
 | `0x2001` | condição de gravidade/sensor |
 | `0x2002` | clipping do sensor |
-| `0x3001` | overrun do DSP |
+| `0x2003` | sobrecarga acústica, acima de ~120 dB SPL (sensor acústico) |
+| `0x3001` | overrun do DSP (no sensor acústico: blocos de áudio perdidos) |
+| `0x3002` | núcleo de DSP sem progresso (sensor acústico) |
 | `0x4001` | baixa tensão |
 | `0x4002` | falha de rede Wi-Fi |
 | `0x4003` | datagrama com autenticação inválida |

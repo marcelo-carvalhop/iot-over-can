@@ -1,15 +1,18 @@
 {
   "name": "iot-over-can",
-  "version": "0.18.0",
-  "description": "Plataforma experimental de IoT embarcada sobre CAN/CAN FD com descoberta, associação e plano de dados wireless autenticado, reassociação automática, medição da rede, ensaios de falha, diagnóstico e supervisão local.",
+  "version": "0.19.0",
+  "description": "Plataforma experimental de IoT embarcada sobre CAN/CAN FD com descoberta, associação e plano de dados wireless autenticado, dois tipos de sensor sem fio (vibração e acústico), reassociação automática, medição da rede, ensaios de falha, diagnóstico e supervisão local.",
   "paths": {
     "tui": "Front",
     "can_firmware": "Codigo/node-can",
     "wireless_firmware": "Codigo/node-wifi",
+    "acoustic_firmware": "Codigo/node-audio",
     "scripts": "Codigo/scripts",
     "documentation": "Documentacao",
+    "book_outline": "Documentacao/livro.md",
     "architecture": "Documentacao/arquitetura/arquitetura.md",
     "protocol": "Documentacao/protocolo/protocolo.md",
+    "acoustic_sensor": "Documentacao/sensor-acustico/sensor-acustico.md",
     "security": "Documentacao/modelo_de_seguranca.md",
     "build_and_test": "Documentacao/build_e_teste.md",
     "shared_firmware": "Codigo/common",
@@ -22,7 +25,8 @@
   "hardware": {
     "probe": "ESP32 + MCP2515, Node ID 0, instrumentação externa",
     "can_nodes": "ESP32 + MCP2515, IDs funcionais explícitos",
-    "wireless_sensor": "Raspberry Pi Pico W + MPU6050"
+    "wireless_sensor": "Raspberry Pi Pico W + MPU6050",
+    "acoustic_sensor": "Raspberry Pi Pico W (RP2040) ou Pico 2 W (RP2350) + microfone MEMS INMP441 (I2S)"
   },
   "network": {
     "can": "CAN clássico 500 kbit/s no hardware atual",
@@ -32,6 +36,8 @@
     "wireless_association": "vínculo lógico explícito via Probe 00 e CAN; presença acompanhada por advertisements BLE",
     "wireless_data_plane": "Wi-Fi/UDP entre sensor e Node responsável, sessão HMAC-SHA256 com chave por dispositivo; dados no CAN em 0x380+N, comandos em 0x304",
     "sensor_protocol": "0x06",
+    "sensor_profiles": "perfil anunciado no BLE e confirmado no HELLO: 0x01 vibração, 0x02 acústico; o Node recusa modo de outro perfil (detalhe 0xFFFD)",
+    "acoustic_report": "relatório de 1 s com 108 bytes, opcode 0x21 no enlace e transferência do tipo 7 no CAN (19 quadros)",
     "bus_metrics": "Probe 00: ocupação pela duração exata dos quadros (CRC-15 e bits de preenchimento reconstruídos) e período por identificador",
     "wireless_failover": "reassociação decidida pelo líder a partir dos estados de vínculo e das observações de RSSI; autorização por sensor",
     "leader_supervision": "Probe 00 (4 períodos) e seguidores (6 períodos, escalonados pelo identificador)",
@@ -60,25 +66,35 @@
     "reassociação automática de sensores, autorizada por sensor",
     "vigilância do líder pelos seguidores",
     "ensaios de injeção de falhas com medição do resultado na TUI",
-    "bancada virtual: firmware completo de vários Nodes CAN em um processo, com doze cenários",
+    "bancada virtual: firmware completo de vários Nodes CAN em um processo, com dezessete cenários",
     "reprodução de gravações na TUI (--replay)",
-    "predisposição para CAN FD em biblioteca: segmentação até 64 bytes e PDU autenticada"
+    "predisposição para CAN FD em biblioteca: segmentação até 64 bytes e PDU autenticada",
+    "módulos de rede, enlace e diagnóstico compartilhados pelos firmwares de sensor (ganchos edge_app.h)",
+    "sensor acústico INMP441 no Pico W e no Pico 2 W: I2S mestre na PIO, DMA em anel e DSP no segundo núcleo",
+    "modos acústicos LEVEL (níveis ponderados, Ln, doses NR-15 e NHO-01), MACHINE (assinatura em bandas de oitava, fundamental e anomalia) e EVENTS (STA/LTA, classificação e SEL)",
+    "análises acústicas na TUI: projeção de dose, curva NC, conversa, tacômetro com hipóteses de motor, estatística de eventos e calibração assistida",
+    "marcação dos trechos do livro na documentação e montagem do rascunho (Documentacao/livro.md, extrair_livro.py)",
+    "supervisório na TUI: até cinco painéis (rede, módulos CAN e sensores), com alarme na borda e uso do barramento por módulo",
+    "alarmes por limiar definidos pelo operador para cada sensor, com histerese, intercorrências e persistência",
+    "gravação das sessões seriais reais no formato de --replay, com segredos mascarados",
+    "fuzz determinístico dos decodificadores do enlace e do plano de dados (ASan/UBSan) e das linhas da TUI",
+    "vínculos dos sensores gravados na NVS dos Nodes e retomados depois de um reinício, sem disputar o que outro Node assumiu"
   ],
   "pending": [
     "validação em bancada do plano de dados wireless",
     "validação em bancada de métricas, vigilância do líder, reassociação e ensaios",
     "ajuste dos tempos de espera do sensor que limitam a reassociação",
     "detecção de isolamento do barramento pelo próprio Node",
-    "persistência da associação",
     "autenticação de origem no barramento CAN",
     "entrega da chave do sensor pela estação, sem chave mestra nos Nodes",
     "verificação FIDO2/OTP real da chave física",
-    "segundo sensor (áudio) e painel em papel eletrônico",
+    "validação em bancada do sensor acústico: calibrador de 94 dB, ocupação do núcleo 1 nas duas placas, comparação com medidor de nível sonoro e tacômetro óptico",
+    "painel em papel eletrônico",
     "experimento comparativo em CAN FD"
   ],
   "validation": {
-    "automated": "testes nativos, simulação do plano de dados, bancada virtual com doze cenários e suíte da TUI",
-    "compiled": "firmware do Node CAN e da Probe 00 para ESP32 (arduino-esp32 2.0.17); firmware do Pico W inalterado nesta versão",
-    "hardware": "plano de dados wireless, métricas, reassociação e ensaios ainda não validados em bancada"
+    "automated": "testes nativos (incluindo o DSP acústico e o fuzz dos decodificadores), simulação do plano de dados, simulação da PIO I2S, bancada virtual com dezessete cenários e suíte da TUI",
+    "compiled": "sensor acústico para pico_w e pico2_w (Pico SDK 2.3.1, sem avisos de compilação) e sensor de vibração para pico_w; firmware do Node CAN e da Probe 00 compilado no computador pela bancada virtual, e para ESP32 (arduino-esp32 2.0.17) pela integração contínua",
+    "hardware": "plano de dados wireless, métricas, reassociação, ensaios e sensor acústico ainda não validados em bancada"
   }
 }

@@ -501,3 +501,44 @@ Toast {
     max-height: 12;
     background: $bg-widget;
 }
+
+/* ---------------------------------------------------------------- supervisório */
+
+#sup-grid {
+    layout: grid;
+    grid-size: 1 1;
+    grid-gutter: 0 1;
+    height: 1fr;
+    padding: 0 1;
+}
+
+.sup-panel {
+    width: 1fr;
+    height: 1fr;
+    margin-bottom: 0;
+    scrollbar-size-vertical: 1;
+}
+
+.sup-panel:focus {
+    border: heavy $accent-focus;
+    border-title-color: $accent-focus;
+}
+
+/* Condição do que o painel mostra; em foco, a borda fica grossa e mantém a cor. */
+.sup-panel.-attention {
+    border: round $state-warning;
+    border-title-color: $state-warning;
+}
+
+.sup-panel.-attention:focus {
+    border: heavy $state-warning;
+}
+
+.sup-panel.-critical {
+    border: round #F4706A;
+    border-title-color: #F4706A;
+}
+
+.sup-panel.-critical:focus {
+    border: heavy #F4706A;
+}

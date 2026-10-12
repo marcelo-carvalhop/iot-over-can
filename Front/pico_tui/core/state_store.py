@@ -5,7 +5,9 @@ import time
 from collections import deque
 from copy import deepcopy
 
+from pico_tui import alarms
 from pico_tui.core.models import (
+    AcousticEvent,
     AppState,
     CanFrameRecord,
     ConnectionMode,
@@ -20,7 +22,6 @@ from pico_tui.core.models import (
     TelemetrySample,
     WirelessCandidate,
 )
-
 
 INCIDENT_COALESCE_SECONDS = 30.0
 INCIDENT_COALESCE_LOOKBACK = 5
@@ -74,6 +75,11 @@ class StateStore:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._state = AppState()
+        # Limites de alarme por sensor ("NN.CC" -> métrica -> limite), valendo
+        # também para sensores que ainda vão aparecer na sessão.
+        self._alarm_limits: dict[str, dict[str, float]] = {}
+        # Transições de alarme ainda não publicadas: (sensor, mensagem, acendeu).
+        self._alarm_transitions: list[tuple[str, str, bool]] = []
 
     def snapshot(self, *, history: int | None = None, frames: int | None = None) -> AppState:
         """Cópia profunda e isolada do estado.
@@ -213,6 +219,7 @@ class StateStore:
                     child_id=child_id,
                     wireless_uuid=wireless_uuid,
                 )
+                sensor.alarm_limits = dict(self._alarm_limits.get(sensor.logical_id, {}))
                 node.sensors[child_id] = sensor
                 # Se ainda não existe qualquer seleção explícita, o primeiro
                 # sensor funcional passa a ser o contexto operacional da TUI.
@@ -333,15 +340,84 @@ class StateStore:
             sensor.sensor_mode = sample.mode
             sensor.acquisition_mode = sample.acquisition_mode
             sensor.quality = sample.quality
-            sensor.configuration.mode = sample.mode
-            sensor.configuration.sample_rate_requested_hz = sample.sample_rate_requested_hz
-            sensor.configuration.sample_rate_effective_hz = sample.sample_rate_effective_hz
-            sensor.configuration.window_type = sample.window_type
-            sensor.configuration.window_size = sample.window_size
+            # A telemetria só substitui o que de fato informa: a linha da
+            # Probe não traz a janela, e a do sensor acústico não traz a taxa
+            # pedida; esses valores vêm de WIRELESS_CONFIG ou do STATUS.
+            cfg = sensor.configuration
+            cfg.mode = sample.mode
+            if sample.sample_rate_requested_hz is not None:
+                cfg.sample_rate_requested_hz = sample.sample_rate_requested_hz
+            if sample.sample_rate_effective_hz is not None:
+                cfg.sample_rate_effective_hz = sample.sample_rate_effective_hz
+            if sample.window_type is not None:
+                cfg.window_type = sample.window_type
+            if sample.window_size is not None:
+                cfg.window_size = sample.window_size
             sensor.configuration.simulation_enabled = sample.acquisition_mode.value == "SIM" or sample.quality.value == "SIMULATED"
             if sample.dtc_count is not None:
                 sensor.reported_dtc_count = sample.dtc_count
+            if sensor.alarm_limits or sensor.active_alarms:
+                self._evaluate_alarms(sensor, sample)
             return sensor
+
+    # ------------------------------------------------------------- alarmes
+
+    def _evaluate_alarms(self, sensor: SensorNode, sample: TelemetrySample) -> None:
+        lit, cleared = alarms.evaluate(sensor.alarm_limits, sensor.active_alarms, sample)
+        wall = time.time()
+        for alarm in lit:
+            message = alarms.describe(alarm)
+            _push_incident(sensor.incidents, Severity.WARNING, "ALARME", message, f"alarm:{alarm.metric}", wall)
+            self._alarm_transitions.append((sensor.logical_id, message, True))
+        for alarm in cleared:
+            message = alarms.describe_cleared(alarm)
+            _push_incident(sensor.incidents, Severity.INFO, "ALARME", message, f"alarm:{alarm.metric}:clear", wall)
+            self._alarm_transitions.append((sensor.logical_id, message, False))
+
+    def load_alarm_limits(self, limits: dict[str, dict[str, float]]) -> None:
+        with self._lock:
+            self._alarm_limits = {ident: alarms.clean_limits(rules) for ident, rules in limits.items() if rules}
+            for node in self._state.nodes.values():
+                for sensor in node.sensors.values():
+                    sensor.alarm_limits = dict(self._alarm_limits.get(sensor.logical_id, {}))
+
+    def set_alarm_limits(self, logical_id: str, limits: dict[str, float]) -> dict[str, float]:
+        """Troca os limites de um sensor. Alarmes de regras removidas apagam na próxima leitura."""
+
+        cleaned = alarms.clean_limits(dict(limits))
+        with self._lock:
+            if cleaned:
+                self._alarm_limits[logical_id] = cleaned
+            else:
+                self._alarm_limits.pop(logical_id, None)
+            sensor = next(
+                (
+                    item
+                    for node in self._state.nodes.values()
+                    for item in node.sensors.values()
+                    if item.logical_id == logical_id
+                ),
+                None,
+            )
+            if sensor is not None:  # o objeto do estado, não uma cópia
+                sensor.alarm_limits = dict(cleaned)
+                if sensor.latest_telemetry is not None:
+                    self._evaluate_alarms(sensor, sensor.latest_telemetry)
+        return cleaned
+
+    def alarm_limits(self) -> dict[str, dict[str, float]]:
+        with self._lock:
+            return {ident: dict(rules) for ident, rules in self._alarm_limits.items()}
+
+    def pop_alarm_transitions(self) -> list[tuple[str, str, bool]]:
+        with self._lock:
+            transitions, self._alarm_transitions = self._alarm_transitions, []
+            return transitions
+
+    def add_acoustic_event(self, parent_node_id: int, child_id: int, event: AcousticEvent) -> None:
+        with self._lock:
+            sensor = self.ensure_sensor(parent_node_id, child_id)
+            sensor.acoustic_events.append(event)
 
     def update_spectrum(self, sample: SpectrumSample) -> None:
         with self._lock:

@@ -25,14 +25,50 @@ cc -std=c11 -Wall -Wextra -Werror \
 "$OUT_DIR/test_ioc_link"
 
 # 3. Medição de ocupação do barramento, PDU autenticado (predisposição para
-#    CAN FD), segmentação em quadros maiores e reassociação automática.
+#    CAN FD), segmentação em quadros maiores, reassociação automática e a
+#    tabela de vínculos gravada pelos Nodes.
 cc -std=c11 -Wall -Wextra -Werror \
   -I"$LINK" \
   "$LINK/ioc_sha256.c" "$LINK/ioc_wdata.c" "$LINK/ioc_canbits.c" \
-  "$LINK/ioc_secpdu.c" "$LINK/ioc_failover.c" \
+  "$LINK/ioc_secpdu.c" "$LINK/ioc_failover.c" "$LINK/ioc_bindstore.c" \
   "$REPO_ROOT/Codigo/common/tests/test_ioc_net.c" \
   -lm -o "$OUT_DIR/test_ioc_net"
 "$OUT_DIR/test_ioc_net"
+
+# 3a. Fuzz determinístico dos decodificadores do enlace e do plano de dados
+#     (oferta BLE, envelope UDP, handshake, relatórios, segmentos, PDU
+#     autenticada): entradas aleatórias e mensagens válidas mutadas, em buffers
+#     do tamanho exato, com AddressSanitizer/UBSan quando o compilador oferece.
+FUZZ_FLAGS=(-std=c11 -O1 -g -Wall -Wextra -Werror)
+if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined - -o "$OUT_DIR/san_probe" 2>/dev/null &&
+   "$OUT_DIR/san_probe" 2>/dev/null; then
+  FUZZ_FLAGS+=(-fsanitize=address,undefined -fno-sanitize-recover=all)
+fi
+cc "${FUZZ_FLAGS[@]}" -I"$LINK" \
+  "$LINK/ioc_sha256.c" "$LINK/ioc_link.c" "$LINK/ioc_wdata.c" "$LINK/ioc_canbits.c" "$LINK/ioc_secpdu.c" "$LINK/ioc_bindstore.c" \
+  "$REPO_ROOT/Codigo/common/tests/fuzz_ioc_decoders.c" \
+  -lm -o "$OUT_DIR/fuzz_ioc_decoders"
+"$OUT_DIR/fuzz_ioc_decoders" 50000 > /dev/null
+
+# 3b. Sensor acústico (Codigo/node-audio): motor de DSP (níveis ponderados,
+#     doses, Ln, eventos, tacômetro acústico, anomalia) e validação da
+#     configuração. O DSP roda também com AddressSanitizer/UBSan quando o
+#     compilador oferece os dois.
+AUDIO="$REPO_ROOT/Codigo/node-audio"
+AUDIO_SOURCES=("$AUDIO/acoustic_dsp.c" "$AUDIO/audio_fft.c" "$AUDIO/tests/test_acoustic_dsp.c")
+cc -std=c11 -O2 -Wall -Wextra -Werror -I"$AUDIO" -I"$FW" \
+  "${AUDIO_SOURCES[@]}" -lm -o "$OUT_DIR/test_acoustic_dsp"
+"$OUT_DIR/test_acoustic_dsp"
+if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined - -o "$OUT_DIR/san_probe" 2>/dev/null &&
+   "$OUT_DIR/san_probe" 2>/dev/null; then
+  cc -std=c11 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror \
+    -I"$AUDIO" -I"$FW" "${AUDIO_SOURCES[@]}" -lm -o "$OUT_DIR/test_acoustic_dsp_san"
+  "$OUT_DIR/test_acoustic_dsp_san" > /dev/null
+fi
+cc -std=c11 -Wall -Wextra -Werror -I"$AUDIO" -I"$FW" \
+  "$AUDIO/audio_config.c" "$AUDIO/acoustic_dsp.c" "$AUDIO/audio_fft.c" "$AUDIO/tests/test_audio_config.c" \
+  -lm -o "$OUT_DIR/test_audio_config"
+"$OUT_DIR/test_audio_config"
 
 # 4. Simulação sensor <-> Node <-> Probe com o código real de wireless_link.cpp.
 "$REPO_ROOT/Codigo/scripts/build_wireless_link_sim.sh" "$OUT_DIR/sim_wireless_link"

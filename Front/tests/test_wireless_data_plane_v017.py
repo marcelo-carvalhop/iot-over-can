@@ -365,7 +365,7 @@ def test_end_to_end_probe_output_drives_tui_state(probe_lines: list[str]) -> Non
         assert first.battery.percentage == 93 and first.battery.voltage_v == pytest.approx(3.98)
 
         # Espectros: 64 faixas em uma transferência e 256 em quatro.
-        spectra = [event.sample for event in seen[SpectrumReceived]]
+        spectra = [event.sample for event in seen[SpectrumReceived] if event.sample.child_id == 1]
         assert [len(s.magnitudes) for s in spectra] == [64, 256]
         full = spectra[1]
         assert full.sample_rate_hz == 1000.0 and full.fft_size == 512 and full.window_type == "HANN"
@@ -396,6 +396,29 @@ def test_end_to_end_probe_output_drives_tui_state(probe_lines: list[str]) -> Non
         sensor = state.snapshot().nodes[1].sensors[1]
         assert not sensor.has_data_plane
         assert any(incident.kind == "SEGURANCA" for incident in sensor.incidents)
+
+        # Sensor acústico no filho 3 (v0.19): relatório de 108 bytes nos três modos.
+        acoustic = [event.sample for event in seen[TelemetryReceived] if event.sample.child_id == 3]
+        assert [sample.mode for sample in acoustic[:3]] == [SensorMode.LEVEL, SensorMode.MACHINE, SensorMode.EVENTS]
+        level = acoustic[0].acoustic
+        assert level is not None and level.laeq_db == pytest.approx(62.40) and level.lzpeak_db == pytest.approx(83.12)
+        assert level.octave_db[:2] == [pytest.approx(40.0), pytest.approx(42.5)] and level.octave_db[9] is None
+        assert level.dose_nho01_pct == pytest.approx(0.5) and level.elapsed_s == 3600
+        machine = acoustic[1].acoustic
+        assert machine.f0_hz == pytest.approx(49.75) and machine.anomaly is True and machine.baseline == "READY"
+        events = acoustic[2].acoustic
+        assert events.event_class == "CRACK" and events.event_sel_db == pytest.approx(74.80)
+        assert all(sample.rms is None and sample.clipping is None for sample in acoustic)
+        mic = state.snapshot().nodes[1].sensors[3]
+        assert mic.profile_id == "ACOUSTIC"
+        assert mic.configuration.mode == SensorMode.IDLE and mic.configuration.stalta_threshold == 4.0
+        assert [len(s.magnitudes) for s in [e.sample for e in seen[SpectrumReceived] if e.sample.child_id == 3]] == [64]
+        assert ("CONFIG", "REJECTED", "B00003") in acks       # modo de vibração recusado pelo Node
+        assert ("CONFIG", "REJECTED", "B00004") in acks       # e modo acústico no sensor de vibração
+        assert ("MEASURE_RESET", "APPLIED", "B00007") in acks
+        assert ("BASELINE_LEARN", "APPLIED", "B00008") in acks
+        assert ("BASELINE_CLEAR", "APPLIED", "B0000A") in acks
+        assert ("MEASURE_RESET", "REJECTED", "B0000B") in acks  # sem resposta do sensor
 
     asyncio.run(scenario())
 

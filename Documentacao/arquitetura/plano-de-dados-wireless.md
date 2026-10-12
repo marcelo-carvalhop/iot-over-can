@@ -159,6 +159,8 @@ O sensor envia ao Node, por Wi-Fi, uma amostra completa (com o espectro) a cada 
 
 A 500 kbit/s o barramento comporta cerca de 3 800 quadros de 8 bytes por segundo; a telemetria padrão de um sensor ocupa 9.
 
+O sensor acústico envia um relatório por segundo, já integrado, em vez de uma amostra por janela. O Node o converte em uma transferência própria (tipo `7`) de 108 bytes, ou 19 quadros; o espectro anexado segue a mesma regra acima, só sob pedido. Detalhes em [`../sensor-acustico/sensor-acustico.md`](../sensor-acustico/sensor-acustico.md), seção 8.
+
 ### Comandos
 
 ```text
@@ -173,8 +175,11 @@ seq | node | filho | opcode | arg0 | arg1 | arg2 | arg3
 | `0x10`–`0x14 SET_*` | prepara modo, taxa, janela, limiar ou ganho | Node (cópia em edição) |
 | `0x1F APPLY` | envia a configuração preparada | sensor |
 | `0x20 DTC_CLEAR` | limpa os diagnósticos | sensor |
+| `0x21 ACOUSTIC` | reinicia a medição, aprende ou descarta a assinatura (sensor acústico) | sensor |
 
 Cada comando recebe `CMD_ACK` com `ACCEPTED`, `APPLIED`, `REJECTED`, `NO_LINK` (sem sessão autenticada) ou `UNKNOWN`. Ações que dependem do sensor respondem `ACCEPTED` de imediato e o resultado final quando o sensor confirma, ou `REJECTED` após 3 s sem resposta (`REASON=SENSOR_TIMEOUT`).
+
+O argumento 1 de `0x10 SET_MODE` indica o perfil a que o nome do modo pertence; o Node recusa um modo do outro perfil (`REASON=PROFILE_MISMATCH`) e descarta a edição. `0x21` enviado a um sensor que não é acústico tem a mesma recusa.
 
 Alterações de configuração partem da configuração atual do sensor. Enquanto o Node não a conhece, `SET_*` e `APPLY` são recusados com `REASON=CONFIG_UNKNOWN` e o Node pede o menu novamente; basta repetir o comando.
 
@@ -230,7 +235,7 @@ Limites conhecidos:
 - **Tag de 64 bits.** Adequada ao volume e à vida útil das sessões deste projeto; não é um parâmetro para uso geral.
 - **Chave mestra em todos os Nodes.** A extração da memória de um Node compromete o enlace inteiro. A entrega de `K_dev` pela estação no momento da associação eliminaria isso e fica como evolução.
 - **Sem elemento seguro.** As chaves ficam na memória flash dos microcontroladores.
-- **Vínculos não persistem.** A reinicialização de um Node apaga vínculos e sessões.
+- **Sessões não persistem.** Os vínculos ficam na NVS do Node e voltam depois de um reinício (ver `modulo-can/modulo-can.md`, Persistência); as sessões, não: o sensor sempre se reautentica.
 - **Negação de serviço por rádio está fora do escopo.** Além das repetições citadas na tabela, qualquer interferência em 2,4 GHz interrompe o plano de dados. O que o protocolo garante é que isso não resulta em dados ou comandos falsos.
 
 ## 9. Verificação automatizada

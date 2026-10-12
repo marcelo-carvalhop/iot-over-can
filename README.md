@@ -2,7 +2,7 @@
 
 **iot-over-can** é uma plataforma experimental de IoT embarcada para estudo de redes distribuídas sobre CAN/CAN FD, integração de eventos determinísticos e assíncronos, descoberta e associação de dispositivos wireless, supervisão, diagnóstico e operação segura.
 
-O sistema é composto por três classes de elemento. A **Probe 00** é uma sonda de instrumentação ligada ao CAN e ao computador por USB; observa o barramento e injeta comandos de bancada, mas não participa da eleição nem da lógica funcional distribuída. Os **Nodes CAN** são módulos ESP32 + MCP2515 com papel dinâmico de líder ou seguidor, funções locais próprias e descoberta BLE. O **sensor wireless** é um Raspberry Pi Pico W com MPU6050, aquisição local, DSP, diagnóstico e advertising BLE.
+O sistema é composto por três classes de elemento. A **Probe 00** é uma sonda de instrumentação ligada ao CAN e ao computador por USB; observa o barramento e injeta comandos de bancada, mas não participa da eleição nem da lógica funcional distribuída. Os **Nodes CAN** são módulos ESP32 + MCP2515 com papel dinâmico de líder ou seguidor, funções locais próprias e descoberta BLE. O **sensor wireless** é um Raspberry Pi Pico W com MPU6050, aquisição local, DSP, diagnóstico e advertising BLE. Desde a versão 0.19 há um segundo, o **sensor acústico**: um Pico W ou Pico 2 W com o microfone MEMS INMP441, que usa o mesmo enlace e mede níveis sonoros, exposição ao ruído, a assinatura de máquinas e eventos sonoros.
 
 ```text
 Raspberry Pi Pico W
@@ -34,7 +34,9 @@ A versão 0.18 acrescenta medição e resiliência, também sem validação em h
 - **Reassociação automática.** Quando o operador autoriza, o líder entrega um sensor a outro Node que o alcance se o responsável sair do ar ou deixar de ouvi-lo.
 - **Recuperação sem a Probe.** Os seguidores vigiam o líder e pedem a eleição; a Probe 00 deixou de ser necessária para a rede se recuperar.
 - **Ensaios de falha.** Queda de módulo, módulo congelado, queda do ponto de acesso e carga no barramento, comandados pela TUI, que mede a reação da rede.
-- **Bancada virtual.** O firmware completo do Node CAN é executado no computador, em vários Nodes ao mesmo tempo, com barramento, rádios e sensores simulados. Quinze cenários fazem parte dos testes, e a TUI os reproduz com `--replay`.
+- **Bancada virtual.** O firmware completo do Node CAN é executado no computador, em vários Nodes ao mesmo tempo, com barramento, rádios e sensores simulados. Dezessete cenários (um deles com o sensor acústico, da versão 0.19; outro, com o Node que reinicia e retoma os vínculos gravados) fazem parte dos testes, e a TUI os reproduz com `--replay`.
+
+A versão 0.19 acrescenta o **sensor acústico** (INMP441 em I2S, Pico W ou Pico 2 W), com DSP no segundo núcleo e três modos análogos aos do sensor de vibração: `LEVEL` (LAeq, Ln e doses NR-15/NHO-01), `MACHINE` (tacômetro acústico pela série harmônica, proeminência tonal e escore de anomalia contra uma assinatura aprendida) e `EVENTS` (detecção STA/LTA, classificação, pico e SEL). O relatório de um segundo atravessa o Node e a Probe como os dados do sensor de vibração, e a TUI o transforma em leituras de operador: projeção de dose e critério da NHO-01, curva NC, distância de conversa, hipótese de motor de indução, estatística de eventos e calibração com calibrador. Firmware compilado para as duas placas e verificado no computador; **validação em bancada pendente**. Ver [`Documentacao/sensor-acustico/sensor-acustico.md`](Documentacao/sensor-acustico/sensor-acustico.md).
 
 Detalhes em [`Documentacao/arquitetura/metricas-e-ensaios.md`](Documentacao/arquitetura/metricas-e-ensaios.md). O que está preparado para CAN FD, e a recomendação de não migrar por ora, estão em [`Documentacao/arquitetura/predisposicao-can-fd.md`](Documentacao/arquitetura/predisposicao-can-fd.md).
 
@@ -88,7 +90,8 @@ iot-over-can/
 ├── Codigo/
 │   ├── common/                  código C compartilhado: autenticação do enlace e dados no CAN
 │   ├── node-can/                firmware ESP32 + MCP2515
-│   ├── node-wifi/               firmware Raspberry Pi Pico W
+│   ├── node-wifi/               firmware Raspberry Pi Pico W (vibração) e módulos comuns dos sensores
+│   ├── node-audio/              firmware do sensor acústico INMP441 (Pico W e Pico 2 W)
 │   └── scripts/                 build, upload, testes e segurança
 ├── Documentacao/                documentação técnica oficial
 ├── .github/workflows/           integração contínua
@@ -143,6 +146,13 @@ Build do Pico W, de bancada ou com as chaves derivadas para um sensor:
 ./Codigo/scripts/build_pico.sh --sensor E6616408432B6F39
 ```
 
+Build do sensor acústico (INMP441), para Pico W ou Pico 2 W:
+
+```bash
+./Codigo/scripts/build_pico.sh pico_w --audio
+./Codigo/scripts/build_pico.sh pico2_w --audio --sensor <UUID64>
+```
+
 Testes nativos:
 
 ```bash
@@ -186,7 +196,7 @@ Detalhes em [`Documentacao/modelo_de_seguranca.md`](Documentacao/modelo_de_segur
 
 ## Documentação
 
-O índice oficial está em [`Documentacao/README.md`](Documentacao/README.md). A arquitetura fica em [`Documentacao/arquitetura/arquitetura.md`](Documentacao/arquitetura/arquitetura.md), o protocolo em [`Documentacao/protocolo/protocolo.md`](Documentacao/protocolo/protocolo.md), os requisitos em [`Documentacao/requisitos.md`](Documentacao/requisitos.md) e a TUI em [`Documentacao/interface/tui.md`](Documentacao/interface/tui.md).
+O índice oficial está em [`Documentacao/README.md`](Documentacao/README.md). O material destinado ao livro do projeto é marcado nos próprios documentos e listado em [`Documentacao/livro.md`](Documentacao/livro.md). A arquitetura fica em [`Documentacao/arquitetura/arquitetura.md`](Documentacao/arquitetura/arquitetura.md), o protocolo em [`Documentacao/protocolo/protocolo.md`](Documentacao/protocolo/protocolo.md), os requisitos em [`Documentacao/requisitos.md`](Documentacao/requisitos.md) e a TUI em [`Documentacao/interface/tui.md`](Documentacao/interface/tui.md).
 
 ## Itens ainda a implementar
 
@@ -195,10 +205,10 @@ O índice oficial está em [`Documentacao/README.md`](Documentacao/README.md). A
 - ajuste, com medição em bancada, dos tempos de espera do sensor que limitam a reassociação (hoje cerca de 25 s);
 - detecção, pelo próprio Node, de que ele está isolado do barramento, para liberar os sensores;
 - monitoramento da alimentação de cada Node (motivo do último reinício, contagem de reinícios e, com um divisor resistivo, tensão de entrada), com aviso na TUI; e ajustes de consumo no firmware (potência do Wi-Fi, partida escalonada dos rádios);
-- persistência e recuperação dos vínculos após reinicialização dos Nodes;
 - autenticação de origem dos comandos e dados no barramento CAN;
 - comissionamento de sensores sem compilação: firmware único, código de instalação na etiqueta e chave entregue pela rede após a aprovação do operador (proposta em [`Documentacao/arquitetura/comissionamento-de-sensores.md`](Documentacao/arquitetura/comissionamento-de-sensores.md));
 - verificação FIDO2/OTP real da chave física do operador;
-- segundo sensor (áudio, INMP441) e painel de estado em papel eletrônico (M5Stack PaperColor) via Wi-Fi;
+- validação em bancada do sensor acústico (calibração, ocupação do DSP nas duas placas, níveis e doses contra um medidor de referência, tacômetro e eventos);
+- painel de estado em papel eletrônico (M5Stack PaperColor) via Wi-Fi;
 - experimento comparativo em CAN FD com MCP2518FD, com as métricas e os ensaios atuais como linha de base;
 - *(prioridade muito baixa)* ferramentas de simulação complementares à bancada virtual: ponte com SocketCAN (`vcan`) para rodar os mesmos testes no barramento virtual e no físico, GNU Octave para análise e varreduras de parâmetros, OMNeT++/FiCo4OMNeT para estudos de escala (recomendação em [`Documentacao/arquitetura/metricas-e-ensaios.md`](Documentacao/arquitetura/metricas-e-ensaios.md), seção 8.1).

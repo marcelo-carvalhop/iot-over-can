@@ -5,6 +5,10 @@ import secrets
 DEFAULT_FSM_MODES = ["IDLE", "ROTATING", "STRUCTURAL", "SEISMIC"]
 DEFAULT_WINDOW_TYPES = ["RECT", "HANN", "HAMMING", "FLATTOP", "BLACKMAN"]
 DEFAULT_WINDOW_SIZES = (128, 256, 512)
+# Sensor acústico (INMP441): frequência de WS e pontos da FFT aceitos pelo firmware.
+ACOUSTIC_MODES = ["IDLE", "LEVEL", "MACHINE", "EVENTS"]
+ACOUSTIC_SAMPLE_RATES = (8000, 16000, 24000, 32000, 48000)
+ACOUSTIC_FFT_SIZES = (256, 512, 1024, 2048)
 TELEMETRY_PROFILES = {"LOW": 1, "NORMAL": 2, "FAST": 5, "BURST": 10}
 FFT_BIN_OPTIONS = (32, 64, 128, 256)
 
@@ -44,6 +48,17 @@ DIRECT_COMMANDS = (
     "VERSION",
     "PING",
     "RESET",
+    # Sensor acústico (INMP441)
+    "SET MODE LEVEL",
+    "SET MODE MACHINE",
+    "SET MODE EVENTS",
+    "SET RATE <8000|16000|24000|32000|48000>",
+    "SET FFT <256|512|1024|2048>",
+    "SET THRESHOLD <valor>",
+    "CAL <94|114>",
+    "MEASURE RESET",
+    "BASELINE LEARN <5..3600>",
+    "BASELINE CLEAR",
 )
 
 REMOVED_DIRECT_COMMANDS = (
@@ -91,6 +106,26 @@ def direct_dtc_clear() -> str:
 
 def direct_fft_once() -> str:
     return "FFT ONCE"
+
+
+def direct_measure_reset() -> str:
+    return "MEASURE RESET"
+
+
+def direct_baseline_learn(seconds: int) -> str:
+    if not 5 <= int(seconds) <= 3600:
+        raise ValueError("Aprendizado de 5 a 3600 s")
+    return f"BASELINE LEARN {int(seconds)}"
+
+
+def direct_baseline_clear() -> str:
+    return "BASELINE CLEAR"
+
+
+def direct_calibrate(reference_db: float) -> str:
+    if not 70.0 <= float(reference_db) <= 125.0:
+        raise ValueError("Nível de referência de 70 a 125 dB SPL")
+    return f"CAL {float(reference_db):g}"
 
 
 def direct_wifi(state: str) -> str:

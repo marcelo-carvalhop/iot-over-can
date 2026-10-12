@@ -29,6 +29,7 @@
 #include <string.h>
 #include <strings.h>
 
+#include "ioc_bindstore.h"
 #include "ioc_canbits.h"
 #include "ioc_failover.h"
 #include "ioc_link.h"

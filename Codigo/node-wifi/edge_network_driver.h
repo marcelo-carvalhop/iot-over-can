@@ -6,10 +6,14 @@
 #ifndef EDGE_NETWORK_DRIVER_H
 #define EDGE_NETWORK_DRIVER_H
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include "edge_protocol_definitions.h"
-#include "dsp_pipeline.h"
+
+// Maior payload interno (sem o envelope autenticado de 16 bytes) que cabe em
+// um datagrama sem fragmentação IP. Conferido contra ioc_link.h no .c.
+#define EDGE_NET_MAX_PAYLOAD_BYTES (NET_MAX_SAFE_PAYLOAD_BYTES - 16)
 
 typedef enum {
     NET_STATE_DISABLED  = 0,
@@ -32,8 +36,10 @@ uint16_t    edge_net_auth_reject_count(void);
 uint16_t    edge_net_replay_reject_count(void);
 void        edge_net_poll_timeout(void);
 void        edge_net_send_discovery_beacon(uint8_t bite_status);
-void        edge_net_send_telemetry(const DSP_AnalysisResult *dsp_res, OperationModeFSM mode, 
-                                    uint16_t dtc_code, const float *fft_mag, uint16_t fft_bins);
+// Envia um payload interno (DATA_UP) ao Node pai; false sem sessão ativa.
+// Chamar do laço principal, nunca de uma ISR ou de callback do lwIP.
+bool        edge_net_send_data(const void *inner, size_t len);
+uint16_t    edge_net_next_seq(void);
 void        edge_net_send_urgent_dtc(const DTC_Record *dtc_rec);
 void        edge_net_send_config_ack(const Payload_Configuration *cfg, uint8_t status);
 void        edge_net_send_dtc_snapshot(void);

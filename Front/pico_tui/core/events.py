@@ -143,6 +143,7 @@ class SensorStatusReceived(Event):
 class DirectSensorVersionReceived(Event):
     protocol_version: str
     wireless_uuid: str
+    profile_id: str = "VIBRATION"
 
 
 @dataclass(slots=True)

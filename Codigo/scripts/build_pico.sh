@@ -3,10 +3,13 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FW_DIR="$REPO_ROOT/Codigo/node-wifi"
+FW_NAME="node-wifi"
+UF2_NAME="edge_node_firmware.uf2"
 LOCAL_ENV="$REPO_ROOT/.env.local"
 
 usage() {
-  echo "Uso: $0 [pico_w|pico2_w] [--sensor <UUID64>]" >&2
+  echo "Uso: $0 [pico_w|pico2_w] [--audio] [--sensor <UUID64>]" >&2
+  echo "  --audio   compila o sensor acústico INMP441 (Codigo/node-audio) em vez do de vibração." >&2
   echo "  --sensor  usa .env.sensor-<UUID>.local (chaves derivadas para este sensor)." >&2
 }
 
@@ -15,6 +18,11 @@ SENSOR_UUID=""
 while [ $# -gt 0 ]; do
   case "$1" in
     pico_w|pico2_w) PICO_BOARD_TARGET="$1" ;;
+    --audio)
+      FW_DIR="$REPO_ROOT/Codigo/node-audio"
+      FW_NAME="node-audio"
+      UF2_NAME="edge_audio_firmware.uf2"
+      ;;
     --sensor)
       SENSOR_UUID="${2:-}"
       [ -n "$SENSOR_UUID" ] || { usage; exit 2; }
@@ -65,7 +73,7 @@ else
 fi
 EDGE_SERIAL_ADMIN_TOKEN="${EDGE_SERIAL_ADMIN_TOKEN:-0}"
 
-echo "Compilando node-wifi para PICO_BOARD=$PICO_BOARD_TARGET"
+echo "Compilando $FW_NAME para PICO_BOARD=$PICO_BOARD_TARGET"
 echo "Enlace: $LINK_MODE"
 
 cd "$FW_DIR"
@@ -82,7 +90,7 @@ cmake \
   ..
 cmake --build . -j"$(nproc)"
 
-UF2="$FW_DIR/build/edge_node_firmware.uf2"
+UF2="$FW_DIR/build/$UF2_NAME"
 if [ ! -f "$UF2" ]; then
   echo
   echo "ERRO: a compilação terminou sem gerar o artefato esperado:"

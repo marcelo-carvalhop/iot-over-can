@@ -1,0 +1,81 @@
+;
+; Receptor I2S mestre para o microfone INMP441 (iot-over-can, sensor acústico).
+;
+; O RP2040 e o RP2350 não têm periférico I2S: uma máquina de estados da PIO
+; gera o relógio de bit (SCK) e a seleção de palavra (WS) e amostra a linha de
+; dados (SD). Quadro estéreo de 64 períodos de SCK, 32 por canal; o INMP441
+; envia 24 bits em complemento de dois, MSB primeiro, com o atraso de um bit
+; do I2S padrão em relação à troca de WS, e libera a linha no restante.
+;
+; Pinos
+;   side-set base     SCK      (bit 0 do side-set)
+;   side-set base + 1 WS       (bit 1 do side-set)
+;   IN base           SD       (com pull-down interno: a linha fica em zero
+;                              quando o microfone a libera)
+;
+; Relógio da PIO = 128 × fs: duas instruções por período de SCK, uma com SCK
+; baixo (descida, quando o microfone troca o bit) e outra com SCK alto
+; (subida, quando o bit é lido). Os períodos do quadro são P0..P63; WS vale 0
+; em P0..P31 e 1 em P32..P63.
+;
+; Só o slot com WS = 0 (canal esquerdo, pino L/R do INMP441 em GND) é lido:
+; os bits 31..1 nas subidas de P1..P31 e o bit 0 na subida de P32, já com WS
+; em 1. O autopush de 32 bits entrega então uma palavra por quadro, sempre
+; alinhada, sem risco de trocar os canais. Para um microfone com L/R em VDD,
+; o firmware inverte o pino WS na saída do GPIO (gpio_set_outover): a PIO
+; continua lendo "WS = 0" internamente, que no fio é WS = 1.
+;
+; O registrador X conta os bits de cada slot. A máquina parte de `entry`
+; (descida de P0, que carrega X com 29) com SCK e WS em nível alto: o
+; microfone vê a troca de WS um bit antes do MSB e já o primeiro quadro sai
+; alinhado como os demais.
+
+.program inmp441_i2s
+.side_set 2
+                                  ;        /--- WS
+                                  ;        |/-- SCK
+.wrap_target
+    nop                 side 0b00 ; descida de P1, WS = 0
+left_slot:
+    in pins, 1          side 0b01 ; subida de P1..P30: bits 31..2
+    jmp x-- left_slot   side 0b00 ; descida de P2..P31
+    in pins, 1          side 0b01 ; subida de P31: bit 1
+    set x, 29           side 0b10 ; descida de P32: WS = 1
+    in pins, 1          side 0b11 ; subida de P32: bit 0 (autopush)
+    nop                 side 0b10 ; descida de P33
+right_slot:
+    nop                 side 0b11 ; subida de P33..P62: slot direito, não lido
+    jmp x-- right_slot  side 0b10 ; descida de P34..P63
+    nop                 side 0b11 ; subida de P63
+public entry:
+    set x, 29           side 0b00 ; descida de P0 do quadro seguinte: WS = 0
+    nop                 side 0b01 ; subida de P0
+.wrap
+
+% c-sdk {
+#include "hardware/gpio.h"
+
+// Configura a máquina de estados sem habilitá-la. `div_int` e `div_frac8`
+// formam o divisor de relógio 16.8: clk_sys / (128 · fs).
+static inline void inmp441_i2s_program_init(PIO pio, uint sm, uint offset, uint sd_pin, uint sck_pin,
+                                            uint32_t div_int, uint8_t div_frac8) {
+    pio_sm_config c = inmp441_i2s_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, sd_pin);
+    sm_config_set_sideset_pins(&c, sck_pin);
+    sm_config_set_in_shift(&c, false, true, 32);   // MSB primeiro, autopush a cada 32 bits
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX); // FIFO de 8 palavras só para recepção
+    sm_config_set_clkdiv_int_frac8(&c, div_int, div_frac8);
+
+    pio_gpio_init(pio, sck_pin);
+    pio_gpio_init(pio, sck_pin + 1u);
+    pio_gpio_init(pio, sd_pin);
+    gpio_pull_down(sd_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, sck_pin, 2, true);
+    pio_sm_set_consecutive_pindirs(pio, sm, sd_pin, 1, false);
+
+    // Partida em `entry` com SCK = 1 e WS = 1: a primeira instrução é a descida
+    // de P0, com a troca de WS que o microfone espera antes do MSB.
+    pio_sm_init(pio, sm, offset + inmp441_i2s_offset_entry, &c);
+    pio_sm_exec(pio, sm, pio_encode_nop() | pio_encode_sideset(2, 0b11));
+}
+%}

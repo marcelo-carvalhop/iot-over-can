@@ -7,6 +7,7 @@ módulo responsável por uma associação wireless e escolhas simples em lista.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from rich.text import Text
 from textual import on
@@ -17,7 +18,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
-from pico_tui import commands, palette
+from pico_tui import alarms, commands, palette
 from pico_tui.command_catalog import CommandAction
 from pico_tui.core.models import SensorNode
 from pico_tui.serial_client import list_available_ports
@@ -285,7 +286,7 @@ class ParameterScreen(ModalScreen[str | None]):
 
 
 class ConfigScreen(ModalScreen[ConfigRequest | None]):
-    """Formulário de configuração de aquisição de um sensor de vibração."""
+    """Formulário de configuração de aquisição (sensor de vibração ou acústico)."""
 
     BINDINGS = [Binding("escape", "cancel", "Cancelar", show=False)]
 
@@ -295,12 +296,22 @@ class ConfigScreen(ModalScreen[ConfigRequest | None]):
         "STRUCTURAL": "Estrutural",
         "SEISMIC": "Sísmico (sem FFT)",
     }
+    ACOUSTIC_MODE_LABELS: ClassVar[dict[str, str]] = {
+        "IDLE": "Ocioso (microfone sem relógio)",
+        "LEVEL": "Nível sonoro e exposição (NR-15, NHO-01)",
+        "MACHINE": "Diagnóstico de máquina (tacômetro e anomalia)",
+        "EVENTS": "Eventos sonoros (STA/LTA e classificação)",
+    }
 
     def __init__(self, sensor: SensorNode) -> None:
         super().__init__()
         self.sensor = sensor
+        self.acoustic = (sensor.profile_id or "").upper() == "ACOUSTIC"
 
     def compose(self) -> ComposeResult:
+        if self.acoustic:
+            yield from self._compose_acoustic()
+            return
         cfg = self.sensor.configuration
         mode = cfg.mode.value if cfg.mode.value in commands.DEFAULT_FSM_MODES else "STRUCTURAL"
         window = (cfg.window_type or "HANN").upper()
@@ -331,7 +342,45 @@ class ConfigScreen(ModalScreen[ConfigRequest | None]):
                 yield Button("Aplicar", id="cfg-apply")
                 yield Button("Cancelar", id="cfg-cancel")
 
+    def _compose_acoustic(self) -> ComposeResult:
+        cfg = self.sensor.configuration
+        mode = cfg.mode.value if cfg.mode.value in commands.ACOUSTIC_MODES else "LEVEL"
+        window = (cfg.window_type or "HANN").upper()
+        if window not in commands.DEFAULT_WINDOW_TYPES:
+            window = "HANN"
+        rate_now = round(cfg.sample_rate_requested_hz or cfg.sample_rate_effective_hz or 16000)
+        rate = rate_now if rate_now in commands.ACOUSTIC_SAMPLE_RATES else 16000
+        size = cfg.window_size if cfg.window_size in commands.ACOUSTIC_FFT_SIZES else 1024
+        with VerticalScroll(id="config-dialog", classes="dialog"):
+            yield Static(f"Configurar o sensor acústico {self.sensor.logical_id}", classes="dialog-title")
+            yield Static(
+                "INMP441 em I2S. No Pico W (RP2040) use até 16 kHz com FFT de 1024 pontos para manter "
+                "a análise de todo o áudio; o Pico 2 W (RP2350) acompanha 48 kHz com 2048 pontos.",
+                classes="dialog-hint",
+            )
+            yield Label("Modo de operação")
+            yield Select([(self.ACOUSTIC_MODE_LABELS[item], item) for item in commands.ACOUSTIC_MODES],
+                         value=mode, allow_blank=False, id="cfg-mode")
+            yield Label("Taxa de amostragem (frequência de WS)")
+            yield Select([(f"{item // 1000} kHz (banda até {item // 2000} kHz)", item) for item in commands.ACOUSTIC_SAMPLE_RATES],
+                         value=rate, allow_blank=False, id="cfg-rate-select")
+            yield Label("Janela espectral")
+            yield Select([(item.title(), item) for item in commands.DEFAULT_WINDOW_TYPES], value=window, allow_blank=False, id="cfg-window")
+            yield Label("Pontos da FFT")
+            yield Select([(str(item), item) for item in commands.ACOUSTIC_FFT_SIZES], value=size, allow_blank=False, id="cfg-size")
+            yield Label("Limiar: razão STA/LTA no modo Eventos (ex.: 8) ou escore z no modo Máquina (ex.: 3)")
+            yield Input(value=_number(cfg.stalta_threshold), placeholder="maior que 1", id="cfg-stalta")
+            yield Label("Ganho de calibração da pressão (1 = sensibilidade nominal; use a calibração com calibrador)")
+            yield Input(value=_number(cfg.calibration_gain), placeholder="ex.: 1", id="cfg-gain")
+            yield Static("", id="cfg-error")
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Aplicar e verificar", id="cfg-verify", variant="primary")
+                yield Button("Aplicar", id="cfg-apply")
+                yield Button("Cancelar", id="cfg-cancel")
+
     def _build(self, verify: bool) -> ConfigRequest | None:
+        if self.acoustic:
+            return self._build_acoustic(verify)
         error = self.query_one("#cfg-error", Static)
         try:
             rate = _float_or_none(self.query_one("#cfg-rate", Input).value)
@@ -351,6 +400,48 @@ class ConfigScreen(ModalScreen[ConfigRequest | None]):
             rate_hz=rate,
             window_size=int(self.query_one("#cfg-size", Select).value),  # type: ignore[arg-type]
             stalta=stalta,
+            gain=gain,
+            apply_and_verify=verify,
+        )
+
+    # Limiar proposto ao escolher o modo, como no console do sensor
+    # (AUDIO_DEFAULT_THRESHOLD_* em Codigo/node-audio/audio_config.h).
+    ACOUSTIC_DEFAULT_THRESHOLDS: ClassVar[dict[str, str]] = {"MACHINE": "3", "EVENTS": "8"}
+
+    @on(Select.Changed, "#cfg-mode")
+    def _acoustic_mode_changed(self, event: Select.Changed) -> None:
+        if not self.acoustic:
+            return
+        proposed = self.ACOUSTIC_DEFAULT_THRESHOLDS.get(str(event.value))
+        field = self.query_one("#cfg-stalta", Input)
+        try:
+            current = _float_or_none(field.value)
+        except ValueError:
+            return
+        defaults = {float(value) for value in self.ACOUSTIC_DEFAULT_THRESHOLDS.values()}
+        # Só troca um valor vazio ou o padrão do outro modo: um limiar digitado fica.
+        if proposed and (current is None or current in defaults):
+            field.value = proposed
+
+    def _build_acoustic(self, verify: bool) -> ConfigRequest | None:
+        error = self.query_one("#cfg-error", Static)
+        try:
+            threshold = _float_or_none(self.query_one("#cfg-stalta", Input).value)
+            if threshold is not None and not 1.0 < threshold <= 1000.0:
+                raise ValueError("O limiar deve ser maior que 1 (e até 1000).")
+            gain = _float_or_none(self.query_one("#cfg-gain", Input).value)
+            if gain is not None and not 0.01 < gain <= 100.0:
+                raise ValueError("O ganho deve ficar entre 0,01 e 100.")
+        except ValueError as exc:
+            message = str(exc) if "deve" in str(exc) else "Use apenas números (vírgula ou ponto como separador)."
+            error.update(Text(message, style=palette.STATE_WARNING))
+            return None
+        return ConfigRequest(
+            mode=str(self.query_one("#cfg-mode", Select).value),
+            window=str(self.query_one("#cfg-window", Select).value),
+            rate_hz=float(self.query_one("#cfg-rate-select", Select).value),  # type: ignore[arg-type]
+            window_size=int(self.query_one("#cfg-size", Select).value),  # type: ignore[arg-type]
+            stalta=threshold,
             gain=gain,
             apply_and_verify=verify,
         )
@@ -491,5 +582,72 @@ class ChoiceScreen(ModalScreen[str | None]):
     def _chosen(self, event: OptionList.OptionSelected) -> None:
         self.dismiss(str(event.option.id))
 
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class AlarmScreen(ModalScreen[dict[str, float] | None]):
+    """Limites de alarme de um sensor: um campo por métrica do perfil (vazio = sem alarme)."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancelar", show=False)]
+
+    def __init__(self, sensor: SensorNode) -> None:
+        super().__init__()
+        self.sensor = sensor
+        self.metrics = alarms.metrics_for(sensor.profile_id)
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="alarm-dialog", classes="dialog"):
+            yield Static(f"Alarmes do sensor {self.sensor.logical_id}", classes="dialog-title")
+            yield Static(
+                "O alarme acende quando a métrica passa do limite e apaga quando ela volta abaixo dele, "
+                "com uma pequena histerese. Campo vazio: métrica sem alarme.",
+                classes="dialog-hint",
+            )
+            sample = self.sensor.latest_telemetry
+            for metric in self.metrics:
+                current = metric.read(sample) if sample is not None else None
+                now = f"  (agora {metric.describe_value(current)})" if current is not None else ""
+                unit = f" [{metric.unit}]" if metric.unit else ""
+                yield Label(f"{metric.label}{unit}{now}")
+                limit = self.sensor.alarm_limits.get(metric.key)
+                text = "" if limit is None else f"{limit:g}".replace(".", ",")
+                yield Input(value=text, placeholder="sem alarme", id=f"alarm-{metric.key}")
+            if not self.metrics:
+                yield Static("Este perfil de sensor não tem métricas com alarme.", classes="dialog-hint")
+            yield Static("", id="alarm-error")
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Salvar", id="alarm-ok", variant="primary")
+                yield Button("Cancelar", id="alarm-cancel")
+
+    def on_mount(self) -> None:
+        inputs = list(self.query(Input))
+        if inputs:
+            inputs[0].focus()
+
+    def _collect(self) -> dict[str, float] | None:
+        limits: dict[str, float] = {}
+        for metric in self.metrics:
+            text = self.query_one(f"#alarm-{metric.key}", Input).value.strip().replace(",", ".")
+            if not text:
+                continue
+            try:
+                value = float(text)
+            except ValueError:
+                value = float("nan")
+            if value != value or value in (float("inf"), float("-inf")):
+                self.query_one("#alarm-error", Static).update(f"Limite inválido em {metric.label}: {text}")
+                return None
+            limits[metric.key] = value
+        return limits
+
+    @on(Button.Pressed, "#alarm-ok")
+    @on(Input.Submitted)
+    def _save(self) -> None:
+        limits = self._collect()
+        if limits is not None:
+            self.dismiss(limits)
+
+    @on(Button.Pressed, "#alarm-cancel")
     def action_cancel(self) -> None:
         self.dismiss(None)

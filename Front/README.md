@@ -44,6 +44,10 @@ A interface usa widgets próprios de quebra de texto (`WrappedLines`, `FlowLine`
 
 A barra de teclas é contextual e clicável. Letras não são tratadas como atalhos quando um campo de texto está recebendo entrada. `Ctrl+A` permanece apenas como alias compatível para abrir o gerenciamento wireless; não é necessário conhecê-lo para operar a interface.
 
+## Sensor acústico
+
+Para um sensor de perfil `ACOUSTIC` (INMP441), a tela do sensor mostra níveis sonoros (LAeq, LCeq, LZeq, LAF, pico), barras de oitava, um painel por modo — exposição ao ruído com doses NR-15/NHO-01 e critério da NHO-01, diagnóstico de máquina com tacômetro acústico e escore de anomalia, ou eventos sonoros com classe, pico e SEL — e uma leitura do ambiente (curva NC, distância de conversa, graves, impulsividade). `f` abre o espectro em dB SPL, `z` reinicia a medição e `a`, no modo de máquina, aprende a assinatura normal. As análises ficam em `pico_tui/acoustics.py`, sem dependência do Textual. A demonstração (`--demo`) inclui um sensor acústico no Módulo 22. Ver `Documentacao/sensor-acustico/sensor-acustico.md`.
+
 ## Gerenciamento wireless
 
 `F7` ou `w` abre a tela **Sensores sem fio**. Candidatos são agrupados por UUID e observações com mais de 15 s deixam de ser oferecidas para uma nova associação. A lista mostra o melhor RSSI recente e quantos módulos observam o dispositivo. Ao associar, uma janela apresenta todos os Nodes observadores, ordenados por RSSI, e o operador confirma o responsável.

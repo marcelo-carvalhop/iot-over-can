@@ -29,6 +29,14 @@ class LogEntry:
     data: dict[str, Any]
 
 
+ACOUSTIC_COLUMNS = (
+    "laeq_db", "lceq_db", "lzeq_db", "lzpeak_db", "lafmax_db", "lafmin_db", "centroid_hz", "flatness",
+    "leq_t_db", "l10_db", "l50_db", "l90_db", "dose_nr15_pct", "dose_nho01_pct", "elapsed_s",
+    "f0_hz", "harmonics", "tonal_db", "anomaly_z", "baseline", "events_total", "event_class",
+    "event_peak_db", "event_sel_db", "sta_lta_db", "background_db", "overload", "mic_fault",
+)
+
+
 class LogManager:
     def __init__(
         self,
@@ -88,6 +96,14 @@ class LogManager:
             "dtc_code": sample.dtc_code,
             "quality": sample.quality.value,
         }
+        # Colunas do sensor acústico em todas as linhas: o CSV tem um único
+        # cabeçalho, e as amostras de vibração as deixam vazias.
+        acoustic = sample.acoustic
+        for name in ACOUSTIC_COLUMNS:
+            row[name] = getattr(acoustic, name, None) if acoustic is not None else None
+        row["octave_db"] = (
+            ";".join("" if value is None else f"{value:.1f}" for value in acoustic.octave_db) if acoustic is not None else None
+        )
         self.telemetry_rows.append(row)
         self._write_jsonl({"type": "telemetry", **row})
 

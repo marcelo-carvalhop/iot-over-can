@@ -1766,7 +1766,7 @@ void setup() {
     Serial.println("[GW] Iniciar eleicao: 22 00 FF 01");
     Serial.println("[GW] Solicitar status: 22 20 FF 00");
     Serial.println("[GW] Velocidade heartbeat: 22 30 FF 01..05");
-    Serial.println("[PROBE 00] FIRMWARE=0.18.0 FEATURES=WIRELESS_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER");
+    Serial.println("[PROBE 00] FIRMWARE=0.19.0 FEATURES=WIRELESS_DATA,ACOUSTIC_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER");
   } else {
     state = STATE_IDLE;
     forceNetworkStatusLocal(NODE_ID, STATUS_UNKNOWN);

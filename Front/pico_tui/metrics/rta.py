@@ -53,6 +53,8 @@ from dataclasses import dataclass, replace
 DEFAULT_BITRATE = 500_000
 # Uma amostra de telemetria (50 bytes) ocupa 1 + ceil(46 / 6) = 9 quadros.
 TELEMETRY_FRAMES = 9
+# Um relatório do sensor acústico (108 bytes) ocupa 1 + ceil(104 / 6) = 19 quadros.
+ACOUSTIC_FRAMES = 19
 MAX_INSTANCES = 4096
 MAX_BURST = 64
 MAX_ITERATIONS = 10_000
@@ -287,16 +289,18 @@ def analyze(flows: Iterable[Flow], bitrate: int = DEFAULT_BITRATE) -> Analysis:
     return Analysis(tuple(results), bitrate, utilization)
 
 
-def sensor_template(sensors: int, can_id: int = 0x39F, period_us: float = 1_000_000.0) -> Flow:
+def sensor_template(sensors: int, can_id: int = 0x39F, period_us: float = 1_000_000.0,
+                    frames_per_sample: int = TELEMETRY_FRAMES) -> Flow:
     """Tráfego de `sensors` sensores sem fio adicionais, cada um com uma
-    amostra de telemetria por período, na faixa de menor prioridade."""
+    amostra de telemetria por período, na faixa de menor prioridade.
+    ``frames_per_sample``: 9 para o sensor de vibração, 19 para o acústico."""
 
     return Flow(
         can_id,
         f"{sensors} sensor(es) sem fio adicionais",
         8,
         period_us=period_us,
-        burst=TELEMETRY_FRAMES * sensors,
+        burst=frames_per_sample * sensors,
         synthetic=True,
     )
 
@@ -310,7 +314,8 @@ class Capacity:
 
 
 def capacity(flows: Iterable[Flow], bitrate: int = DEFAULT_BITRATE, *, maximum: int = 1000,
-             period_us: float = 1_000_000.0, utilization_limit: float | None = None) -> Capacity:
+             period_us: float = 1_000_000.0, utilization_limit: float | None = None,
+             frames_per_sample: int = TELEMETRY_FRAMES) -> Capacity:
     """Quantos sensores sem fio a mais o barramento comporta.
 
     Procura o maior N para o qual todos os fluxos observados e o tráfego dos
@@ -327,7 +332,7 @@ def capacity(flows: Iterable[Flow], bitrate: int = DEFAULT_BITRATE, *, maximum: 
         synthetic_id = max(used) + 1
 
     def fits(count: int) -> Analysis | None:
-        analysis = analyze([*base, sensor_template(count, synthetic_id, period_us)], bitrate)
+        analysis = analyze([*base, sensor_template(count, synthetic_id, period_us, frames_per_sample)], bitrate)
         if utilization_limit is not None and analysis.utilization > utilization_limit:
             return None
         return analysis if analysis.schedulable else None

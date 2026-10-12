@@ -48,7 +48,9 @@ async def test_demo_opens_on_home_with_equipment_list(prefs_file) -> None:
         assert state.selected_logical_id == "20.01"  # seleção implícita do primeiro sensor
         ids = app.screen.query_one("#equipment-list")._ids
         assert ids[:3] == ("node:20", "sensor:20.01", "sensor:20.02")
-        assert sum(1 for item in ids if item.startswith("sensor:")) == 3
+        # Três sensores de vibração e o acústico do Módulo 22 (v0.19).
+        assert sum(1 for item in ids if item.startswith("sensor:")) == 4
+        assert "sensor:22.01" in ids
         band = app.screen.query_one("#status-band")
         assert band.has_class("band-normal")
         assert "Operação normal" in band.source_text()

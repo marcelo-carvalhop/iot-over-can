@@ -21,7 +21,7 @@ from textual.events import Key, Resize
 from textual.screen import ModalScreen, Screen
 from textual.theme import Theme
 
-from pico_tui import commands, palette
+from pico_tui import acoustics, alarms, commands, palette
 from pico_tui import presentation as pres
 from pico_tui.command_catalog import ACTIONS_BY_KEY, CommandAction, Parameter, can_command
 from pico_tui.core.event_bus import EventBus
@@ -32,6 +32,7 @@ from pico_tui.core.events import (
     ConnectionOpened,
     DtcReceived,
     LogEvent,
+    RawLineReceived,
     SpectrumReceived,
     TransferCompleted,
     TransferFailed,
@@ -54,11 +55,11 @@ from pico_tui.dialogs import (
     ParameterScreen,
     WirelessNodeScreen,
 )
+from pico_tui.dtc_catalog import dtc_description
 from pico_tui.metrics.experiments import EXPERIMENTS_BY_KEY, ExperimentRecorder
 from pico_tui.metrics.export import export_metrics
 from pico_tui.metrics.service import MetricsService
 from pico_tui.metrics_screens import ExperimentsScreen, MetricsScreen
-from pico_tui.dtc_catalog import dtc_description
 from pico_tui.preferences import load_preferences, save_preferences
 from pico_tui.protocol.router import DecoderRouter
 from pico_tui.screens import (
@@ -78,6 +79,8 @@ from pico_tui.serial_client import SerialClient
 from pico_tui.services.controller import DomainController
 from pico_tui.services.demo import DemoProducer
 from pico_tui.services.log_manager import LogManager
+from pico_tui.services.recorder import SessionRecorder, recorded_mode
+from pico_tui.supervisor import SupervisorScreen
 from pico_tui.widgets import MessageEntry
 
 REFRESH_SECONDS = 0.5
@@ -167,6 +170,8 @@ class PicoTuiApp(App[None]):
         Binding("b", "show_metrics", "Métricas", show=False),
         Binding("f9", "show_experiments", "Ensaios", show=False),
         Binding("e", "show_experiments", "Ensaios", show=False),
+        Binding("f12", "show_supervisor", "Supervisório", show=False),
+        Binding("v", "show_supervisor", "Supervisório", show=False),
         Binding("f10", "exit_confirm", "Sair", show=False),
         Binding("q", "exit_confirm", "Sair", show=False),
     ]
@@ -191,6 +196,8 @@ class PicoTuiApp(App[None]):
         self.replay_path = Path(replay) if replay else None
         self.replay_speed = replay_speed if replay_speed > 0 else 1.0
         self.replaying = False
+        # Gravação da sessão serial real (formato de --replay); ver services/recorder.py.
+        self.recorder: SessionRecorder | None = None
         self.clock = SessionClock()
         self.initial_port = port
         self.baudrate = baudrate
@@ -208,6 +215,7 @@ class PicoTuiApp(App[None]):
 
         self.bus = EventBus()
         self.state_store = StateStore()
+        self.state_store.load_alarm_limits(self.preferences.alarm_limits)
         self.controller = DomainController(self.bus, self.state_store)
         self.metrics = MetricsService(self.bus, self.clock)
         self.experiments = ExperimentRecorder(self.bus, self.clock)
@@ -270,6 +278,7 @@ class PicoTuiApp(App[None]):
     def _register_event_handlers(self) -> None:
         self.bus.subscribe(LogEvent, self._on_log_event)
         self.bus.subscribe(ConnectionModeDetected, self._on_mode_detected)
+        self.bus.subscribe(RawLineReceived, self._on_raw_line)
         self.bus.subscribe(CommandAck, self._on_command_ack)
         self.bus.subscribe(TransferCompleted, self._on_transfer_completed)
         self.bus.subscribe(TransferFailed, self._on_transfer_failed)
@@ -383,15 +392,24 @@ class PicoTuiApp(App[None]):
         self.replaying = True
         self.port_name = "REPLAY"
         self._last_port = "REPLAY"
-        self._last_mode = "gateway"
-        self.decoder.requested_mode = "gateway"
+        # Gravações da TUI guardam o modo pedido; as da bancada virtual são da Probe 00.
+        mode = recorded_mode(lines)
+        self._last_mode = mode
+        self.decoder.requested_mode = mode
         self.decoder.reset()
         # As medições passam a usar o tempo da gravação: o que foi acumulado
         # com o relógio do sistema é descartado antes da primeira linha.
         self.clock.replay_time = _first_replay_instant(lines)
         self.metrics.reset()
         self.experiments.reset()
-        self.state_store.set_connection(ConnectionState.READY, port=f"gravação {path.name}", mode=ConnectionMode.GATEWAY_CAN)
+        connection_mode = {
+            "gateway": ConnectionMode.GATEWAY_CAN,
+            "gateway_can": ConnectionMode.GATEWAY_CAN,
+            "probe": ConnectionMode.GATEWAY_CAN,
+            "sensor": ConnectionMode.SENSOR_DIRECT,
+            "sensor_direct": ConnectionMode.SENSOR_DIRECT,
+        }.get(mode, ConnectionMode.UNKNOWN)
+        self.state_store.set_connection(ConnectionState.READY, port=f"gravação {path.name}", mode=connection_mode)
         await self.bus.publish(
             LogEvent("INFO", f"Reproduzindo {path.name} a {self.replay_speed:g}x; nenhum comando será enviado", "REPLAY")
         )
@@ -454,6 +472,7 @@ class PicoTuiApp(App[None]):
             on_error=lambda error: self.call_from_thread(self._serial_error, error),
             on_disconnect=lambda: self.call_from_thread(self._serial_disconnected),
         )
+        self._start_recording(port, mode)
         await self.bus.publish(ConnectionOpened(port))
         await self.bus.publish(LogEvent("INFO", f"Conectado a {port}", "SERIAL"))
         forced = {
@@ -505,6 +524,9 @@ class PicoTuiApp(App[None]):
                 self._send_raw("PROBE_STATUS")
 
     def _close_serial(self) -> None:
+        if self.recorder is not None:
+            self.recorder.close()
+            self.recorder = None
         client = self.serial_client
         self.serial_client = None
         self._device_auth_until = 0.0
@@ -513,6 +535,24 @@ class PicoTuiApp(App[None]):
         self._device_auth_inflight = False
         if client:
             client.close()
+
+    def _start_recording(self, port: str, mode: str) -> None:
+        if not self.enable_file_log:
+            return
+        path = self.log_manager.directory / f"gravacao_{time.strftime('%Y%m%d-%H%M%S')}_{self.session_id}.log"
+        try:
+            self.recorder = SessionRecorder(path, port=port, mode=mode)
+        except OSError as exc:
+            self.recorder = None
+            self.run_worker(self.bus.publish(LogEvent("WARNING", f"A sessão não será gravada: {exc}", "GRAVACAO")))
+            return
+        self.run_worker(
+            self.bus.publish(LogEvent("INFO", f"Gravando a sessão em {path} (reproduza com --replay)", "GRAVACAO"))
+        )
+
+    async def _on_raw_line(self, event: RawLineReceived) -> None:
+        if self.recorder is not None and not self.replaying:
+            self.recorder.line(event.line)
 
     def _enqueue_line(self, line: str) -> None:
         try:
@@ -578,6 +618,8 @@ class PicoTuiApp(App[None]):
                     add(entry)
                 except NoMatches:
                     pass
+        if event.source == "ALARME" and event.level == "WARNING":
+            self.notify(event.message, title="Alarme", severity="warning", timeout=8)
 
     async def _on_mode_detected(self, event: ConnectionModeDetected) -> None:
         if self.serial_client:
@@ -796,6 +838,8 @@ class PicoTuiApp(App[None]):
         except (OSError, RuntimeError) as exc:
             self.run_worker(self.bus.publish(LogEvent("ERROR", f"Falha de envio: {exc}", "SERIAL")))
             return False
+        if self.recorder is not None:
+            self.recorder.command(command)
         display_command = command
         if command.strip().upper().startswith("AUTH UNLOCK "):
             display_command = "AUTH UNLOCK <redacted>"
@@ -919,6 +963,26 @@ class PicoTuiApp(App[None]):
             await self.bus.publish(LogEvent("INFO", self.security.status_label(), "SECURITY"))
         elif cmd == "config":
             await self._command_config(args)
+        elif cmd in {"measure", "medicao", "medição"}:
+            if args and args[0].lower() in {"reset", "reiniciar"}:
+                self._select_target_arg(args)
+                await self._acoustic_control("MEASURE_RESET")
+            else:
+                await self.bus.publish(LogEvent("WARNING", "Uso: :measure reset [sensor]", "COMMAND"))
+        elif cmd in {"baseline", "referencia", "referência"}:
+            self._select_target_arg(args)
+            option = next((arg.lower() for arg in args if "." not in arg), "")
+            if option in {"learn", "aprender"}:
+                number = next((arg for arg in args if arg.isdigit()), "60")
+                await self._acoustic_control("BASELINE_LEARN", max(5, min(3600, int(number))))
+            elif option in {"clear", "apagar"}:
+                await self._acoustic_control("BASELINE_CLEAR")
+            else:
+                await self.bus.publish(LogEvent("WARNING", "Uso: :baseline learn [segundos] | :baseline clear", "COMMAND"))
+        elif cmd in {"cal", "calibrar"}:
+            self._select_target_arg(args)
+            reference = next((arg for arg in args if arg.replace(".", "", 1).isdigit()), "94")
+            await self._acoustic_calibrate(float(reference))
         elif cmd in {"election", "eleicao", "eleição"}:
             await self._send_network_command("Iniciar eleição da rede", "22 00 FF 01")
         elif cmd in {"canstatus", "netstatus"}:
@@ -1196,6 +1260,13 @@ class PicoTuiApp(App[None]):
             return
         await self.bus.publish(LogEvent("WARNING", "Uso: :tel on|off|once|fast|slow|period <ms>|rate normal", "COMMAND"))
 
+    def _select_target_arg(self, args: list[str]) -> None:
+        """Um argumento "NN.CC" seleciona o sensor antes do comando."""
+
+        target = next((arg for arg in args if "." in arg and "=" not in arg and arg.replace(".", "").isdigit()), None)
+        if target and self.state_store.find_sensor(target):
+            self.state_store.set_selected(target)
+
     async def _command_fft(self, args: list[str]) -> None:
         target = next((arg for arg in args if "." in arg and "=" not in arg), None)
         if target and self.state_store.find_sensor(target):
@@ -1252,7 +1323,8 @@ class PicoTuiApp(App[None]):
         for arg in args:
             if "=" in arg:
                 key, value = arg.split("=", 1)
-                normalized_key = {"SIZE": "WINDOW_SIZE"}.get(key.upper(), key.upper())
+                normalized_key = {"SIZE": "WINDOW_SIZE", "FFT_SIZE": "WINDOW_SIZE", "FFT": "WINDOW_SIZE",
+                                  "THRESHOLD": "STALTA"}.get(key.upper(), key.upper())
                 fields[normalized_key] = value.upper() if normalized_key in {"MODE", "WINDOW"} else value
         sensor = self._selected_sensor()
         if not sensor:
@@ -1346,6 +1418,10 @@ class PicoTuiApp(App[None]):
             self._send_raw(commands.direct_telemetry("ONCE"))
             return True
         if mode == ConnectionMode.DEMO:
+            if (sensor.profile_id or "").upper() == "ACOUSTIC":
+                spectrum = self.demo_producer.acoustic_spectrum(sensor.parent_node_id, sensor.child_id, bins)
+                await self.bus.publish(SpectrumReceived(spectrum))
+                return True
             values = [
                 1000.0 * math.exp(-((index - bins * 0.22) ** 2) / (2 * (bins * 0.035) ** 2))
                 + 300.0 * math.exp(-((index - bins * 0.61) ** 2) / (2 * (bins * 0.05) ** 2))
@@ -1367,6 +1443,82 @@ class PicoTuiApp(App[None]):
             return True
         self._send_raw(commands.gateway_command(sensor.logical_id, "FFT", MODE=fft_mode, BINS=bins))
         return True
+
+    async def _acoustic_control(self, action: str, seconds: int | None = None) -> None:
+        """Reinício da medição e assinatura de referência do sensor acústico."""
+
+        sensor = self._selected_sensor()
+        if sensor is None:
+            await self.bus.publish(LogEvent("WARNING", "Selecione um sensor", "COMMAND"))
+            return
+        mode = self.state_store.snapshot(history=0, frames=0).connection_mode
+        if mode == ConnectionMode.SENSOR_DIRECT:
+            if action == "MEASURE_RESET":
+                self._send_raw(commands.direct_measure_reset())
+            elif action == "BASELINE_LEARN":
+                self._send_raw(commands.direct_baseline_learn(seconds or 60))
+            else:
+                self._send_raw(commands.direct_baseline_clear())
+        elif mode == ConnectionMode.DEMO:
+            self.demo_producer.acoustic_control(sensor.parent_node_id, sensor.child_id, action, seconds or 0)
+            await self.bus.publish(LogEvent("INFO", f"{action} em {sensor.logical_id} [DEMO]", "DEMO"))
+        else:
+            fields: dict[str, object] = {"SECONDS": seconds or 60} if action == "BASELINE_LEARN" else {}
+            self._send_raw(commands.gateway_command(sensor.logical_id, action, **fields))
+
+    async def _acoustic_calibrate(self, reference_db: float) -> None:
+        """Ganho a partir de um calibrador acústico (94 ou 114 dB SPL a 1 kHz).
+
+        Na conexão direta o próprio firmware calcula (CAL). Pelo módulo CAN a
+        TUI usa as três últimas leituras LZeq recebidas e envia o ganho novo
+        em uma configuração comum, que o sensor valida e confirma.
+        """
+
+        sensor = self._selected_sensor()
+        if sensor is None:
+            await self.bus.publish(LogEvent("WARNING", "Selecione um sensor", "CONFIG"))
+            return
+        mode = self.state_store.snapshot(history=0, frames=0).connection_mode
+        if mode == ConnectionMode.SENSOR_DIRECT:
+            self._send_raw(commands.direct_calibrate(reference_db))
+            return
+        readings = [
+            sample.acoustic.lzeq_db
+            for sample in list(sensor.telemetry_history)[-3:]
+            if sample.acoustic is not None and sample.acoustic.lzeq_db is not None
+        ]
+        current_gain = sensor.configuration.calibration_gain or 1.0
+        result = acoustics.calibration(readings, reference_db, current_gain)
+        if result is None:
+            reason = "São necessárias 3 leituras recentes com o calibrador encaixado no microfone."
+        elif not result.stable:
+            reason = (
+                f"Leituras instáveis (variação de {pres.fmt_number(result.spread_db, 2, 'dB')}): "
+                "aguarde o calibrador estabilizar e tente de novo."
+            )
+        elif not 0.01 < result.new_gain <= 100.0:
+            reason = "Ganho calculado fora da faixa do firmware: confira o calibrador e a ligação do microfone."
+        else:
+            reason = ""
+        if reason:
+            self.notify(reason, title="Calibração", severity="warning", timeout=8)
+            await self.bus.publish(LogEvent("WARNING", f"Calibração de {sensor.logical_id} não aplicada: {reason}", "CONFIG"))
+            return
+        assert result is not None
+        message = (
+            f"Calibração de {sensor.logical_id}: medido {pres.fmt_number(result.measured_db, 2, 'dB')}, "
+            f"referência {pres.fmt_number(reference_db, 1, 'dB')}, ganho {current_gain:.4f} → {result.new_gain:.4f}"
+        )
+        if mode == ConnectionMode.DEMO:
+            self.state_store.update_sensor_configuration(
+                sensor.parent_node_id, sensor.child_id, calibration_gain=result.new_gain, transaction_state="APPLIED"
+            )
+            self.demo_producer.acoustic_gain(sensor.parent_node_id, sensor.child_id, result.new_gain / current_gain)
+            await self.bus.publish(LogEvent("INFO", f"{message} [DEMO]", "CONFIG"))
+            return
+        if self._send_raw(commands.gateway_command(sensor.logical_id, "CONFIG", GAIN=f"{result.new_gain:.4f}", VERIFY="YES")):
+            self.state_store.update_sensor_configuration(sensor.parent_node_id, sensor.child_id, transaction_state="SENT")
+            await self.bus.publish(LogEvent("INFO", message, "CONFIG"))
 
     async def _send_dtc_list(self) -> None:
         sensor = self._selected_sensor()
@@ -1504,6 +1656,9 @@ class PicoTuiApp(App[None]):
                     await asyncio.sleep(0.03)
             # A verificação será disparada somente após CONFIG_APPLIED.
         elif mode == ConnectionMode.DEMO:
+            self.demo_producer.configure(
+                sensor.parent_node_id, sensor.child_id, request.mode, request.stalta, request.rate_hz, request.window_size
+            )
             self.state_store.update_sensor_configuration(
                 sensor.parent_node_id,
                 sensor.child_id,
@@ -1552,6 +1707,7 @@ class PicoTuiApp(App[None]):
                     ("F7/w", "Sensores sem fio", "app.show_wireless"),
                     ("F8/b", "Métricas", "app.show_metrics"),
                     ("F9/e", "Ensaios", "app.show_experiments"),
+                    ("F12/v", "Supervisório", "app.show_supervisor"),
                 ]
             )
         if help:
@@ -1582,7 +1738,21 @@ class PicoTuiApp(App[None]):
             if isinstance(screen, HomeScreen):
                 screen.set_messages_visible(visible)
 
-    def set_preference(self, name: str, value: bool) -> None:
+    def set_alarm_limits(self, logical_id: str, limits: dict[str, float]) -> None:
+        """Grava os limites de alarme de um sensor e os aplica já à última leitura."""
+
+        cleaned = self.state_store.set_alarm_limits(logical_id, limits)
+        self.set_preference("alarm_limits", self.state_store.alarm_limits())
+        self.run_worker(
+            self.bus.publish(
+                LogEvent("INFO", f"Limites de alarme do sensor {logical_id}: {alarms.summary(cleaned)}", "ALARME")
+            )
+        )
+        for ident, message, lit in self.state_store.pop_alarm_transitions():
+            self.run_worker(self.bus.publish(LogEvent("WARNING" if lit else "INFO", f"Sensor {ident}: {message}", "ALARME")))
+        self.refresh_now()
+
+    def set_preference(self, name: str, value: object) -> None:
         setattr(self.preferences, name, value)
         error = save_preferences(self.preferences, self.preferences_path)
         if error:
@@ -1631,6 +1801,10 @@ class PicoTuiApp(App[None]):
     def action_show_experiments(self) -> None:
         if not self._modal_open() and not isinstance(self.screen, ExperimentsScreen):
             self._replace_top(ExperimentsScreen())
+
+    def action_show_supervisor(self) -> None:
+        if not self._modal_open() and not isinstance(self.screen, SupervisorScreen):
+            self._replace_top(SupervisorScreen())
 
     # ------------------------------------------------------------------
     # Métricas e ensaios
@@ -2021,6 +2195,14 @@ class PicoTuiApp(App[None]):
                 request = await self.push_screen_wait(ConfigScreen(sensor))
                 if request:
                     await self._apply_config_request(ident, request)
+        elif action_key == "sensor.measure_reset":
+            await self._acoustic_control("MEASURE_RESET")
+        elif action_key == "sensor.baseline_learn":
+            await self._acoustic_control("BASELINE_LEARN", int(value or 60))
+        elif action_key == "sensor.baseline_clear":
+            await self._acoustic_control("BASELINE_CLEAR")
+        elif action_key == "sensor.acoustic_calibrate":
+            await self._acoustic_calibrate(float(value or 94))
         elif action_key == "sensor.stop_now":
             await self._stop_telemetry_stream()
         elif action_key == "sensor.restart_acq":

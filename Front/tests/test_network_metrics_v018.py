@@ -64,7 +64,8 @@ REPLAYS = ROOT / "Front" / "replays"
 SCENARIOS = (
     "formation", "sensor", "owner_failover", "sensor_moves", "manual_policy", "leader_failure",
     "leader_failure_no_probe", "silence_leader", "ap_outage", "drop_session", "bus_load", "two_sensors",
-    "failover_retry", "failover_dead_target", "silence_leader_with_sensor",
+    "failover_retry", "failover_dead_target", "silence_leader_with_sensor", "acoustic_sensor",
+    "restart_keeps_binding",
 )
 UUID = "0xE6616408432B6F39"
 
@@ -204,7 +205,8 @@ def test_c_bus_measurement_matches_python_reference(tmp_path: Path) -> None:
     binary = tmp_path / "test_ioc_net"
     subprocess.run(
         ["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", f"-I{LINK}",
-         *(str(LINK / name) for name in ("ioc_sha256.c", "ioc_wdata.c", "ioc_canbits.c", "ioc_secpdu.c", "ioc_failover.c")),
+         *(str(LINK / name) for name in ("ioc_sha256.c", "ioc_wdata.c", "ioc_canbits.c", "ioc_secpdu.c", "ioc_failover.c",
+                                         "ioc_bindstore.c")),
          str(CODE / "common/tests/test_ioc_net.c"), "-lm", "-o", str(binary)],
         check=True,
     )

@@ -95,7 +95,7 @@ R_m(q) = J_m + w_m(q) − ⌊q / b_m⌋ · P_m + C_m
 R_m    = máximo de R_m(q)
 ```
 
-Com `b = 1` as expressões são as do artigo. A extensão para rajadas trata os `b` quadros de uma transferência segmentada como liberados juntos a cada período. Uma amostra de telemetria ocupa 9 quadros; o relatório de enlace, 4.
+Com `b = 1` as expressões são as do artigo. A extensão para rajadas trata os `b` quadros de uma transferência segmentada como liberados juntos a cada período. Uma amostra de telemetria ocupa 9 quadros; o relatório do sensor acústico, 19; o relatório de enlace, 4.
 
 **Como o tráfego medido vira modelo.** A linha `ID_STATS` traz a contagem e três intervalos por identificador. A função `flow_from_observation` distingue três formas de tráfego:
 
@@ -111,7 +111,7 @@ O tamanho da rajada é inferido de três números, não contado. A tela o aprese
 
 **Verificação.** O teste `test_response_time_analysis_reproduces_the_published_counterexample` reproduz o exemplo do artigo: três mensagens de 1 ms com períodos de 2,5, 3,5 e 3,5 ms. A análise de 1995 responde 3 ms para a de menor prioridade; o valor correto, alcançado pela segunda instância do período ocupado, é 3,5 ms.
 
-**Capacidade restante.** A tela informa quantos sensores sem fio a mais o barramento comporta, cada um com uma amostra de telemetria por segundo, em duas leituras: o limite em que todos os prazos ainda são cumpridos e o limite com a ocupação do modelo abaixo de 40 %. Com o tráfego da bancada virtual (três Nodes e um sensor) os valores são da ordem de 400 e 160 sensores.
+**Capacidade restante.** A tela informa quantos sensores sem fio a mais o barramento comporta, cada um com uma amostra de telemetria por segundo, em duas leituras: o limite em que todos os prazos ainda são cumpridos e o limite com a ocupação do modelo abaixo de 40 %. Com o tráfego da bancada virtual (três Nodes e um sensor) os valores são da ordem de 400 e 160 sensores. Uma terceira linha faz a mesma conta para sensores acústicos, cujo relatório de um segundo ocupa 19 quadros em vez de 9: cerca de 190 no mesmo tráfego.
 
 **Ressalvas.** Qualquer conclusão tirada desta análise precisa levá-las em conta.
 

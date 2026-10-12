@@ -1,6 +1,7 @@
 #include "wireless_discovery.h"
 
 #include <NimBLEDevice.h>
+#include <Preferences.h>
 #include <stdlib.h>
 #include <strings.h>
 
@@ -11,6 +12,7 @@
 #include "protocolo.h"
 #include "wireless_link.h"
 
+#include "ioc_bindstore.h"
 #include "ioc_failover.h"
 
 extern ACAN2515 can;
@@ -40,6 +42,12 @@ constexpr uint32_t SCAN_WATCHDOG_MS = 2000;
 // O estado do vínculo é republicado periodicamente para que uma TUI aberta
 // depois da associação reconstrua a topologia sem depender de uma transição.
 constexpr uint32_t ASSOC_REFRESH_MS = 10000;
+// Vínculos gravados na NVS só são retomados depois de o Node ouvir a rede por
+// mais que um período de republicação: se outro Node assumiu o sensor durante
+// a ausência, o vínculo gravado é descartado em vez de disputado.
+constexpr uint32_t RESTORE_GRACE_MS = ASSOC_REFRESH_MS + 2000;
+constexpr const char* NVS_NAMESPACE = "ioc-bind";
+constexpr const char* NVS_KEY = "tbl";
 
 struct Candidate {
   bool used = false;
@@ -95,6 +103,7 @@ struct Binding {
   uint32_t lastPublishMs = 0;
   bool autoFailover = false;    // o operador autorizou a reassociação automática
   bool publishedSecure = false; // situação da sessão de dados no último estado publicado
+  bool restored = false;        // retomado da NVS; cede em disputa até reabrir a sessão
 };
 
 Candidate candidates[MAX_CANDIDATES];
@@ -113,6 +122,12 @@ uint32_t lastScanWatchdogMs = 0;
 // apenas o líder decide (ver ioc_failover.h).
 ioc_fo_table failoverTable;
 uint32_t lastFailoverPollMs = 0;
+// Vínculos lidos da NVS no boot, à espera do fim de RESTORE_GRACE_MS. Usados
+// só no laço principal (tratamento do CAN e wirelessDiscoveryPoll).
+ioc_bs_entry pendingRestore[MAX_BINDINGS];
+uint8_t pendingRestoreCount = 0;
+uint32_t restoreDeadlineMs = 0;
+bool restoreLoaded = false;
 
 const char* profileName(uint8_t profile) {
   switch (profile) {
@@ -165,18 +180,68 @@ int allocateBinding() {
   return -1;
 }
 
+bool childIdInUse(uint8_t childId) {
+  for (uint8_t i = 0; i < MAX_BINDINGS; ++i) {
+    if (bindings[i].used && bindings[i].childId == childId) return true;
+  }
+  // Um vínculo gravado ainda por retomar mantém o seu número de filho.
+  for (uint8_t i = 0; i < pendingRestoreCount; ++i) {
+    if (pendingRestore[i].child_id == childId) return true;
+  }
+  return false;
+}
+
 uint8_t allocateChildId() {
   for (uint8_t candidate = 1; candidate <= MAX_BINDINGS; ++candidate) {
-    bool used = false;
-    for (uint8_t i = 0; i < MAX_BINDINGS; ++i) {
-      if (bindings[i].used && bindings[i].childId == candidate) {
-        used = true;
-        break;
-      }
-    }
-    if (!used) return candidate;
+    if (!childIdInUse(candidate)) return candidate;
   }
   return 0;
+}
+
+int findPendingRestore(uint64_t uuid) {
+  for (uint8_t i = 0; i < pendingRestoreCount; ++i) {
+    if (pendingRestore[i].uuid == uuid) return i;
+  }
+  return -1;
+}
+
+ioc_bs_entry takePendingRestore(int index) {
+  const ioc_bs_entry entry = pendingRestore[index];
+  pendingRestore[index] = pendingRestore[--pendingRestoreCount];
+  return entry;
+}
+
+// Grava a tabela de vínculos (inclusive os ainda por retomar) na NVS. Fora de
+// seção crítica: a escrita na flash não pode acontecer com interrupções
+// desligadas. Os vínculos mudam por ação do operador ou do líder, raramente,
+// e o desgaste da flash é desprezível.
+void saveBindings() {
+  if (NODE_ID == 0) return;
+  ioc_bs_entry entries[MAX_BINDINGS + MAX_BINDINGS];
+  uint8_t count = 0;
+  portENTER_CRITICAL(&candidateMux);
+  for (uint8_t i = 0; i < MAX_BINDINGS; ++i) {
+    if (!bindings[i].used) continue;
+    entries[count].uuid = bindings[i].uuid;
+    entries[count].child_id = bindings[i].childId;
+    entries[count].profile = bindings[i].profile;
+    entries[count].protocol = bindings[i].protocol;
+    entries[count].flags = bindings[i].autoFailover ? IOC_BS_FLAG_AUTO_FAILOVER : 0;
+    ++count;
+  }
+  portEXIT_CRITICAL(&candidateMux);
+  for (uint8_t i = 0; i < pendingRestoreCount && count < MAX_BINDINGS; ++i) entries[count++] = pendingRestore[i];
+
+  uint8_t blob[IOC_BS_MAX_BYTES];
+  const size_t len = ioc_bs_encode(NODE_ID, entries, count, blob, sizeof(blob));
+  bool ok = false;
+  Preferences prefs;
+  if (len > 0 && prefs.begin(NVS_NAMESPACE, false)) {
+    ok = prefs.putBytes(NVS_KEY, blob, len) == len;
+    prefs.end();
+  }
+  Serial.printf("[NODE %u] [WIRELESS ASSOC] tabela gravada: %u vinculo(s)%s\n", NODE_ID,
+                static_cast<unsigned>(count), ok ? "" : " FALHA_NVS");
 }
 
 // Tempo decorrido desde um instante gravado pela tarefa do BLE. Se ela gravar
@@ -253,29 +318,43 @@ void processBindRequest(uint64_t uuid, bool autoFailover, bool setPolicy, uint32
   if (NODE_ID == 0) return;
   const uint32_t now = millis();
 
+  // Pedido para um sensor cujo vínculo gravado ainda aguardava a retomada:
+  // o pedido prevalece, e o número de filho gravado é mantido se possível.
+  const int pendingIndex = findPendingRestore(uuid);
+  const bool hadPending = pendingIndex >= 0;
+  ioc_bs_entry pending{};
+  if (hadPending) pending = takePendingRestore(pendingIndex);
+  const uint8_t preferredChild = hadPending ? pending.child_id : 0;
+
   portENTER_CRITICAL(&candidateMux);
   int existingIndex = findBindingByUuid(uuid);
   if (existingIndex >= 0) {
+    const bool policyChanged = setPolicy && bindings[existingIndex].autoFailover != autoFailover;
     if (setPolicy) bindings[existingIndex].autoFailover = autoFailover;
     bindings[existingIndex].lastPublishMs = now;
     Binding snapshot = bindings[existingIndex];
     portEXIT_CRITICAL(&candidateMux);
     sendAssociationStatus(snapshot);
+    if (policyChanged || hadPending) saveBindings();
     return;
   }
 
   const int candidateIndex = findCandidate(uuid);
   if (candidateIndex < 0 || elapsedSince(now, candidates[candidateIndex].lastSeenMs) > maxCandidateAgeMs) {
     portEXIT_CRITICAL(&candidateMux);
+    // Recusado: o vínculo gravado, se havia, continua à espera da retomada.
+    if (hadPending) pendingRestore[pendingRestoreCount++] = pending;
     sendRejectedAssociation(uuid, 0, 0, -127);
     return;
   }
 
   const int bindingIndex = allocateBinding();
-  const uint8_t childId = allocateChildId();
+  const uint8_t childId =
+      preferredChild != 0 && !childIdInUse(preferredChild) ? preferredChild : allocateChildId();
   if (bindingIndex < 0 || childId == 0) {
     Candidate c = candidates[candidateIndex];
     portEXIT_CRITICAL(&candidateMux);
+    if (hadPending) pendingRestore[pendingRestoreCount++] = pending;
     sendRejectedAssociation(uuid, c.profile, c.protocol, c.rssi);
     return;
   }
@@ -301,6 +380,7 @@ void processBindRequest(uint64_t uuid, bool autoFailover, bool setPolicy, uint32
   // O vínculo lógico passa a ter plano de dados: o Node anuncia a oferta
   // autenticada e abre o ponto de acesso para este sensor.
   wirelessLinkOnBound(uuid, childId);
+  saveBindings();
 }
 
 void processPolicyRequest(uint64_t uuid, bool autoFailover) {
@@ -313,16 +393,34 @@ void processPolicyRequest(uint64_t uuid, bool autoFailover) {
     sendRejectedAssociation(uuid, 0, 0, -127);
     return;
   }
+  const bool changed = bindings[bindingIndex].autoFailover != autoFailover;
   bindings[bindingIndex].autoFailover = autoFailover;
   bindings[bindingIndex].lastPublishMs = millis();
   Binding snapshot = bindings[bindingIndex];
   portEXIT_CRITICAL(&candidateMux);
 
   sendAssociationStatus(snapshot);
+  if (changed) saveBindings();
 }
 
 void processUnbindRequest(uint64_t uuid) {
   if (NODE_ID == 0) return;
+
+  const int pendingIndex = findPendingRestore(uuid);
+  if (pendingIndex >= 0) {
+    // Desassociado durante a ausência do Node: o vínculo gravado não volta.
+    const ioc_bs_entry entry = takePendingRestore(pendingIndex);
+    Binding released;
+    released.used = true;
+    released.uuid = entry.uuid;
+    released.childId = entry.child_id;
+    released.profile = entry.profile;
+    released.protocol = entry.protocol;
+    released.assocState = WIRELESS_ASSOC_UNBOUND;
+    sendAssociationStatus(released, WIRELESS_ASSOC_UNBOUND);
+    saveBindings();
+    return;
+  }
 
   portENTER_CRITICAL(&candidateMux);
   const int bindingIndex = findBindingByUuid(uuid);
@@ -339,6 +437,7 @@ void processUnbindRequest(uint64_t uuid) {
 
   wirelessLinkOnUnbound(uuid, snapshot.childId);
   sendAssociationStatus(snapshot, WIRELESS_ASSOC_UNBOUND);
+  saveBindings();
 }
 
 void processAssociationCommand(uint8_t action, uint64_t uuid) {
@@ -371,13 +470,30 @@ void processAssociationCommand(uint8_t action, uint64_t uuid) {
 void resolveBindingConflict(uint8_t otherNode, uint64_t uuid, uint8_t otherState, bool otherSecure) {
   if (NODE_ID == 0) return;
 
+  // Outro Node assumiu, durante a ausência deste, um sensor que ele ia retomar.
+  const int pendingIndex = findPendingRestore(uuid);
+  if (pendingIndex >= 0 && otherNode != NODE_ID &&
+      (otherState == WIRELESS_ASSOC_ASSOCIATING || otherState == WIRELESS_ASSOC_BOUND ||
+       otherState == WIRELESS_ASSOC_ONLINE)) {
+    takePendingRestore(pendingIndex);
+    Serial.printf("[NODE %u] [WIRELESS ASSOC] uuid=0x%016llX assumido pelo NODE %u na ausencia deste; vinculo gravado descartado\n",
+                  NODE_ID, static_cast<unsigned long long>(uuid), static_cast<unsigned>(otherNode));
+    saveBindings();
+    return;
+  }
+
   portENTER_CRITICAL(&candidateMux);
   const int bindingIndex = findBindingByUuid(uuid);
-  const uint8_t ownState = bindingIndex >= 0 ? bindings[bindingIndex].assocState : 0;
+  uint8_t ownState = bindingIndex >= 0 ? bindings[bindingIndex].assocState : 0;
+  const bool restored = bindingIndex >= 0 && bindings[bindingIndex].restored;
   portEXIT_CRITICAL(&candidateMux);
   if (bindingIndex < 0) return;
 
-  if (ioc_fo_should_yield(NODE_ID, ownState, wirelessLinkIsSecure(uuid), otherNode, otherState, otherSecure)) {
+  const bool ownSecure = wirelessLinkIsSecure(uuid);
+  // Um vínculo retomado da NVS ainda sem sessão é o mais antigo da disputa:
+  // conta como fora de alcance e cede a quem o líder escolheu depois.
+  if (restored && !ownSecure) ownState = WIRELESS_ASSOC_STALE;
+  if (ioc_fo_should_yield(NODE_ID, ownState, ownSecure, otherNode, otherState, otherSecure)) {
     Serial.printf("[NODE %u] [WIRELESS ASSOC] uuid=0x%016llX cedido ao NODE %u\n", NODE_ID,
                   static_cast<unsigned long long>(uuid), static_cast<unsigned>(otherNode));
     processUnbindRequest(uuid);
@@ -644,6 +760,7 @@ void pollBindings() {
     // BLE, dividido com o ponto de acesso, deixe de ouvir os anúncios dele.
     const bool secure = wirelessLinkIsSecure(binding.uuid);
     if (secure) binding.lastSeenMs = now;
+    if (secure) binding.restored = false;  // vínculo retomado da NVS confirmado pela sessão
     const uint32_t age = elapsedSince(now, binding.lastSeenMs);
     if (binding.assocState == WIRELESS_ASSOC_ASSOCIATING &&
         now - binding.stateSinceMs >= ASSOCIATING_MIN_MS &&
@@ -707,6 +824,84 @@ void pollBindings() {
   }
 }
 
+// Lê os vínculos gravados (primeira passagem do laço, com CAN e enlace já
+// iniciados). Nada é retomado antes de RESTORE_GRACE_MS.
+void loadPendingRestore() {
+  restoreLoaded = true;
+  if (NODE_ID == 0) return;
+  uint8_t blob[IOC_BS_MAX_BYTES];
+  size_t len = 0;
+  Preferences prefs;
+  // Aberto em escrita: no primeiro boot o espaço de nomes ainda não existe.
+  if (prefs.begin(NVS_NAMESPACE, false)) {
+    len = prefs.getBytes(NVS_KEY, blob, sizeof(blob));
+    prefs.end();
+  }
+  if (len == 0) return;
+  uint8_t count = 0;
+  if (!ioc_bs_decode(blob, len, NODE_ID, pendingRestore, MAX_BINDINGS, &count)) {
+    Serial.printf("[NODE %u] [WIRELESS ASSOC] tabela gravada invalida; nenhum vinculo retomado\n", NODE_ID);
+    return;
+  }
+  pendingRestoreCount = count;
+  restoreDeadlineMs = millis() + RESTORE_GRACE_MS;
+  if (count) {
+    Serial.printf("[NODE %u] [WIRELESS ASSOC] %u vinculo(s) gravado(s); retomada em %lu ms se nenhum outro Node os assumiu\n",
+                  NODE_ID, static_cast<unsigned>(count), static_cast<unsigned long>(RESTORE_GRACE_MS));
+  }
+}
+
+// Fim da espera: os vínculos gravados que ninguém assumiu voltam como BOUND,
+// com o mesmo número de filho, e o Node volta a oferecer o plano de dados.
+void finishRestore() {
+  ioc_bs_entry entries[MAX_BINDINGS];
+  const uint8_t count = pendingRestoreCount;
+  memcpy(entries, pendingRestore, sizeof(ioc_bs_entry) * count);
+  pendingRestoreCount = 0;
+  bool changed = false;
+
+  for (uint8_t k = 0; k < count; ++k) {
+    const ioc_bs_entry& entry = entries[k];
+    portENTER_CRITICAL(&candidateMux);
+    const uint32_t now = millis();
+    if (findBindingByUuid(entry.uuid) >= 0) {
+      portEXIT_CRITICAL(&candidateMux);
+      changed = true;
+      continue;
+    }
+    const int bindingIndex = allocateBinding();
+    const uint8_t childId = childIdInUse(entry.child_id) ? allocateChildId() : entry.child_id;
+    if (bindingIndex < 0 || childId == 0) {
+      portEXIT_CRITICAL(&candidateMux);
+      changed = true;
+      continue;
+    }
+    Binding& binding = bindings[bindingIndex];
+    binding = Binding{};
+    binding.used = true;
+    binding.uuid = entry.uuid;
+    binding.childId = childId;
+    binding.profile = entry.profile;
+    binding.protocol = entry.protocol;
+    binding.rssi = -127;
+    binding.assocState = WIRELESS_ASSOC_BOUND;
+    binding.lastSeenMs = now;
+    binding.stateSinceMs = now;
+    binding.lastPublishMs = now - ASSOC_REFRESH_MS;  // publica na próxima passagem
+    binding.autoFailover = (entry.flags & IOC_BS_FLAG_AUTO_FAILOVER) != 0;
+    binding.restored = true;
+    const bool autoFailover = binding.autoFailover;
+    portEXIT_CRITICAL(&candidateMux);
+
+    if (childId != entry.child_id) changed = true;
+    Serial.printf("[NODE %u] [WIRELESS ASSOC] vinculo retomado da NVS child=%u uuid=0x%016llX failover=%s\n",
+                  NODE_ID, static_cast<unsigned>(childId), static_cast<unsigned long long>(entry.uuid),
+                  autoFailover ? "AUTO" : "MANUAL");
+    wirelessLinkOnBound(entry.uuid, childId);
+  }
+  if (changed) saveBindings();
+}
+
 } // namespace
 
 void wirelessDiscoveryInit() {
@@ -730,6 +925,8 @@ void wirelessDiscoveryInit() {
 
 void wirelessDiscoveryPoll() {
   if (NODE_ID != 0) {
+    if (!restoreLoaded) loadPendingRestore();
+    if (pendingRestoreCount && static_cast<int32_t>(millis() - restoreDeadlineMs) >= 0) finishRestore();
     const uint32_t now = millis();
     NimBLEScan* scan = NimBLEDevice::getScan();
 

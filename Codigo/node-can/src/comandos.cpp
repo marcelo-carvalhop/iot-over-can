@@ -80,8 +80,8 @@ static void printHexByte(uint8_t value) {
 }
 
 static void printProbeVersion() {
-  Serial.println("PROBE_VERSION FIRMWARE=0.18.0 PROTOCOL=CAN_CLASSIC_V1 NODE=0 "
-                 "FEATURES=WIRELESS_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER");
+  Serial.println("PROBE_VERSION FIRMWARE=0.19.0 PROTOCOL=CAN_CLASSIC_V1 NODE=0 "
+                 "FEATURES=WIRELESS_DATA,ACOUSTIC_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER");
 }
 
 static void printProbeStatus() {

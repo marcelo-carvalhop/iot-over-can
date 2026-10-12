@@ -7,7 +7,7 @@ volta aos valores padrão e informa o problema no registro de mensagens.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 DEFAULT_PATH = Path.home() / ".config" / "iot-over-can" / "tui.json"
@@ -21,6 +21,10 @@ class Preferences:
     show_debug_messages: bool = False
     # Usa símbolos ASCII em vez de ● ▲ ■ ○ (consoles sem Unicode).
     ascii_symbols: bool = False
+    # Painéis do supervisório, na ordem da tela ("rede", "sensor:02.01", ...).
+    supervisor_panels: list[str] = field(default_factory=list)
+    # Limites de alarme por sensor: {"02.01": {"laeq": 85.0}} (ver pico_tui.alarms).
+    alarm_limits: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
 def load_preferences(path: str | Path | None = None) -> tuple[Preferences, str]:
@@ -38,8 +42,23 @@ def load_preferences(path: str | Path | None = None) -> tuple[Preferences, str]:
         return prefs, f"Preferências ignoradas ({target}): {exc}"
     for item in fields(Preferences):
         value = data.get(item.name)
-        if isinstance(value, bool):
+        default = getattr(prefs, item.name)
+        if isinstance(default, bool) and isinstance(value, bool):
             setattr(prefs, item.name, value)
+        elif isinstance(default, list) and isinstance(value, list):
+            setattr(prefs, item.name, [v for v in value if isinstance(v, str)])
+        elif isinstance(default, dict) and isinstance(value, dict):
+            # Só {texto: {texto: número}}; o significado é conferido por quem usa.
+            setattr(
+                prefs,
+                item.name,
+                {
+                    key: {name: float(limit) for name, limit in rules.items()
+                          if isinstance(limit, (int, float)) and not isinstance(limit, bool)}
+                    for key, rules in value.items()
+                    if isinstance(key, str) and isinstance(rules, dict)
+                },
+            )
     return prefs, ""
 
 

@@ -8,13 +8,16 @@ DTC_CATALOG: dict[int, tuple[str, Severity]] = {
     # 0x1xxx — barramento / aquisição
     0x1001: ("MPU6050 sem comunicação no I2C0 / WHO_AM_I inválido", Severity.CRITICAL),
     0x1002: ("Barramento I2C0 travado ou timeout persistente de leitura", Severity.CRITICAL),
+    0x1003: ("Microfone INMP441 sem dados válidos no I2S (SD parado, L/R ou alimentação)", Severity.CRITICAL),
 
     # 0x2xxx — sensor / evento físico
     0x2001: ("Vetor de gravidade fora da faixa esperada; possível soltura, impacto ou montagem instável", Severity.CRITICAL),
     0x2002: ("Saturação do acelerômetro / clipping mecânico no MPU6050", Severity.WARNING),
+    0x2003: ("Sobrecarga acústica: pressão acima do ponto de sobrecarga do INMP441 (~120 dB SPL)", Severity.WARNING),
 
     # 0x3xxx — processamento local
     0x3001: ("Sobrecarga no processamento DSP / janela não processada no tempo esperado", Severity.WARNING),
+    0x3002: ("Núcleo dedicado ao DSP sem progresso (vigilância do núcleo 1 do RP2040/RP2350)", Severity.CRITICAL),
 
     # 0x4xxx — sistema, energia e rede
     0x4001: ("Tensão de alimentação baixa ou crítica no nó sensor", Severity.CRITICAL),

@@ -25,6 +25,7 @@ from pico_tui.core.models import (
     Severity,
     TelemetrySample,
 )
+from pico_tui.protocol.acoustic import acoustic_telemetry_sample, is_acoustic_payload
 from pico_tui.protocol.common import first, parse_bool, parse_float, parse_int, parse_key_values
 from pico_tui.protocol.legacy_gateway import LegacyGatewayDecoder
 
@@ -107,6 +108,9 @@ class GatewayTextDecoder:
         child = parse_int(first(payload, "CHILD", "CHILD_ID"), 0) or 0
         quality = _quality(payload)
         battery = _battery(payload)
+        if is_acoustic_payload(payload):
+            await self.bus.publish(TelemetryReceived(acoustic_telemetry_sample(parent, child, payload, battery=battery)))
+            return
         fft_valid = parse_bool(first(payload, "FFT_VALID", "FFT"))
         peak_frequency = _scaled(payload, "PEAK_HZ_X10", 10.0, "PEAK_HZ") if fft_valid is not False else None
         peak_amplitude = parse_float(first(payload, "PEAK_AMP", "PEAK_AMPLITUDE")) if fft_valid is not False else None

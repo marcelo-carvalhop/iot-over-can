@@ -8,6 +8,7 @@
 #ifndef SIM_API_H
 #define SIM_API_H
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -64,5 +65,10 @@ class SimInstance {
 uint64_t sim_now_us();
 void sim_delay_ms(uint32_t ms);
 uint32_t sim_random32();
+
+/* Memória não volátil (NVS) de cada Node: fica na bancada, fora da instância,
+   e por isso sobrevive ao reinício (troca para a segunda instância). */
+size_t sim_nvs_get(int node_id, const std::string& key, uint8_t* buf, size_t cap);
+void sim_nvs_put(int node_id, const std::string& key, const uint8_t* data, size_t len);
 
 #endif

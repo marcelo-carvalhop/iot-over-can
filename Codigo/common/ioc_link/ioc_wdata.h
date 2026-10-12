@@ -43,7 +43,8 @@ typedef enum {
     IOC_WD_KIND_CMD_ACK   = 3,
     IOC_WD_KIND_DTC       = 4,
     IOC_WD_KIND_LINK      = 5,
-    IOC_WD_KIND_CONFIG    = 6
+    IOC_WD_KIND_CONFIG    = 6,
+    IOC_WD_KIND_ACOUSTIC  = 7   /* relatório do sensor acústico (v0.19) */
 } ioc_wd_kind;
 
 uint8_t ioc_wd_crc8(const uint8_t *data, size_t len);
@@ -173,6 +174,56 @@ int    ioc_wd_spectrum_decode(const uint8_t *buf, size_t len, ioc_wd_spectrum_he
 void ioc_wd_spectrum_reduce(const float *in, uint16_t in_bins, uint16_t *out, uint16_t out_bins,
                             float *scale);
 
+/* ------------------------------------------------------ telemetria acústica */
+
+/*
+ * Relatório de um segundo do sensor acústico (perfil 0x02). Níveis em
+ * centésimos de dB re 20 µPa; IOC_WD_CB_NA marca o que o modo não calcula.
+ * Os campos espelham Payload_AcousticStream (edge_protocol_definitions.h),
+ * sem o cabeçalho, a janela, a taxa pedida e o espectro: 108 bytes, 19 quadros.
+ */
+#define IOC_WD_ACOUSTIC_LEN    108
+#define IOC_WD_ACOUSTIC_BANDS  10
+#define IOC_WD_CB_NA           ((int16_t)-32768)
+
+typedef struct {
+    uint16_t seq;
+    uint8_t  mode;
+    uint8_t  flags;
+    uint16_t rate_hz;          /* taxa efetiva arredondada */
+    uint16_t fft_size;
+    uint16_t interval_ms;
+    uint8_t  coverage_pct;
+    uint8_t  cpu_pct;
+    int16_t  laeq_cb, lceq_cb, lzeq_cb, lzpeak_cb, laf_cb, lafmax_cb, lafmin_cb;
+    int16_t  crest_x100, kurtosis_x100;
+    float    peak_hz;
+    uint16_t centroid_hz;
+    uint16_t flatness_x10000;
+    int16_t  leq_total_cb, l10_cb, l50_cb, l90_cb;
+    uint16_t dose_nr15_x10, dose_nho01_x10;
+    uint32_t elapsed_s;
+    int16_t  tonal_cb;
+    float    f0_hz;
+    uint8_t  harmonics;
+    int16_t  anomaly_x100;
+    uint8_t  baseline_pct;
+    uint16_t event_count;
+    uint8_t  events_interval;
+    uint8_t  event_class;
+    int16_t  event_peak_cb, event_sel_cb;
+    uint16_t event_duration_ms, event_centroid_hz, event_age_s;
+    int16_t  sta_lta_cb, background_cb;
+    int16_t  octave_cb[IOC_WD_ACOUSTIC_BANDS];
+    uint8_t  battery_pct;
+    uint16_t battery_mv;
+    uint8_t  dtc_count;
+    uint16_t dtc_code;
+} ioc_wd_acoustic;
+
+size_t ioc_wd_acoustic_encode(const ioc_wd_acoustic *in, uint8_t out[IOC_WD_ACOUSTIC_LEN]);
+int    ioc_wd_acoustic_decode(const uint8_t *buf, size_t len, ioc_wd_acoustic *out);
+
 /* ------------------------------------------------- demais mensagens curtas */
 
 #define IOC_WD_ACK_LEN    5
@@ -180,7 +231,8 @@ void ioc_wd_spectrum_reduce(const float *in, uint16_t in_bins, uint16_t *out, ui
 #define IOC_WD_LINK_LEN        19
 #define IOC_WD_LINK_LEN_V017   15 /* formato anterior, sem tempo de resposta */
 #define IOC_WD_RTT_UNKNOWN      0xFFFFu
-#define IOC_WD_CONFIG_LEN 21
+#define IOC_WD_CONFIG_LEN      22
+#define IOC_WD_CONFIG_LEN_V018 21 /* formato anterior, sem o perfil do sensor */
 
 typedef enum {
     IOC_WD_ACK_ACCEPTED = 0, /* entregue ao sensor, aguardando efeito */
@@ -234,7 +286,8 @@ typedef struct {
     float    rate_eff_hz;
     float    stalta;
     float    gain;
-    uint8_t  status; /* 0=informativo, 1=aplicada, 2=rejeitada */
+    uint8_t  status;  /* 0=informativo, 1=aplicada, 2=rejeitada */
+    uint8_t  profile; /* perfil do sensor (0x01 vibração, 0x02 acústico); 0 = não informado */
 } ioc_wd_config;
 
 size_t ioc_wd_ack_encode(const ioc_wd_ack *in, uint8_t out[IOC_WD_ACK_LEN]);
@@ -252,13 +305,14 @@ typedef enum {
     IOC_WD_OP_STREAM       = 0x01, /* arg0: 0=off 1=on 2=uma amostra; arg1..2: período ms */
     IOC_WD_OP_FFT          = 0x02, /* arg0..1: quantidade de faixas */
     IOC_WD_OP_STATUS       = 0x03, /* publica LINK + CONFIG */
-    IOC_WD_OP_SET_MODE     = 0x10, /* arg0: modo */
+    IOC_WD_OP_SET_MODE     = 0x10, /* arg0: modo; arg1: perfil esperado (0 = qualquer) */
     IOC_WD_OP_SET_RATE     = 0x11, /* arg0..3: float32 Hz */
     IOC_WD_OP_SET_WINDOW   = 0x12, /* arg0: tipo (0xFF mantém); arg1..2: tamanho (0 mantém) */
     IOC_WD_OP_SET_STALTA   = 0x13, /* arg0..3: float32 */
     IOC_WD_OP_SET_GAIN     = 0x14, /* arg0..3: float32 */
     IOC_WD_OP_APPLY        = 0x1F, /* envia a configuração preparada ao sensor */
-    IOC_WD_OP_DTC_CLEAR    = 0x20
+    IOC_WD_OP_DTC_CLEAR    = 0x20,
+    IOC_WD_OP_ACOUSTIC     = 0x21  /* arg0: ação (AcousticControlAction); arg1..2: argumento */
 } ioc_wd_opcode;
 
 typedef struct {

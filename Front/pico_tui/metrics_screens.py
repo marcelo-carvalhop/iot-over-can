@@ -253,6 +253,15 @@ class MetricsScreen(BaseScreen):
                     f"{guideline.extra_sensors} sensores sem fio, mantendo a ocupação do barramento abaixo de 40 %",
                 )
             )
+        acoustic = snapshot.capacity_acoustic
+        if acoustic is not None:
+            more = "mais de " if acoustic.limit_reached else ""
+            rows.append(
+                (
+                    "Sensores acústicos",
+                    f"{more}{acoustic.extra_sensors}, com um relatório de 19 quadros por segundo cada",
+                )
+            )
         rows.append(("Ressalva", "Vale para o tráfego observado; ver Documentação, métricas e ensaios."))
         fields.set_fields(rows)
 

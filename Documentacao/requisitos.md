@@ -36,6 +36,11 @@
 | Registro, no monitor serial, de cada passo do enlace sensor ↔ Node | Implementado no Node (`[WLINK]`) e no sensor (`[NET]`) |
 | Simulação complementar (SocketCAN `vcan`, GNU Octave, OMNeT++) | Pendente, prioridade muito baixa; recomendação em `arquitetura/metricas-e-ensaios.md`, seção 8.1 |
 | CAN FD no hardware final | Pendente; predisposição em biblioteca |
+| Sensor acústico INMP441 em Pico W e Pico 2 W, com o mesmo enlace do sensor de vibração | Implementado; compila para as duas placas; validação em bancada pendente |
+| Modos acústicos LEVEL (nível e exposição), MACHINE (tacômetro e anomalia) e EVENTS (eventos sonoros) | Implementado; verificado com sinais sintéticos no computador |
+| Telemetria, espectro, configuração e comandos acústicos através do Node CAN | Implementado; verificado na simulação e na bancada virtual |
+| Análises acústicas na TUI (NR-15, NHO-01, curva NC, conversa, tacômetro, eventos, calibração) | Implementado |
+| Painel em papel eletrônico | Pendente |
 
 ## Requisitos da interface
 
@@ -70,13 +75,13 @@ ruff == 0.16.7           # desenvolvimento
 
 Não existem `requirements.txt` paralelos.
 
-O firmware ESP32 usa PlatformIO com framework Arduino, ACAN2515, NimBLE-Arduino e a biblioteca local `Codigo/common/ioc_link`. O firmware do Pico W usa Pico SDK, BTstack/CYW43, lwIP e toolchain ARM compatível com o SDK configurado.
+O firmware ESP32 usa PlatformIO com framework Arduino, ACAN2515, NimBLE-Arduino e a biblioteca local `Codigo/common/ioc_link`. O firmware do Pico W usa Pico SDK, BTstack/CYW43, lwIP e toolchain ARM compatível com o SDK configurado. O sensor acústico usa o mesmo SDK (validado com a versão 2.3.1) para `pico_w` e `pico2_w`, mais `pico_multicore`, `hardware_pio` e `hardware_dma`.
 
 ## Requisitos de segurança
 
 Segredos não podem ser versionados. `security.json` e `.env.local` devem usar permissão `0600` em POSIX. O modo OTP permanece fail-closed enquanto não houver verificação criptográfica real.
 
-A TUI deve tratar como mutáveis, entre outros, os comandos administrativos CAN `22 00`, `22 10`, `22 30`, comandos `CMD ...`, `WIRELESS BIND/UNBIND/POLICY` e `FAULT ...`. A ausência de autorização deve bloquear o envio, não apenas ocultar a ação.
+A TUI deve tratar como mutáveis, entre outros, os comandos administrativos CAN `22 00`, `22 10`, `22 30`, comandos `CMD ...`, `WIRELESS BIND/UNBIND/POLICY`, `FAULT ...` e, no console do sensor acústico, `CAL`, `MEASURE` e `BASELINE`. A ausência de autorização deve bloquear o envio, não apenas ocultar a ação.
 
 A reassociação automática de um sensor só pode ocorrer quando o operador a autorizou para aquele sensor. O tratamento dos comandos de ensaio nos Nodes deve poder ser removido na compilação.
 
