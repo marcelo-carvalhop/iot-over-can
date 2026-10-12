@@ -81,3 +81,11 @@ Problemas encontrados ao acrescentar o segundo tipo de sensor wireless (`Codigo/
 | CH-065 | reconfigurar o DSP no RP2040 acusava perda de áudio | recalcular janela e ponderações leva décimos de segundo, e o anel de DMA enchia nesse meio-tempo | o áudio acumulado durante a reconfiguração é descartado sem contar como perda | Resolvido |
 | CH-066 | gravações da bancada virtual precisam ser idênticas em qualquer máquina | funções como `pow` e `log` podem diferir no último bit entre bibliotecas | o sensor acústico simulado usa níveis e incrementos de dose tabelados e só aritmética básica | Implementado |
 <!-- livro:fim id="acustico-desafios" -->
+
+## Robustez da TUI
+
+| ID | Problema | Causa | Solução aplicada | Estado |
+|---|---|---|---|---|
+| CH-067 | uma linha `TEL` com `SEQ` negativo (corrompida) era descartada sem aviso | o rastreador de sequência recusa valores fora de 0..65535 com exceção, e o barramento de eventos só registrava a falha no `logging` | o controlador confere a faixa: a amostra vale, a contagem de perdas ignora o número e a linha conta como erro de decodificação, com aviso | Resolvido; encontrado por fuzz das gravações da bancada virtual |
+| CH-068 | falhas em tratadores de eventos não chegavam ao operador | o barramento isola cada tratador e registrava a exceção só no `logging` do Python | a falha vira mensagem de erro da fonte `INTERNO`, no máximo uma vez a cada 30 s por tratador e tipo de exceção | Implementado |
+

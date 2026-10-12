@@ -27,7 +27,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Input, Label, OptionList, Sparkline, Static
 
-from pico_tui import acoustic_view, palette
+from pico_tui import acoustic_view, alarms, palette
 from pico_tui import presentation as pres
 from pico_tui.command_catalog import ACTIONS_BY_KEY, GROUP_ORDER, actions_for, can_command
 from pico_tui.core.models import AppState, ConnectionMode, SensorNode
@@ -65,6 +65,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 # Reexportados para scripts antigos que importavam diálogos daqui.
 from pico_tui.dialogs import (  # noqa: F401
+    AlarmScreen,
     ConfigRequest,
     ConfigScreen,
     ConfirmScreen,
@@ -296,6 +297,7 @@ class SensorScreen(BaseScreen):
         # Sensor acústico: reinício da medição e assinatura de referência.
         Binding("z", "measure_reset", "Reiniciar medição", show=False),
         Binding("a", "baseline_learn", "Aprender referência", show=False),
+        Binding("l", "alarms", "Alarmes", show=False),
     ]
 
     SPECTRUM_PROFILES = frozenset({"VIBRATION", "ACOUSTIC"})
@@ -329,6 +331,8 @@ class SensorScreen(BaseScreen):
                 if self._mode == "MACHINE":
                     hints.append(("a", "Aprender referência", "screen.baseline_learn"))
             hints.append(("s", "Atualizar", "screen.status"))
+            if self._profile in self.SPECTRUM_PROFILES:
+                hints.append(("l", "Alarmes", "screen.alarms"))
             if self._wireless_bound:
                 hints.append(("w", "Sensores sem fio", "screen.wireless"))
         hints.extend(self.tui.global_hints(home=False, commands=False))
@@ -474,8 +478,13 @@ class SensorScreen(BaseScreen):
     @staticmethod
     def _config_fields(sensor: SensorNode) -> list[tuple[str, Text | str]]:
         cfg = sensor.configuration
+        alarm_field = ("Limites de alarme", alarms.summary(sensor.alarm_limits) + " (tecla l)")
         if (sensor.profile_id or "").upper() == "ACOUSTIC":
-            return [*acoustic_view.config_fields(sensor), ("Última alteração", _transaction_label(cfg.transaction_state))]
+            return [
+                *acoustic_view.config_fields(sensor),
+                ("Última alteração", _transaction_label(cfg.transaction_state)),
+                alarm_field,
+            ]
         return [
             ("Modo", pres.sensor_mode_label(cfg.mode.value)),
             ("Taxa solicitada", pres.fmt_number(cfg.sample_rate_requested_hz, 1, "Hz")),
@@ -484,6 +493,7 @@ class SensorScreen(BaseScreen):
             ("Limiar STA/LTA", pres.fmt_number(cfg.stalta_threshold, 2)),
             ("Ganho", pres.fmt_number(cfg.calibration_gain, 3)),
             ("Última alteração", _transaction_label(cfg.transaction_state)),
+            alarm_field,
         ]
 
     @staticmethod
@@ -625,6 +635,19 @@ class SensorScreen(BaseScreen):
     def action_status(self) -> None:
         if not self._wireless_associated:
             self.tui.start_action("sensor.status", f"sensor:{self.logical_id}")
+
+    def action_alarms(self) -> None:
+        if self._profile not in self.SPECTRUM_PROFILES:
+            return
+        sensor = self.tui.state_store.find_sensor(self.logical_id)
+        if sensor is None:
+            return
+
+        def chosen(limits: dict[str, float] | None) -> None:
+            if limits is not None:
+                self.tui.set_alarm_limits(self.logical_id, limits)
+
+        self.app.push_screen(AlarmScreen(sensor), chosen)
 
     def action_unbind(self) -> None:
         if self._wireless_associated:

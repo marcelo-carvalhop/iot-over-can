@@ -455,6 +455,16 @@ A TUI lê um arquivo com as linhas da Probe 00 e o instante de cada uma (`@<ms> 
 
 As gravações em `Front/replays/` são produzidas pela bancada virtual (`Codigo/scripts/record_network_scenarios.sh`), que executa o firmware real do Node CAN.
 
+Sessões reais também são gravadas: com o registro em arquivo ligado (padrão; `--no-file-log` desliga), cada conexão serial gera `logs/gravacao_<data>_<sessão>.log` no mesmo formato, com os comandos enviados como comentários (`# t=<ms> comando: ...`) e o modo pedido no cabeçalho (`modo=gateway`, `sensor` ou `auto`), que a reprodução respeita. O argumento de `AUTH ...` e valores de chaves do tipo `*KEY*=`, `*TOKEN*=`, `*SECRET*=`, `*PASS*=` e `*PIN*=` são gravados como `***` (`pico_tui/services/recorder.py`). Um problema visto na bancada física pode assim ser revisto na TUI e virar caso de teste.
+
+## Alarmes por limiar
+
+Na tela de um sensor, `l` abre os limites de alarme do perfil: RMS, PPV, curtose e fator de crista (vibração); LAeq, pico sem ponderação, doses NHO-01 e NR-15 e escore de anomalia (acústico). Campo vazio é métrica sem alarme. O alarme acende quando a leitura passa do limite e apaga quando volta abaixo de limite − histerese (5 % do limite para RMS e PPV, 1 dB para níveis, 0,5 para curtose e escore, 0,2 para crista; doses não têm histerese). Aceso, ele entra na condição do sensor (atenção) e, com ela, na faixa de estado, na tela Início e na borda do painel no supervisório; acender e apagar viram intercorrências, mensagens da fonte `ALARME` e um aviso na tela. Os limites valem de imediato para a última leitura, ficam em `alarm_limits` nas preferências e se aplicam também a sensores que ainda vão aparecer (`pico_tui/alarms.py`).
+
+## Falhas internas
+
+O barramento de eventos isola cada tratador: a falha de um não interrompe os demais. Ela vai para o registro do Python e, uma vez a cada 30 s por tratador e tipo de exceção, para as mensagens como erro da fonte `INTERNO`, para que um dado descartado por defeito não passe despercebido.
+
 ## Mensagens — `MessagesScreen`
 
 Mantém o registro operacional da sessão separado do estado contínuo. A tela recebe até 2000 entradas em memória; o JSONL da sessão continua sendo o registro técnico completo.

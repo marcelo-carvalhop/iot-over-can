@@ -21,7 +21,7 @@ from textual.events import Key, Resize
 from textual.screen import ModalScreen, Screen
 from textual.theme import Theme
 
-from pico_tui import acoustics, commands, palette
+from pico_tui import acoustics, alarms, commands, palette
 from pico_tui import presentation as pres
 from pico_tui.command_catalog import ACTIONS_BY_KEY, CommandAction, Parameter, can_command
 from pico_tui.core.event_bus import EventBus
@@ -32,6 +32,7 @@ from pico_tui.core.events import (
     ConnectionOpened,
     DtcReceived,
     LogEvent,
+    RawLineReceived,
     SpectrumReceived,
     TransferCompleted,
     TransferFailed,
@@ -54,11 +55,11 @@ from pico_tui.dialogs import (
     ParameterScreen,
     WirelessNodeScreen,
 )
+from pico_tui.dtc_catalog import dtc_description
 from pico_tui.metrics.experiments import EXPERIMENTS_BY_KEY, ExperimentRecorder
 from pico_tui.metrics.export import export_metrics
 from pico_tui.metrics.service import MetricsService
 from pico_tui.metrics_screens import ExperimentsScreen, MetricsScreen
-from pico_tui.dtc_catalog import dtc_description
 from pico_tui.preferences import load_preferences, save_preferences
 from pico_tui.protocol.router import DecoderRouter
 from pico_tui.screens import (
@@ -74,11 +75,12 @@ from pico_tui.screens import (
     WirelessScreen,
 )
 from pico_tui.security import SecurityManager
-from pico_tui.supervisor import SupervisorScreen
 from pico_tui.serial_client import SerialClient
 from pico_tui.services.controller import DomainController
 from pico_tui.services.demo import DemoProducer
 from pico_tui.services.log_manager import LogManager
+from pico_tui.services.recorder import SessionRecorder, recorded_mode
+from pico_tui.supervisor import SupervisorScreen
 from pico_tui.widgets import MessageEntry
 
 REFRESH_SECONDS = 0.5
@@ -194,6 +196,8 @@ class PicoTuiApp(App[None]):
         self.replay_path = Path(replay) if replay else None
         self.replay_speed = replay_speed if replay_speed > 0 else 1.0
         self.replaying = False
+        # Gravação da sessão serial real (formato de --replay); ver services/recorder.py.
+        self.recorder: SessionRecorder | None = None
         self.clock = SessionClock()
         self.initial_port = port
         self.baudrate = baudrate
@@ -211,6 +215,7 @@ class PicoTuiApp(App[None]):
 
         self.bus = EventBus()
         self.state_store = StateStore()
+        self.state_store.load_alarm_limits(self.preferences.alarm_limits)
         self.controller = DomainController(self.bus, self.state_store)
         self.metrics = MetricsService(self.bus, self.clock)
         self.experiments = ExperimentRecorder(self.bus, self.clock)
@@ -273,6 +278,7 @@ class PicoTuiApp(App[None]):
     def _register_event_handlers(self) -> None:
         self.bus.subscribe(LogEvent, self._on_log_event)
         self.bus.subscribe(ConnectionModeDetected, self._on_mode_detected)
+        self.bus.subscribe(RawLineReceived, self._on_raw_line)
         self.bus.subscribe(CommandAck, self._on_command_ack)
         self.bus.subscribe(TransferCompleted, self._on_transfer_completed)
         self.bus.subscribe(TransferFailed, self._on_transfer_failed)
@@ -386,15 +392,24 @@ class PicoTuiApp(App[None]):
         self.replaying = True
         self.port_name = "REPLAY"
         self._last_port = "REPLAY"
-        self._last_mode = "gateway"
-        self.decoder.requested_mode = "gateway"
+        # Gravações da TUI guardam o modo pedido; as da bancada virtual são da Probe 00.
+        mode = recorded_mode(lines)
+        self._last_mode = mode
+        self.decoder.requested_mode = mode
         self.decoder.reset()
         # As medições passam a usar o tempo da gravação: o que foi acumulado
         # com o relógio do sistema é descartado antes da primeira linha.
         self.clock.replay_time = _first_replay_instant(lines)
         self.metrics.reset()
         self.experiments.reset()
-        self.state_store.set_connection(ConnectionState.READY, port=f"gravação {path.name}", mode=ConnectionMode.GATEWAY_CAN)
+        connection_mode = {
+            "gateway": ConnectionMode.GATEWAY_CAN,
+            "gateway_can": ConnectionMode.GATEWAY_CAN,
+            "probe": ConnectionMode.GATEWAY_CAN,
+            "sensor": ConnectionMode.SENSOR_DIRECT,
+            "sensor_direct": ConnectionMode.SENSOR_DIRECT,
+        }.get(mode, ConnectionMode.UNKNOWN)
+        self.state_store.set_connection(ConnectionState.READY, port=f"gravação {path.name}", mode=connection_mode)
         await self.bus.publish(
             LogEvent("INFO", f"Reproduzindo {path.name} a {self.replay_speed:g}x; nenhum comando será enviado", "REPLAY")
         )
@@ -457,6 +472,7 @@ class PicoTuiApp(App[None]):
             on_error=lambda error: self.call_from_thread(self._serial_error, error),
             on_disconnect=lambda: self.call_from_thread(self._serial_disconnected),
         )
+        self._start_recording(port, mode)
         await self.bus.publish(ConnectionOpened(port))
         await self.bus.publish(LogEvent("INFO", f"Conectado a {port}", "SERIAL"))
         forced = {
@@ -508,6 +524,9 @@ class PicoTuiApp(App[None]):
                 self._send_raw("PROBE_STATUS")
 
     def _close_serial(self) -> None:
+        if self.recorder is not None:
+            self.recorder.close()
+            self.recorder = None
         client = self.serial_client
         self.serial_client = None
         self._device_auth_until = 0.0
@@ -516,6 +535,24 @@ class PicoTuiApp(App[None]):
         self._device_auth_inflight = False
         if client:
             client.close()
+
+    def _start_recording(self, port: str, mode: str) -> None:
+        if not self.enable_file_log:
+            return
+        path = self.log_manager.directory / f"gravacao_{time.strftime('%Y%m%d-%H%M%S')}_{self.session_id}.log"
+        try:
+            self.recorder = SessionRecorder(path, port=port, mode=mode)
+        except OSError as exc:
+            self.recorder = None
+            self.run_worker(self.bus.publish(LogEvent("WARNING", f"A sessão não será gravada: {exc}", "GRAVACAO")))
+            return
+        self.run_worker(
+            self.bus.publish(LogEvent("INFO", f"Gravando a sessão em {path} (reproduza com --replay)", "GRAVACAO"))
+        )
+
+    async def _on_raw_line(self, event: RawLineReceived) -> None:
+        if self.recorder is not None and not self.replaying:
+            self.recorder.line(event.line)
 
     def _enqueue_line(self, line: str) -> None:
         try:
@@ -581,6 +618,8 @@ class PicoTuiApp(App[None]):
                     add(entry)
                 except NoMatches:
                     pass
+        if event.source == "ALARME" and event.level == "WARNING":
+            self.notify(event.message, title="Alarme", severity="warning", timeout=8)
 
     async def _on_mode_detected(self, event: ConnectionModeDetected) -> None:
         if self.serial_client:
@@ -799,6 +838,8 @@ class PicoTuiApp(App[None]):
         except (OSError, RuntimeError) as exc:
             self.run_worker(self.bus.publish(LogEvent("ERROR", f"Falha de envio: {exc}", "SERIAL")))
             return False
+        if self.recorder is not None:
+            self.recorder.command(command)
         display_command = command
         if command.strip().upper().startswith("AUTH UNLOCK "):
             display_command = "AUTH UNLOCK <redacted>"
@@ -1696,6 +1737,20 @@ class PicoTuiApp(App[None]):
         for screen in self.screen_stack:
             if isinstance(screen, HomeScreen):
                 screen.set_messages_visible(visible)
+
+    def set_alarm_limits(self, logical_id: str, limits: dict[str, float]) -> None:
+        """Grava os limites de alarme de um sensor e os aplica já à última leitura."""
+
+        cleaned = self.state_store.set_alarm_limits(logical_id, limits)
+        self.set_preference("alarm_limits", self.state_store.alarm_limits())
+        self.run_worker(
+            self.bus.publish(
+                LogEvent("INFO", f"Limites de alarme do sensor {logical_id}: {alarms.summary(cleaned)}", "ALARME")
+            )
+        )
+        for ident, message, lit in self.state_store.pop_alarm_transitions():
+            self.run_worker(self.bus.publish(LogEvent("WARNING" if lit else "INFO", f"Sensor {ident}: {message}", "ALARME")))
+        self.refresh_now()
 
     def set_preference(self, name: str, value: object) -> None:
         setattr(self.preferences, name, value)

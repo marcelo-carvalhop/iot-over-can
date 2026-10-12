@@ -73,7 +73,11 @@
     "sensor acústico INMP441 no Pico W e no Pico 2 W: I2S mestre na PIO, DMA em anel e DSP no segundo núcleo",
     "modos acústicos LEVEL (níveis ponderados, Ln, doses NR-15 e NHO-01), MACHINE (assinatura em bandas de oitava, fundamental e anomalia) e EVENTS (STA/LTA, classificação e SEL)",
     "análises acústicas na TUI: projeção de dose, curva NC, conversa, tacômetro com hipóteses de motor, estatística de eventos e calibração assistida",
-    "marcação dos trechos do livro na documentação e montagem do rascunho (Documentacao/livro.md, extrair_livro.py)"
+    "marcação dos trechos do livro na documentação e montagem do rascunho (Documentacao/livro.md, extrair_livro.py)",
+    "supervisório na TUI: até cinco painéis (rede, módulos CAN e sensores), com alarme na borda e uso do barramento por módulo",
+    "alarmes por limiar definidos pelo operador para cada sensor, com histerese, intercorrências e persistência",
+    "gravação das sessões seriais reais no formato de --replay, com segredos mascarados",
+    "fuzz determinístico dos decodificadores do enlace e do plano de dados (ASan/UBSan) e das linhas da TUI"
   ],
   "pending": [
     "validação em bancada do plano de dados wireless",
@@ -89,7 +93,7 @@
     "experimento comparativo em CAN FD"
   ],
   "validation": {
-    "automated": "testes nativos (incluindo o DSP acústico), simulação do plano de dados, simulação da PIO I2S, bancada virtual com dezesseis cenários e suíte da TUI",
+    "automated": "testes nativos (incluindo o DSP acústico e o fuzz dos decodificadores), simulação do plano de dados, simulação da PIO I2S, bancada virtual com dezesseis cenários e suíte da TUI",
     "compiled": "sensor acústico para pico_w e pico2_w (Pico SDK 2.3.1, sem avisos de compilação) e sensor de vibração para pico_w; firmware do Node CAN e da Probe 00 compilado no computador pela bancada virtual, e para ESP32 (arduino-esp32 2.0.17) pela integração contínua",
     "hardware": "plano de dados wireless, métricas, reassociação, ensaios e sensor acústico ainda não validados em bancada"
   }

@@ -263,6 +263,18 @@ class DtcRecord:
 
 
 @dataclass(slots=True)
+class ActiveAlarm:
+    """Alarme por limiar aceso: o valor que passou do limite e quando."""
+
+    metric: str
+    label: str
+    unit: str
+    limit: float
+    value: float
+    since_wall_time: float = field(default_factory=time.time)
+
+
+@dataclass(slots=True)
 class Incident:
     """Intercorrência registrada para um sensor ou módulo CAN.
 
@@ -361,6 +373,9 @@ class SensorNode:
     incidents: deque[Incident] = field(default_factory=lambda: deque(maxlen=INCIDENT_HISTORY))
     # Eventos sonoros registrados nesta sessão (sensor acústico, modo EVENTS).
     acoustic_events: deque[AcousticEvent] = field(default_factory=lambda: deque(maxlen=ACOUSTIC_EVENT_HISTORY))
+    # Alarmes por limiar definidos pelo operador (pico_tui.alarms): métrica -> limite.
+    alarm_limits: dict[str, float] = field(default_factory=dict)
+    active_alarms: dict[str, ActiveAlarm] = field(default_factory=dict)
 
     @property
     def logical_id(self) -> str:

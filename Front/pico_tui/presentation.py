@@ -15,6 +15,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import IntEnum
 
+from pico_tui import alarms
 from pico_tui.core.models import (
     AppState,
     ConnectionMode,
@@ -172,6 +173,9 @@ def sensor_condition(sensor: SensorNode) -> Condition:
 
     if sensor.data_link_state.upper() == "NO_KEY":
         reasons_attention.append("Módulo sem chave de enlace: plano de dados desabilitado")
+
+    # Alarmes por limiar definidos pelo operador (pico_tui.alarms).
+    reasons_attention.extend(alarms.describe(alarm) for alarm in sensor.active_alarms.values())
 
     if reasons_critical:
         return Condition(Level.CRITICAL, reasons_critical + reasons_attention)

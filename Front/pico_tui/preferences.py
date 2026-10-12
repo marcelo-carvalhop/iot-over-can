@@ -23,6 +23,8 @@ class Preferences:
     ascii_symbols: bool = False
     # Painéis do supervisório, na ordem da tela ("rede", "sensor:02.01", ...).
     supervisor_panels: list[str] = field(default_factory=list)
+    # Limites de alarme por sensor: {"02.01": {"laeq": 85.0}} (ver pico_tui.alarms).
+    alarm_limits: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
 def load_preferences(path: str | Path | None = None) -> tuple[Preferences, str]:
@@ -45,6 +47,18 @@ def load_preferences(path: str | Path | None = None) -> tuple[Preferences, str]:
             setattr(prefs, item.name, value)
         elif isinstance(default, list) and isinstance(value, list):
             setattr(prefs, item.name, [v for v in value if isinstance(v, str)])
+        elif isinstance(default, dict) and isinstance(value, dict):
+            # Só {texto: {texto: número}}; o significado é conferido por quem usa.
+            setattr(
+                prefs,
+                item.name,
+                {
+                    key: {name: float(limit) for name, limit in rules.items()
+                          if isinstance(limit, (int, float)) and not isinstance(limit, bool)}
+                    for key, rules in value.items()
+                    if isinstance(key, str) and isinstance(rules, dict)
+                },
+            )
     return prefs, ""
 
 

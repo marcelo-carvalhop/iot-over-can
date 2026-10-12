@@ -18,7 +18,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
-from pico_tui import commands, palette
+from pico_tui import alarms, commands, palette
 from pico_tui.command_catalog import CommandAction
 from pico_tui.core.models import SensorNode
 from pico_tui.serial_client import list_available_ports
@@ -582,5 +582,72 @@ class ChoiceScreen(ModalScreen[str | None]):
     def _chosen(self, event: OptionList.OptionSelected) -> None:
         self.dismiss(str(event.option.id))
 
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class AlarmScreen(ModalScreen[dict[str, float] | None]):
+    """Limites de alarme de um sensor: um campo por métrica do perfil (vazio = sem alarme)."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancelar", show=False)]
+
+    def __init__(self, sensor: SensorNode) -> None:
+        super().__init__()
+        self.sensor = sensor
+        self.metrics = alarms.metrics_for(sensor.profile_id)
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="alarm-dialog", classes="dialog"):
+            yield Static(f"Alarmes do sensor {self.sensor.logical_id}", classes="dialog-title")
+            yield Static(
+                "O alarme acende quando a métrica passa do limite e apaga quando ela volta abaixo dele, "
+                "com uma pequena histerese. Campo vazio: métrica sem alarme.",
+                classes="dialog-hint",
+            )
+            sample = self.sensor.latest_telemetry
+            for metric in self.metrics:
+                current = metric.read(sample) if sample is not None else None
+                now = f"  (agora {metric.describe_value(current)})" if current is not None else ""
+                unit = f" [{metric.unit}]" if metric.unit else ""
+                yield Label(f"{metric.label}{unit}{now}")
+                limit = self.sensor.alarm_limits.get(metric.key)
+                text = "" if limit is None else f"{limit:g}".replace(".", ",")
+                yield Input(value=text, placeholder="sem alarme", id=f"alarm-{metric.key}")
+            if not self.metrics:
+                yield Static("Este perfil de sensor não tem métricas com alarme.", classes="dialog-hint")
+            yield Static("", id="alarm-error")
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Salvar", id="alarm-ok", variant="primary")
+                yield Button("Cancelar", id="alarm-cancel")
+
+    def on_mount(self) -> None:
+        inputs = list(self.query(Input))
+        if inputs:
+            inputs[0].focus()
+
+    def _collect(self) -> dict[str, float] | None:
+        limits: dict[str, float] = {}
+        for metric in self.metrics:
+            text = self.query_one(f"#alarm-{metric.key}", Input).value.strip().replace(",", ".")
+            if not text:
+                continue
+            try:
+                value = float(text)
+            except ValueError:
+                value = float("nan")
+            if value != value or value in (float("inf"), float("-inf")):
+                self.query_one("#alarm-error", Static).update(f"Limite inválido em {metric.label}: {text}")
+                return None
+            limits[metric.key] = value
+        return limits
+
+    @on(Button.Pressed, "#alarm-ok")
+    @on(Input.Submitted)
+    def _save(self) -> None:
+        limits = self._collect()
+        if limits is not None:
+            self.dismiss(limits)
+
+    @on(Button.Pressed, "#alarm-cancel")
     def action_cancel(self) -> None:
         self.dismiss(None)

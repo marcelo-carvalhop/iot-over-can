@@ -3,14 +3,15 @@ from __future__ import annotations
 import struct
 import time
 
+from pico_tui.acoustics import event_label
 from pico_tui.core.event_bus import EventBus
 from pico_tui.core.events import (
     BusStatsReceived,
     CanFrameReceived,
+    ConfigurationApplied,
     ConnectionClosed,
     ConnectionModeDetected,
     ConnectionOpened,
-    ConfigurationApplied,
     CrcErrorReceived,
     DirectSensorStatusReceived,
     DirectSensorVersionReceived,
@@ -28,13 +29,12 @@ from pico_tui.core.events import (
     TelemetryReceived,
     TransferCompleted,
     TransferFailed,
-    WirelessCandidateReceived,
     WirelessAssociationReceived,
+    WirelessCandidateReceived,
     WirelessConfigReceived,
     WirelessFailoverReceived,
     WirelessLinkReceived,
 )
-from pico_tui.acoustics import event_label
 from pico_tui.core.models import (
     AcousticEvent,
     AcousticMetrics,
@@ -549,7 +549,18 @@ class DomainController:
 
     async def _telemetry(self, event: TelemetryReceived) -> None:
         sample = event.sample
-        if sample.sequence is not None:
+        if sample.sequence is not None and not 0 <= sample.sequence <= 0xFFFF:
+            # Linha corrompida no campo SEQ: a amostra vale, a contagem de perdas não.
+            self.state.increment_network(parse_errors=1)
+            await self.bus.publish(
+                LogEvent(
+                    "WARNING",
+                    f"Telemetria de {sample.logical_id} com sequência inválida ({sample.sequence}); "
+                    "perdas não contadas nesta amostra",
+                    "PROTOCOL",
+                )
+            )
+        elif sample.sequence is not None:
             key = (sample.parent_node_id, sample.child_id, "TEL")
             result = self.sequence.update(key, sample.sequence)
             self.state.record_sequence(
@@ -580,6 +591,8 @@ class DomainController:
         if sample.acoustic is not None:
             self._record_acoustic_transitions(sample.parent_node_id, sample.child_id, sample.acoustic)
         self.state.update_telemetry(sample)
+        for logical_id, message, lit in self.state.pop_alarm_transitions():
+            await self.bus.publish(LogEvent("WARNING" if lit else "INFO", f"Sensor {logical_id}: {message}", "ALARME"))
         telemetry_values: dict[str, object] = {
             "reported_dtc_count": sample.dtc_count,
         }
