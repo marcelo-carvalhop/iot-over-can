@@ -34,6 +34,26 @@ cc -std=c11 -Wall -Wextra -Werror \
   -lm -o "$OUT_DIR/test_ioc_net"
 "$OUT_DIR/test_ioc_net"
 
+# 3b. Sensor acústico (Codigo/node-audio): motor de DSP (níveis ponderados,
+#     doses, Ln, eventos, tacômetro acústico, anomalia) e validação da
+#     configuração. O DSP roda também com AddressSanitizer/UBSan quando o
+#     compilador oferece os dois.
+AUDIO="$REPO_ROOT/Codigo/node-audio"
+AUDIO_SOURCES=("$AUDIO/acoustic_dsp.c" "$AUDIO/audio_fft.c" "$AUDIO/tests/test_acoustic_dsp.c")
+cc -std=c11 -O2 -Wall -Wextra -Werror -I"$AUDIO" -I"$FW" \
+  "${AUDIO_SOURCES[@]}" -lm -o "$OUT_DIR/test_acoustic_dsp"
+"$OUT_DIR/test_acoustic_dsp"
+if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined - -o "$OUT_DIR/san_probe" 2>/dev/null &&
+   "$OUT_DIR/san_probe" 2>/dev/null; then
+  cc -std=c11 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror \
+    -I"$AUDIO" -I"$FW" "${AUDIO_SOURCES[@]}" -lm -o "$OUT_DIR/test_acoustic_dsp_san"
+  "$OUT_DIR/test_acoustic_dsp_san" > /dev/null
+fi
+cc -std=c11 -Wall -Wextra -Werror -I"$AUDIO" -I"$FW" \
+  "$AUDIO/audio_config.c" "$AUDIO/acoustic_dsp.c" "$AUDIO/audio_fft.c" "$AUDIO/tests/test_audio_config.c" \
+  -lm -o "$OUT_DIR/test_audio_config"
+"$OUT_DIR/test_audio_config"
+
 # 4. Simulação sensor <-> Node <-> Probe com o código real de wireless_link.cpp.
 "$REPO_ROOT/Codigo/scripts/build_wireless_link_sim.sh" "$OUT_DIR/sim_wireless_link"
 "$OUT_DIR/sim_wireless_link" > /dev/null

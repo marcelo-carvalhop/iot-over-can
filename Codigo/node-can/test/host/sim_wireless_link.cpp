@@ -91,10 +91,15 @@ static int g_failures = 0;
 /* ------------------------------------------------------ sensor simulado */
 
 static const uint64_t SENSOR_UUID = 0xE6616408432B6F39ull;
+static const uint64_t MIC_UUID = 0xE6616408432B7A11ull;   // sensor acústico (INMP441)
 static const IPAddress SENSOR_IP(192, 168, 4, 2);
+static const IPAddress MIC_IP(192, 168, 4, 3);
 static const uint16_t SENSOR_PORT = 4242;
 
 struct SimSensor {
+  uint64_t uuid = SENSOR_UUID;
+  uint8_t profile = PROFILE_ACCELEROMETER;
+  IPAddress ip = SENSOR_IP;   // cada sensor recebe o próprio endereço do DHCP do AP
   uint8_t devKey[32];
   uint8_t sessionKey[32];
   uint8_t nonce[8];
@@ -112,6 +117,8 @@ struct SimSensor {
   bool sendMenuAfterConfirm = true;
   Payload_Configuration lastConfig{};
   bool gotConfig = false;
+  Payload_AcousticControl lastControl{};
+  int controls = 0;
   std::vector<uint8_t> lastSent;
 
   void send(const uint8_t* key, uint8_t type, uint32_t counter, const void* payload, size_t len) {
@@ -121,7 +128,7 @@ struct SimSensor {
     CHECK(n == wire.size());
     HostDatagram d;
     d.data = wire;
-    d.ip = SENSOR_IP;
+    d.ip = ip;
     d.port = SENSOR_PORT;
     WiFiUDP::inbox.push_back(d);
     lastSent = wire;
@@ -132,8 +139,8 @@ struct SimSensor {
   void hello() {
     for (int i = 0; i < 8; ++i) nonce[i] = static_cast<uint8_t>(0x40 + i + seq);
     ioc_hello_t h;
-    h.uuid = SENSOR_UUID;
-    h.profile = PROFILE_ACCELEROMETER;
+    h.uuid = uuid;
+    h.profile = profile;
     h.protocol = NET_PROTOCOL_VERSION;
     memcpy(h.sensor_nonce, nonce, 8);
     uint8_t raw[IOC_HELLO_LEN];
@@ -145,13 +152,96 @@ struct SimSensor {
     Payload_ConfigMenu menu{};
     menu.magic_header = NET_MAGIC_HEADER;
     menu.cmd_type = CMD_CONFIG_MENU;
-    menu.current_buffer_size = 512;
-    menu.current_fsm_mode = FSM_MODE_ROTATING_MACH;
-    menu.current_window_type = 1;
-    menu.current_sample_rate_hz = 1000.0f;
-    menu.current_stalta_thresh = 4.0f;
+    if (profile == PROFILE_ACOUSTIC_MEMS) {
+      menu.current_buffer_size = 1024;
+      menu.current_fsm_mode = ACOUSTIC_MODE_LEVEL;
+      menu.current_window_type = 1;
+      menu.current_sample_rate_hz = 16000.0f;
+      menu.current_stalta_thresh = 3.0f;
+    } else {
+      menu.current_buffer_size = 512;
+      menu.current_fsm_mode = FSM_MODE_ROTATING_MACH;
+      menu.current_window_type = 1;
+      menu.current_sample_rate_hz = 1000.0f;
+      menu.current_stalta_thresh = 4.0f;
+    }
     menu.current_calib_gain = 1.0f;
     sendData(&menu, sizeof(menu));
+  }
+
+  // Relatório de um segundo do sensor acústico, com espectro opcional.
+  void acoustic(uint8_t mode, uint16_t bins) {
+    std::vector<uint8_t> inner(sizeof(Payload_AcousticStream) + bins * sizeof(float));
+    Payload_AcousticStream a{};
+    a.magic_header = NET_MAGIC_HEADER;
+    a.cmd_type = CMD_ACOUSTIC_STREAM;
+    a.seq_num = seq++;
+    a.mode = mode;
+    a.flags = ACOUSTIC_FLAG_SPECTRUM_VALID;
+    a.window_type = 1;
+    a.fft_size = 1024;
+    a.sample_rate_req_hz = 16000.0f;
+    a.sample_rate_eff_hz = 16000.0f;
+    a.interval_ms = 1000;
+    a.coverage_pct = 100;
+    a.cpu_pct = 37;
+    a.laeq_cb = 6240;
+    a.lceq_cb = 6815;
+    a.lzeq_cb = 6990;
+    a.lzpeak_cb = 8312;
+    a.laf_cb = 6105;
+    a.lafmax_cb = 6650;
+    a.lafmin_cb = 5820;
+    a.crest_x100 = 412;
+    a.kurtosis_x100 = -35;
+    a.peak_hz = 1000.0f;
+    a.centroid_hz = 1480;
+    a.flatness_x10000 = 1234;
+    a.leq_total_cb = a.l10_cb = a.l50_cb = a.l90_cb = ACOUSTIC_CB_NA;
+    a.tonal_cb = a.anomaly_x100 = ACOUSTIC_CB_NA;
+    a.event_peak_cb = a.event_sel_cb = a.sta_lta_cb = a.background_cb = ACOUSTIC_CB_NA;
+    a.event_age_s = ACOUSTIC_AGE_NONE;
+    if (mode == ACOUSTIC_MODE_LEVEL) {
+      a.leq_total_cb = 6310;
+      a.l10_cb = 6600;
+      a.l50_cb = 6200;
+      a.l90_cb = 5900;
+      a.dose_nr15_x10 = 3;
+      a.dose_nho01_x10 = 5;
+      a.elapsed_s = 3600;
+    } else if (mode == ACOUSTIC_MODE_MACHINE) {
+      a.flags |= ACOUSTIC_FLAG_BASELINE_READY | ACOUSTIC_FLAG_ANOMALY;
+      a.tonal_cb = 1850;
+      a.f0_hz = 49.75f;
+      a.harmonics = 6;
+      a.anomaly_x100 = 512;
+      a.baseline_pct = 100;
+    } else if (mode == ACOUSTIC_MODE_EVENTS) {
+      a.flags |= ACOUSTIC_FLAG_EVENT_ACTIVE;
+      a.event_count = 7;
+      a.events_interval = 1;
+      a.event_class = ACOUSTIC_EVENT_CRACK;
+      a.event_peak_cb = 9120;
+      a.event_sel_cb = 7480;
+      a.event_duration_ms = 40;
+      a.event_centroid_hz = 5200;
+      a.event_age_s = 0;
+      a.sta_lta_cb = 1210;
+      a.background_cb = 4410;
+    }
+    for (int b = 0; b < ACOUSTIC_OCTAVE_BANDS; ++b) a.octave_cb[b] = static_cast<int16_t>(4000 + 250 * b);
+    a.octave_cb[9] = ACOUSTIC_CB_NA; // 16 kHz acima de fs/2
+    a.battery_pct = 88;
+    a.battery_mv = 3910;
+    a.dtc_count = 1;
+    a.dtc_active_code = DTC_SENS_ACOUSTIC_OVERLOAD;
+    a.spectrum_bins = bins;
+    memcpy(inner.data(), &a, sizeof(a));
+    for (uint16_t i = 0; i < bins; ++i) {
+      const float v = 0.002f + (i == 32 ? 0.5f : 0.0f);
+      memcpy(inner.data() + sizeof(a) + i * sizeof(float), &v, sizeof(float));
+    }
+    sendData(inner.data(), inner.size());
   }
 
   void telemetry(bool withFft) {
@@ -206,10 +296,18 @@ struct SimSensor {
 
   // Processa o que o Node enviou, como faria o firmware do Pico W.
   void receive() {
-    while (!WiFiUDP::outbox.empty()) {
-      HostDatagram d = WiFiUDP::outbox.front();
-      WiFiUDP::outbox.pop_front();
-      CHECK(d.port == SENSOR_PORT && d.ip == SENSOR_IP);
+    // Datagramas para outro sensor do mesmo AP ficam na fila para ele.
+    decltype(WiFiUDP::outbox) mine;
+    decltype(WiFiUDP::outbox) others;
+    for (const HostDatagram& d : WiFiUDP::outbox) {
+      if (d.ip == ip) mine.push_back(d);
+      else others.push_back(d);
+    }
+    WiFiUDP::outbox = others;
+    while (!mine.empty()) {
+      HostDatagram d = mine.front();
+      mine.pop_front();
+      CHECK(d.port == SENSOR_PORT && d.ip == ip);
       ioc_env_view view;
       if (!ioc_env_parse(d.data.data(), d.data.size(), &view)) { CHECK(false); continue; }
 
@@ -218,7 +316,7 @@ struct SimSensor {
         ioc_challenge_t ch;
         CHECK(ioc_challenge_decode(view.payload, view.payload_len, &ch));
         if (memcmp(ch.sensor_nonce, nonce, 8) != 0) continue; // resposta a um HELLO antigo
-        ioc_link_derive_session_key(devKey, SENSOR_UUID, ch.node_id, nonce, ch.node_nonce, sessionKey);
+        ioc_link_derive_session_key(devKey, uuid, ch.node_id, nonce, ch.node_nonce, sessionKey);
         nodeId = ch.node_id;
         childId = ch.child_id;
         bound = true;
@@ -255,7 +353,10 @@ struct SimSensor {
           CHECK(view.payload_len == sizeof(Payload_Configuration));
           memcpy(&lastConfig, inner, sizeof(lastConfig));
           gotConfig = true;
-          const bool valid = lastConfig.sample_rate_hz >= 4.0f && lastConfig.sample_rate_hz <= 1000.0f;
+          const bool valid = profile == PROFILE_ACOUSTIC_MEMS
+                                 ? lastConfig.sample_rate_hz >= 8000.0f && lastConfig.sample_rate_hz <= 48000.0f &&
+                                       lastConfig.target_mode <= ACOUSTIC_MODE_EVENTS
+                                 : lastConfig.sample_rate_hz >= 4.0f && lastConfig.sample_rate_hz <= 1000.0f;
           for (uint8_t status = 0; status <= 1; ++status) {
             Payload_ConfigAck ack{};
             ack.magic_header = NET_MAGIC_HEADER;
@@ -283,6 +384,22 @@ struct SimSensor {
           menuRequests++;
           if (answerMenuRequests) configMenu();
           break;
+        case CMD_ACOUSTIC_CONTROL: {
+          CHECK(view.payload_len == sizeof(Payload_AcousticControl));
+          memcpy(&lastControl, inner, sizeof(lastControl));
+          controls++;
+          Payload_AcousticControlAck ack{};
+          ack.magic_header = NET_MAGIC_HEADER;
+          ack.cmd_type = CMD_ACOUSTIC_CONTROL_ACK;
+          ack.request_counter = lastControl.request_counter;
+          ack.action = lastControl.action;
+          // Só o perfil acústico conhece o comando; a referência exige 5 s ou mais.
+          const bool ok = profile == PROFILE_ACOUSTIC_MEMS &&
+                          (lastControl.action != ACOUSTIC_CTRL_BASELINE_LEARN || lastControl.argument >= 5);
+          ack.status = ok ? 1 : 2;
+          sendData(&ack, sizeof(ack));
+          break;
+        }
         case CMD_RELEASE:
           released = true;
           bound = false;
@@ -640,6 +757,145 @@ int main() {
   g_millis += 500;
   wirelessLinkPoll();
   CHECK(!WiFi.apUp);
+  takeCanFrames();
+
+  /* 13. Sensor acústico (perfil 0x02) no filho 3: modos e ações próprios. */
+  SimSensor mic;
+  mic.uuid = MIC_UUID;
+  mic.profile = PROFILE_ACOUSTIC_MEMS;
+  mic.ip = MIC_IP;
+  ioc_link_derive_device_key(master, MIC_UUID, mic.devKey);
+  asNode();
+  wirelessLinkOnBound(MIC_UUID, 3);
+  wirelessLinkPoll();
+  CHECK(WiFi.apUp);
+  deliverFrames(true);
+  mic.hello();
+  cycle(mic);
+  CHECK(mic.bound && mic.childId == 3);
+  CHECK(probeSaw("[GW] WIRELESS_CONFIG node=1 child=3 status=CURRENT mode=LEVEL rate_req_hz=16000.00 "
+                 "rate_eff_hz=16000.00 window=HANN window_size=1024 stalta=3.000 gain=1.0000 profile=ACOUSTIC"));
+
+  // Relatório de 108 bytes: 19 quadros no CAN, com as chaves do console do sensor.
+  g_millis += 1000;
+  mic.acoustic(ACOUSTIC_MODE_LEVEL, 0);
+  frames = cycle(mic);
+  CHECK(frames == ioc_wd_segment_count(IOC_WD_ACOUSTIC_LEN));
+  CHECK(ioc_wd_segment_count(IOC_WD_ACOUSTIC_LEN) == 19);
+  CHECK(probeSaw("TEL NODE=1 CHILD=3 SEQ=0 GW_TS_MS="));
+  CHECK(probeSaw(" PROFILE=ACOUSTIC MODE=LEVEL ACQ=I2S WIN=1024 RATE_EFF_HZ=16000 INTERVAL_MS=1000 "
+                 "COVERAGE_PCT=100 CPU_PCT=37 SPECTRUM_VALID=YES OVERLOAD=NO MIC_FAULT=NO LAEQ_DB=62.40 "
+                 "LCEQ_DB=68.15 LZEQ_DB=69.90 LZPEAK_DB=83.12 LAF_DB=61.05 LAFMAX_DB=66.50 LAFMIN_DB=58.20 "
+                 "CREST=4.12 KURT=-0.35 PEAK_HZ=1000.0 CENTROID_HZ=1480 FLATNESS=0.1234 "
+                 "OCT_DB=40.0,42.5,45.0,47.5,50.0,52.5,55.0,57.5,60.0,- LEQ_T_DB=63.10 L10_DB=66.00 "
+                 "L50_DB=62.00 L90_DB=59.00 DOSE_NR15_PCT=0.3 DOSE_NHO01_PCT=0.5 ELAPSED_S=3600 DOSE_LIMIT=NO "
+                 "BATT_PCT=88 BATT_MV=3910 DTC=0x2003 DTC_COUNT=1"));
+  g_millis += 1000;
+  mic.acoustic(ACOUSTIC_MODE_MACHINE, 0);
+  cycle(mic);
+  CHECK(probeSaw("MODE=MACHINE ACQ=I2S"));
+  CHECK(probeSaw(" TONAL_DB=18.50 F0_HZ=49.75 HARMONICS=6 ANOMALY_Z=5.12 BASELINE=READY BASELINE_PCT=100 "
+                 "ANOMALY=YES BATT_PCT=88"));
+  CHECK(!probeSaw("MODE=MACHINE ACQ=I2S WIN=1024 RATE_EFF_HZ=16000 INTERVAL_MS=1000 COVERAGE_PCT=100 CPU_PCT=37 "
+                  "SPECTRUM_VALID=YES OVERLOAD=NO MIC_FAULT=NO LAEQ_DB=62.40 LCEQ_DB=68.15 LZEQ_DB=69.90 "
+                  "LZPEAK_DB=83.12 LAF_DB=61.05 LAFMAX_DB=66.50 LAFMIN_DB=58.20 CREST=4.12 KURT=-0.35 "
+                  "PEAK_HZ=1000.0 CENTROID_HZ=1480 FLATNESS=0.1234 OCT_DB=40.0,42.5,45.0,47.5,50.0,52.5,55.0,"
+                  "57.5,60.0,- LEQ_T_DB"));
+  g_millis += 1000;
+  mic.acoustic(ACOUSTIC_MODE_EVENTS, 0);
+  cycle(mic);
+  CHECK(probeSaw(" EVENTS=7 EVENTS_INTERVAL=1 EVENT_ACTIVE=YES STA_LTA_DB=12.10 BACKGROUND_DB=44.10 "
+                 "EVENT_CLASS=CRACK EVENT_PEAK_DB=91.20 EVENT_SEL_DB=74.80 EVENT_DURATION_MS=40 "
+                 "EVENT_CENTROID_HZ=5200 EVENT_AGE_S=0 BATT_PCT=88"));
+
+  // Espectro sob demanda, em Pa, pelo mesmo caminho da vibração.
+  probeCommand("CMD TARGET=01.03 ACTION=FFT TX=B00001 MODE=VIEW_ONLY BINS=64");
+  cycle(mic, 2);
+  g_millis += 1000;
+  mic.acoustic(ACOUSTIC_MODE_LEVEL, 256);   // o sensor envia até 256 faixas (cabe em um datagrama)
+  cycle(mic, 40);
+  CHECK(probeSaw("FRAG NODE=1 CHILD=3 TYPE=FFT TRANSFER=1 INDEX=0 COUNT=1 FORMAT=U16_SCALED"));
+  CHECK(probeSaw("RATE_HZ=16000.00 FFT_SIZE=128 WINDOW=HANN DATA="));
+  CHECK(probeSaw("ACK COMMAND=FFT STATE=APPLIED TX=B00001 NODE=1 CHILD=3 DETAIL=64"));
+
+  // Modos do microfone por nome; THRESHOLD e FFT_SIZE são sinônimos de STALTA e WINDOW_SIZE.
+  probeCommand("CMD TARGET=01.03 ACTION=CONFIG TX=B00002 MODE=EVENTS RATE_HZ=48000 FFT_SIZE=2048 THRESHOLD=4");
+  cycle(mic);
+  CHECK(mic.gotConfig && mic.lastConfig.target_mode == ACOUSTIC_MODE_EVENTS);
+  CHECK(mic.lastConfig.sample_rate_hz == 48000.0f && mic.lastConfig.window_size == 2048);
+  CHECK(mic.lastConfig.stalta_thresh == 4.0f);
+  CHECK(probeSaw("ACK COMMAND=CONFIG STATE=APPLIED TX=B00002 NODE=1 CHILD=3"));
+  CHECK(probeSaw("[GW] WIRELESS_CONFIG node=1 child=3 status=APPLIED mode=EVENTS rate_req_hz=48000.00 "
+                 "rate_eff_hz=48000.00 window=HANN window_size=2048 stalta=4.000 gain=1.0000 profile=ACOUSTIC"));
+
+  // Um modo de vibração não chega ao microfone: o Node recusa a edição inteira.
+  mic.gotConfig = false;
+  probeCommand("CMD TARGET=01.03 ACTION=CONFIG TX=B00003 MODE=SEISMIC GAIN=2");
+  cycle(mic);
+  CHECK(!mic.gotConfig);
+  CHECK(probeSaw("ACK COMMAND=CONFIG STATE=REJECTED TX=B00003 NODE=1 CHILD=3 DETAIL=65533 REASON=PROFILE_MISMATCH"));
+  CHECK(!probeSaw("ACK COMMAND=CONFIG STATE=APPLIED TX=B00003"));
+  // ...e o contrário, no sensor de vibração.
+  sensor.bound = false;
+  asNode();
+  wirelessLinkOnBound(SENSOR_UUID, 1);
+  sensor.hello();
+  cycle(sensor);
+  CHECK(sensor.bound && sensor.childId == 1);
+  sensor.gotConfig = false;
+  probeCommand("CMD TARGET=01.01 ACTION=CONFIG TX=B00004 MODE=MACHINE");
+  cycle(sensor);
+  CHECK(!sensor.gotConfig);
+  CHECK(probeSaw("ACK COMMAND=CONFIG STATE=REJECTED TX=B00004 NODE=1 CHILD=1 DETAIL=65533 REASON=PROFILE_MISMATCH"));
+  probeCommand("CMD TARGET=01.01 ACTION=MEASURE_RESET TX=B00005");
+  cycle(sensor);
+  CHECK(sensor.controls == 0);
+  CHECK(probeSaw("ACK COMMAND=MEASURE_RESET STATE=REJECTED TX=B00005 NODE=1 CHILD=1 DETAIL=65533 "
+                 "REASON=PROFILE_MISMATCH"));
+  // IDLE vale para os dois perfis.
+  probeCommand("CMD TARGET=01.03 ACTION=CONFIG TX=B00006 MODE=IDLE");
+  cycle(mic);
+  CHECK(mic.gotConfig && mic.lastConfig.target_mode == ACOUSTIC_MODE_IDLE);
+  CHECK(probeSaw("status=APPLIED mode=IDLE rate_req_hz=48000.00"));
+
+  // Ações acústicas: reinício da medição e assinatura de referência.
+  probeCommand("CMD TARGET=01.03 ACTION=MEASURE_RESET TX=B00007");
+  cycle(mic);
+  CHECK(mic.controls == 1 && mic.lastControl.action == ACOUSTIC_CTRL_MEASURE_RESET);
+  CHECK(probeSaw("ACK COMMAND=MEASURE_RESET STATE=ACCEPTED TX=B00007 NODE=1 CHILD=3"));
+  CHECK(probeSaw("ACK COMMAND=MEASURE_RESET STATE=APPLIED TX=B00007 NODE=1 CHILD=3 DETAIL=1"));
+  probeCommand("CMD TARGET=01.03 ACTION=BASELINE_LEARN TX=B00008 SECONDS=120");
+  cycle(mic);
+  CHECK(mic.controls == 2 && mic.lastControl.action == ACOUSTIC_CTRL_BASELINE_LEARN);
+  CHECK(mic.lastControl.argument == 120);
+  CHECK(probeSaw("ACK COMMAND=BASELINE_LEARN STATE=APPLIED TX=B00008 NODE=1 CHILD=3 DETAIL=2"));
+  probeCommand("CMD TARGET=01.03 ACTION=BASELINE_LEARN TX=B00009 SECONDS=2");
+  CHECK(probeSaw("ACK COMMAND=BASELINE_LEARN STATE=REJECTED TX=B00009 REASON=INVALID_FIELD"));
+  CHECK(mic.controls == 2);
+  probeCommand("CMD TARGET=01.03 ACTION=BASELINE_CLEAR TX=B0000A");
+  cycle(mic);
+  CHECK(mic.controls == 3 && mic.lastControl.action == ACOUSTIC_CTRL_BASELINE_CLEAR);
+  CHECK(probeSaw("ACK COMMAND=BASELINE_CLEAR STATE=APPLIED TX=B0000A NODE=1 CHILD=3 DETAIL=3"));
+  // Sem resposta do sensor, o Node encerra o pedido por tempo.
+  probeCommand("CMD TARGET=01.03 ACTION=MEASURE_RESET TX=B0000B");
+  asNode();
+  wirelessLinkPoll();
+  WiFiUDP::outbox.clear();       // o pedido se perde no ar
+  deliverFrames(true);
+  for (int i = 0; i < 4; ++i) {
+    g_millis += 1000;
+    cycle(mic, 3);
+  }
+  CHECK(probeSaw("ACK COMMAND=MEASURE_RESET STATE=REJECTED TX=B0000B NODE=1 CHILD=3 DETAIL=65535 "
+                 "REASON=SENSOR_TIMEOUT"));
+  asNode();
+  wirelessLinkOnUnbound(MIC_UUID, 3);
+  wirelessLinkOnUnbound(SENSOR_UUID, 1);
+  mic.receive();
+  sensor.receive();
+  g_millis += 500;
+  wirelessLinkPoll();
+  deliverFrames(true);
   takeCanFrames();
 
   /* Tempos de resposta: PING/PONG no enlace e comando/confirmação na Probe. */

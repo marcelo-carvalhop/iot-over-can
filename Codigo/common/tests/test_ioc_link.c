@@ -378,9 +378,36 @@ static void test_codecs(void) {
     CHECK(link2.stream_period_ms == 1000 && link2.rtt_100us == IOC_WD_RTT_UNKNOWN);
     CHECK(!ioc_wd_link_decode(buf, IOC_WD_LINK_LEN - 1, &link2));
 
-    ioc_wd_config cfg = {1, 1, 512, 1000.0f, 1000.0f, 4.0f, 1.0f, 1}, cfg2;
+    ioc_wd_config cfg = {1, 1, 512, 1000.0f, 1000.0f, 4.0f, 1.0f, 1, 0x02}, cfg2;
     CHECK(ioc_wd_config_encode(&cfg, buf) == IOC_WD_CONFIG_LEN && ioc_wd_config_decode(buf, IOC_WD_CONFIG_LEN, &cfg2));
-    CHECK(cfg2.window_size == 512 && cfg2.stalta == 4.0f && cfg2.status == 1);
+    CHECK(cfg2.window_size == 512 && cfg2.stalta == 4.0f && cfg2.status == 1 && cfg2.profile == 0x02);
+    /* Node da v0.18: 21 bytes, sem perfil. */
+    CHECK(ioc_wd_config_decode(buf, IOC_WD_CONFIG_LEN_V018, &cfg2) && cfg2.profile == 0 && cfg2.gain == 1.0f);
+    CHECK(!ioc_wd_config_decode(buf, IOC_WD_CONFIG_LEN + 1, &cfg2));
+
+    /* Relatório acústico: 108 bytes em 19 quadros, sentinela de nível preservada. */
+    ioc_wd_acoustic a, a2;
+    memset(&a, 0, sizeof(a));
+    memset(&a2, 0, sizeof(a2));   /* bytes de preenchimento iguais para o memcmp */
+    a.seq = 0x1234; a.mode = 3; a.flags = 0x85; a.rate_hz = 48001; a.fft_size = 2048; a.interval_ms = 1000;
+    a.coverage_pct = 97; a.cpu_pct = 41;
+    a.laeq_cb = 6321; a.lceq_cb = 7010; a.lzeq_cb = 7240; a.lzpeak_cb = 9001; a.laf_cb = 6290;
+    a.lafmax_cb = 6600; a.lafmin_cb = 6010; a.crest_x100 = 316; a.kurtosis_x100 = -150; a.peak_hz = 1000.25f;
+    a.centroid_hz = 850; a.flatness_x10000 = 3120; a.leq_total_cb = IOC_WD_CB_NA; a.l10_cb = IOC_WD_CB_NA;
+    a.l50_cb = IOC_WD_CB_NA; a.l90_cb = IOC_WD_CB_NA; a.dose_nr15_x10 = 123; a.dose_nho01_x10 = 456;
+    a.elapsed_s = 70000u; a.tonal_cb = 1510; a.f0_hz = 47.25f; a.harmonics = 6; a.anomaly_x100 = 345;
+    a.baseline_pct = 100; a.event_count = 42; a.events_interval = 2; a.event_class = 2; a.event_peak_cb = 9050;
+    a.event_sel_cb = 7712; a.event_duration_ms = 35; a.event_centroid_hz = 4200; a.event_age_s = 3;
+    a.sta_lta_cb = 1203; a.background_cb = 4810;
+    for (int b = 0; b < IOC_WD_ACOUSTIC_BANDS; ++b) a.octave_cb[b] = (int16_t)(b == 9 ? IOC_WD_CB_NA : 4000 + b * 100);
+    a.battery_pct = 255; a.battery_mv = 0xFFFF; a.dtc_count = 1; a.dtc_code = 0x1003;
+    CHECK(ioc_wd_acoustic_encode(&a, buf) == IOC_WD_ACOUSTIC_LEN);
+    CHECK(ioc_wd_acoustic_decode(buf, IOC_WD_ACOUSTIC_LEN, &a2));
+    CHECK(memcmp(&a, &a2, sizeof(a)) == 0);
+    CHECK(a2.leq_total_cb == IOC_WD_CB_NA && a2.octave_cb[9] == IOC_WD_CB_NA && a2.kurtosis_x100 == -150);
+    CHECK(!ioc_wd_acoustic_decode(buf, IOC_WD_ACOUSTIC_LEN - 1, &a2));
+    CHECK(ioc_wd_segment_count(IOC_WD_ACOUSTIC_LEN) == 19);
+    CHECK(IOC_WD_ACOUSTIC_LEN <= IOC_WD_MAX_PAYLOAD);
 
     ioc_wd_command cmd = {3, 2, 1, IOC_WD_OP_SET_RATE, {0}}, cmd2;
     uint8_t frame[8];

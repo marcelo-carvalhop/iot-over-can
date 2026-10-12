@@ -336,6 +336,114 @@ void ioc_wd_spectrum_reduce(const float *in, uint16_t in_bins, uint16_t *out, ui
     }
 }
 
+/* --------------------------------------------------- telemetria acústica */
+
+static void put_i16(uint8_t *p, int16_t v) { put_u16(p, (uint16_t)v); }
+static int16_t get_i16(const uint8_t *p) { return (int16_t)get_u16(p); }
+
+size_t ioc_wd_acoustic_encode(const ioc_wd_acoustic *in, uint8_t out[IOC_WD_ACOUSTIC_LEN]) {
+    put_u16(&out[0], in->seq);
+    out[2] = in->mode;
+    out[3] = in->flags;
+    put_u16(&out[4], in->rate_hz);
+    put_u16(&out[6], in->fft_size);
+    put_u16(&out[8], in->interval_ms);
+    out[10] = in->coverage_pct;
+    out[11] = in->cpu_pct;
+    put_i16(&out[12], in->laeq_cb);
+    put_i16(&out[14], in->lceq_cb);
+    put_i16(&out[16], in->lzeq_cb);
+    put_i16(&out[18], in->lzpeak_cb);
+    put_i16(&out[20], in->laf_cb);
+    put_i16(&out[22], in->lafmax_cb);
+    put_i16(&out[24], in->lafmin_cb);
+    put_i16(&out[26], in->crest_x100);
+    put_i16(&out[28], in->kurtosis_x100);
+    put_f32(&out[30], in->peak_hz);
+    put_u16(&out[34], in->centroid_hz);
+    put_u16(&out[36], in->flatness_x10000);
+    put_i16(&out[38], in->leq_total_cb);
+    put_i16(&out[40], in->l10_cb);
+    put_i16(&out[42], in->l50_cb);
+    put_i16(&out[44], in->l90_cb);
+    put_u16(&out[46], in->dose_nr15_x10);
+    put_u16(&out[48], in->dose_nho01_x10);
+    put_u32(&out[50], in->elapsed_s);
+    put_i16(&out[54], in->tonal_cb);
+    put_f32(&out[56], in->f0_hz);
+    out[60] = in->harmonics;
+    put_i16(&out[61], in->anomaly_x100);
+    out[63] = in->baseline_pct;
+    put_u16(&out[64], in->event_count);
+    out[66] = in->events_interval;
+    out[67] = in->event_class;
+    put_i16(&out[68], in->event_peak_cb);
+    put_i16(&out[70], in->event_sel_cb);
+    put_u16(&out[72], in->event_duration_ms);
+    put_u16(&out[74], in->event_centroid_hz);
+    put_u16(&out[76], in->event_age_s);
+    put_i16(&out[78], in->sta_lta_cb);
+    put_i16(&out[80], in->background_cb);
+    for (unsigned b = 0; b < IOC_WD_ACOUSTIC_BANDS; ++b) put_i16(&out[82 + 2u * b], in->octave_cb[b]);
+    out[102] = in->battery_pct;
+    put_u16(&out[103], in->battery_mv);
+    out[105] = in->dtc_count;
+    put_u16(&out[106], in->dtc_code);
+    return IOC_WD_ACOUSTIC_LEN;
+}
+
+int ioc_wd_acoustic_decode(const uint8_t *buf, size_t len, ioc_wd_acoustic *out) {
+    if (!buf || !out || len != IOC_WD_ACOUSTIC_LEN) return 0;
+    out->seq = get_u16(&buf[0]);
+    out->mode = buf[2];
+    out->flags = buf[3];
+    out->rate_hz = get_u16(&buf[4]);
+    out->fft_size = get_u16(&buf[6]);
+    out->interval_ms = get_u16(&buf[8]);
+    out->coverage_pct = buf[10];
+    out->cpu_pct = buf[11];
+    out->laeq_cb = get_i16(&buf[12]);
+    out->lceq_cb = get_i16(&buf[14]);
+    out->lzeq_cb = get_i16(&buf[16]);
+    out->lzpeak_cb = get_i16(&buf[18]);
+    out->laf_cb = get_i16(&buf[20]);
+    out->lafmax_cb = get_i16(&buf[22]);
+    out->lafmin_cb = get_i16(&buf[24]);
+    out->crest_x100 = get_i16(&buf[26]);
+    out->kurtosis_x100 = get_i16(&buf[28]);
+    out->peak_hz = get_f32(&buf[30]);
+    out->centroid_hz = get_u16(&buf[34]);
+    out->flatness_x10000 = get_u16(&buf[36]);
+    out->leq_total_cb = get_i16(&buf[38]);
+    out->l10_cb = get_i16(&buf[40]);
+    out->l50_cb = get_i16(&buf[42]);
+    out->l90_cb = get_i16(&buf[44]);
+    out->dose_nr15_x10 = get_u16(&buf[46]);
+    out->dose_nho01_x10 = get_u16(&buf[48]);
+    out->elapsed_s = get_u32(&buf[50]);
+    out->tonal_cb = get_i16(&buf[54]);
+    out->f0_hz = get_f32(&buf[56]);
+    out->harmonics = buf[60];
+    out->anomaly_x100 = get_i16(&buf[61]);
+    out->baseline_pct = buf[63];
+    out->event_count = get_u16(&buf[64]);
+    out->events_interval = buf[66];
+    out->event_class = buf[67];
+    out->event_peak_cb = get_i16(&buf[68]);
+    out->event_sel_cb = get_i16(&buf[70]);
+    out->event_duration_ms = get_u16(&buf[72]);
+    out->event_centroid_hz = get_u16(&buf[74]);
+    out->event_age_s = get_u16(&buf[76]);
+    out->sta_lta_cb = get_i16(&buf[78]);
+    out->background_cb = get_i16(&buf[80]);
+    for (unsigned b = 0; b < IOC_WD_ACOUSTIC_BANDS; ++b) out->octave_cb[b] = get_i16(&buf[82 + 2u * b]);
+    out->battery_pct = buf[102];
+    out->battery_mv = get_u16(&buf[103]);
+    out->dtc_count = buf[105];
+    out->dtc_code = get_u16(&buf[106]);
+    return 1;
+}
+
 /* ------------------------------------------------------- mensagens curtas */
 
 size_t ioc_wd_ack_encode(const ioc_wd_ack *in, uint8_t out[IOC_WD_ACK_LEN]) {
@@ -412,11 +520,12 @@ size_t ioc_wd_config_encode(const ioc_wd_config *in, uint8_t out[IOC_WD_CONFIG_L
     put_f32(&out[12], in->stalta);
     put_f32(&out[16], in->gain);
     out[20] = in->status;
+    out[21] = in->profile;
     return IOC_WD_CONFIG_LEN;
 }
 
 int ioc_wd_config_decode(const uint8_t *buf, size_t len, ioc_wd_config *out) {
-    if (!buf || !out || len != IOC_WD_CONFIG_LEN) return 0;
+    if (!buf || !out || (len != IOC_WD_CONFIG_LEN && len != IOC_WD_CONFIG_LEN_V018)) return 0;
     out->mode = buf[0];
     out->window_type = buf[1];
     out->window_size = get_u16(&buf[2]);
@@ -425,6 +534,7 @@ int ioc_wd_config_decode(const uint8_t *buf, size_t len, ioc_wd_config *out) {
     out->stalta = get_f32(&buf[12]);
     out->gain = get_f32(&buf[16]);
     out->status = buf[20];
+    out->profile = len >= IOC_WD_CONFIG_LEN ? buf[21] : 0;
     return 1;
 }
 
