@@ -17,25 +17,18 @@
 #include "config_validation.h"
 #include "serial_console.h"
 #include "battery_monitor.h"
+#include "edge_app_vibration.h"
+#include "edge_diagnostics.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
 #endif
 
 #define WATCHDOG_TIMEOUT_MS 8000
-#define DTC_QUEUE_CAPACITY 8
-#define DTC_TABLE_CAPACITY 8
-#define DTC_DUPLICATE_SUPPRESS_MS 2000
-
-typedef struct {
-    bool active;
-    DTC_Record rec;
-} DTC_TableEntry;
 
 static OperationModeFSM g_active_fsm = FSM_MODE_ROTATING_MACH;
 static bool             g_mpu_present = false;
 static AcquisitionMode  g_acq_mode = ACQ_MODE_UNKNOWN;
-static uint16_t         g_active_dtc = DTC_NONE;
 static float            g_requested_sample_rate_hz = 1000.0f;
 static int8_t           g_env_mpu_temp_c = 0;
 static int8_t           g_env_mcu_temp_c = 0;
@@ -45,17 +38,6 @@ static float work_x[DSP_BUFFER_MAX_SAMPLES];
 static float work_y[DSP_BUFFER_MAX_SAMPLES];
 static float work_z[DSP_BUFFER_MAX_SAMPLES];
 static float fft_mag_out[DSP_BUFFER_MAX_SAMPLES / 2];
-
-static volatile DTC_Record g_dtc_queue[DTC_QUEUE_CAPACITY];
-static volatile uint8_t    g_dtc_queue_head = 0;
-static volatile uint8_t    g_dtc_queue_tail = 0;
-static volatile uint8_t    g_dtc_queue_count = 0;
-
-static DTC_TableEntry g_dtc_table[DTC_TABLE_CAPACITY];
-static uint16_t g_last_queued_dtc_code = DTC_NONE;
-static uint8_t  g_last_queued_dtc_symptom = 0;
-static uint8_t  g_last_queued_dtc_severity = 0;
-static uint32_t g_last_queued_dtc_ms = 0;
 
 static int8_t clamp_temp_to_i8(float t) {
     if (t > 127.0f) return 127;
@@ -72,20 +54,6 @@ static int8_t read_mcu_temp_c_i8(void) {
     return clamp_temp_to_i8(temp_c);
 }
 
-static DTC_FreezeFrame make_freeze_frame(uint16_t code) {
-    (void)code;
-    DTC_FreezeFrame fr;
-    fr.timestamp_ms = to_ms_since_boot(get_absolute_time());
-    fr.fsm_state = (uint8_t)g_active_fsm;
-    // Usa o último snapshot ambiental coletado no loop principal. Isso evita
-    // acessar I2C/ADC de dentro de caminhos de diagnóstico que podem ter sido
-    // acionados por erro de I2C ou por callback de rede.
-    fr.mpu_temp_c = g_env_mpu_temp_c;
-    fr.mcu_temp_c = g_env_mcu_temp_c;
-    fr.vcc_mv = g_env_vcc_mv;
-    return fr;
-}
-
 static void update_environment_snapshot(void) {
     float mpu_temp = 0.0f;
     if (g_mpu_present && mpu6050_read_temperature_c(&mpu_temp)) {
@@ -93,80 +61,9 @@ static void update_environment_snapshot(void) {
     }
     g_env_mcu_temp_c = read_mcu_temp_c_i8();
     g_env_vcc_mv = battery_monitor_get_mv();
+    edge_diag_set_context((uint8_t)g_active_fsm, g_env_mpu_temp_c, g_env_mcu_temp_c, g_env_vcc_mv);
 }
 
-static void update_active_dtc_summary(void) {
-    uint16_t best = DTC_NONE;
-    uint8_t best_sev = 0;
-    uint32_t best_ts = 0;
-
-    for (int i = 0; i < DTC_TABLE_CAPACITY; i++) {
-        if (!g_dtc_table[i].active) continue;
-        DTC_Record *r = &g_dtc_table[i].rec;
-        if (r->severity > best_sev ||
-            (r->severity == best_sev && r->freeze.timestamp_ms >= best_ts)) {
-            best = r->dtc_code;
-            best_sev = r->severity;
-            best_ts = r->freeze.timestamp_ms;
-        }
-    }
-    g_active_dtc = best;
-}
-
-static void diagnostics_store_record(const DTC_Record *rec) {
-    int free_slot = -1;
-    int oldest_slot = 0;
-    uint32_t oldest_ts = UINT32_MAX;
-
-    for (int i = 0; i < DTC_TABLE_CAPACITY; i++) {
-        if (g_dtc_table[i].active && g_dtc_table[i].rec.dtc_code == rec->dtc_code) {
-            g_dtc_table[i].rec = *rec;
-            update_active_dtc_summary();
-            return;
-        }
-        if (!g_dtc_table[i].active && free_slot < 0) free_slot = i;
-        if (g_dtc_table[i].active && g_dtc_table[i].rec.freeze.timestamp_ms < oldest_ts) {
-            oldest_ts = g_dtc_table[i].rec.freeze.timestamp_ms;
-            oldest_slot = i;
-        }
-    }
-
-    int slot = (free_slot >= 0) ? free_slot : oldest_slot;
-    g_dtc_table[slot].active = true;
-    g_dtc_table[slot].rec = *rec;
-    update_active_dtc_summary();
-}
-
-static bool diagnostics_has_same_active_record(uint16_t code, uint8_t symptom, uint8_t severity) {
-    for (int i = 0; i < DTC_TABLE_CAPACITY; i++) {
-        if (g_dtc_table[i].active &&
-            g_dtc_table[i].rec.dtc_code == code &&
-            g_dtc_table[i].rec.symptom == symptom &&
-            g_dtc_table[i].rec.severity == severity) {
-            return true;
-        }
-    }
-    return false;
-}
-
-
-void diagnostics_clear_all(void) {
-    uint32_t irq_state = save_and_disable_interrupts();
-    memset(g_dtc_table, 0, sizeof(g_dtc_table));
-    g_active_dtc = DTC_NONE;
-    g_dtc_queue_head = g_dtc_queue_tail = g_dtc_queue_count = 0;
-    g_last_queued_dtc_code = DTC_NONE;
-    restore_interrupts(irq_state);
-}
-
-uint8_t diagnostics_get_count(void) {
-    uint8_t n = 0;
-    for (int i = 0; i < DTC_TABLE_CAPACITY; i++) if (g_dtc_table[i].active) n++;
-    return n;
-}
-
-uint16_t diagnostics_get_active_code(void) { return g_active_dtc; }
-uint16_t bite_get_current_status(void) { return g_active_dtc; }
 OperationModeFSM main_get_active_fsm_mode(void) { return g_active_fsm; }
 bool main_is_mpu_present(void) { return g_mpu_present; }
 AcquisitionMode main_get_acquisition_mode(void) { return g_acq_mode; }
@@ -192,60 +89,11 @@ bool main_restart_polling_acquisition(void) {
 }
 
 
-void diag_report_dtc_event(uint16_t code, uint8_t symptom, uint8_t severity) {
-    DTC_Record rec;
-    rec.dtc_code = code;
-    rec.symptom = symptom;
-    rec.severity = severity;
-    rec.freeze = make_freeze_frame(code);
-
-    // Event-on-change:
-    // se o mesmo DTC já está ativo com o mesmo sintoma e severidade, apenas
-    // atualiza a tabela interna. Não reenfileira DTC_EVENT assíncrono a cada
-    // tentativa de leitura I2C, senão a serial fica inutilizável.
-    bool already_active_same = diagnostics_has_same_active_record(code, symptom, severity);
-    diagnostics_store_record(&rec);
-
-    if (already_active_same) {
-        return;
-    }
-
-    uint32_t irq_state = save_and_disable_interrupts();
-    bool duplicate_recent =
-        (g_last_queued_dtc_code == code) &&
-        (g_last_queued_dtc_symptom == symptom) &&
-        (g_last_queued_dtc_severity == severity) &&
-        ((rec.freeze.timestamp_ms - g_last_queued_dtc_ms) < DTC_DUPLICATE_SUPPRESS_MS);
-
-    if (!duplicate_recent) {
-        if (g_dtc_queue_count >= DTC_QUEUE_CAPACITY) {
-            g_dtc_queue_tail = (g_dtc_queue_tail + 1) % DTC_QUEUE_CAPACITY;
-            g_dtc_queue_count--;
-        }
-        g_dtc_queue[g_dtc_queue_head] = rec;
-        g_dtc_queue_head = (g_dtc_queue_head + 1) % DTC_QUEUE_CAPACITY;
-        g_dtc_queue_count++;
-        g_last_queued_dtc_code = code;
-        g_last_queued_dtc_symptom = symptom;
-        g_last_queued_dtc_severity = severity;
-        g_last_queued_dtc_ms = rec.freeze.timestamp_ms;
-    }
-    restore_interrupts(irq_state);
-}
-
+// DTCs registrados pelos drivers (edge_diagnostics.c) seguem para o Node e
+// para o console a partir do laço principal, nunca de uma ISR.
 static void diag_pump_pending_dtc(void) {
-    while (true) {
-        DTC_Record rec;
-        uint32_t irq_state = save_and_disable_interrupts();
-        if (g_dtc_queue_count == 0) {
-            restore_interrupts(irq_state);
-            break;
-        }
-        rec = (DTC_Record)g_dtc_queue[g_dtc_queue_tail];
-        g_dtc_queue_tail = (g_dtc_queue_tail + 1) % DTC_QUEUE_CAPACITY;
-        g_dtc_queue_count--;
-        restore_interrupts(irq_state);
-
+    DTC_Record rec;
+    while (edge_diag_pop_pending(&rec)) {
         edge_net_send_urgent_dtc(&rec);
         serial_console_report_dtc(&rec);
     }
@@ -276,6 +124,7 @@ int main(void) {
     adc_init();
     adc_set_temp_sensor_enabled(true);
 
+    edge_diag_init();
     dsp_init_engine();
     mpu6050_init_dma_driver();
     battery_monitor_init();
@@ -328,6 +177,7 @@ int main(void) {
             } else {
                 g_active_fsm = (OperationModeFSM)applied_cfg.target_mode;
                 g_requested_sample_rate_hz = applied_cfg.sample_rate_hz;
+                edge_diag_set_context((uint8_t)g_active_fsm, g_env_mpu_temp_c, g_env_mcu_temp_c, g_env_vcc_mv);
                 mpu6050_set_buffer_size(dsp_get_active_window_size());
 
                 if (g_active_fsm == FSM_MODE_IDLE) {
@@ -356,7 +206,7 @@ int main(void) {
 
         if (edge_net_get_state() == NET_STATE_DISCOVERY) {
             if (now_ms - last_beacon_ms >= next_beacon_delay_ms) {
-                edge_net_send_discovery_beacon(dtc_code_to_beacon_hint(g_active_dtc));
+                edge_net_send_discovery_beacon(dtc_code_to_beacon_hint(diagnostics_get_active_code()));
                 last_beacon_ms = now_ms;
                 next_beacon_delay_ms = edge_net_next_discovery_delay_ms();
             }
@@ -402,9 +252,9 @@ int main(void) {
                                        clipping, &dsp_res, fft_mag_out);
 
             uint16_t fft_bins = dsp_res.fft_valid ? (dsp_res.window_size / 2) : 0;
-            edge_net_send_telemetry(&dsp_res, g_active_fsm, g_active_dtc, fft_mag_out, fft_bins);
+            edge_net_send_telemetry(&dsp_res, g_active_fsm, diagnostics_get_active_code(), fft_mag_out, fft_bins);
             serial_console_report_fft(fft_mag_out, fft_bins, dsp_res.fft_valid);
-            serial_console_report_telemetry(&dsp_res, g_active_fsm, g_active_dtc,
+            serial_console_report_telemetry(&dsp_res, g_active_fsm, diagnostics_get_active_code(),
                                             g_acq_mode,
                                             battery_monitor_get_status(),
                                             diagnostics_get_count());

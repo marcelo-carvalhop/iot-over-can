@@ -25,6 +25,8 @@ add_executable(edge_node_firmware
     main.c
     dsp_pipeline.c
     mpu6050_dma_driver.c
+    edge_app_vibration.c
+    edge_diagnostics.c
     edge_network_driver.c
     serial_console.c
     battery_monitor.c

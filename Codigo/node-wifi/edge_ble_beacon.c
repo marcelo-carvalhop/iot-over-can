@@ -7,6 +7,7 @@
 #include "btstack.h"
 #include "pico/cyw43_arch.h"
 #include "device_identity.h"
+#include "edge_app.h"
 #include "edge_protocol_definitions.h"
 
 #define EDGE_BLE_COMPANY_ID_LO 0xFF
@@ -47,7 +48,7 @@ static void build_advertisement(void) {
     g_adv_data[i++] = EDGE_BLE_MAGIC_0;
     g_adv_data[i++] = EDGE_BLE_MAGIC_1;
     g_adv_data[i++] = EDGE_BLE_ADV_VERSION;
-    g_adv_data[i++] = (uint8_t)PROFILE_ACCELEROMETER;
+    g_adv_data[i++] = edge_app_profile_id(); /* 0x01 vibração, 0x02 acústico */
     g_adv_data[i++] = NET_PROTOCOL_VERSION;
     for (int shift = 56; shift >= 0; shift -= 8) {
         g_adv_data[i++] = (uint8_t)((uuid >> shift) & 0xFFu);

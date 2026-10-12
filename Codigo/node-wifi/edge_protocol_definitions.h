@@ -102,7 +102,10 @@ typedef enum {
     CMD_CLEAR_DTC           = 0x18, // ESP32 -> RP2350: limpa DTCs ativos sob sessão válida
     CMD_DTC_SNAPSHOT        = 0x19, // RP2350 -> ESP32: snapshot compacto da tabela de DTC
     CMD_RELEASE             = 0x1B, // ESP32 -> RP2350: vínculo removido; encerre a sessão e desligue o Wi-Fi
+    CMD_ACOUSTIC_CONTROL    = 0x1C, // ESP32 -> RP2350: reinício da medição e assinatura de referência (perfil acústico)
+    CMD_ACOUSTIC_CONTROL_ACK= 0x1D, // RP2350 -> ESP32: resultado de CMD_ACOUSTIC_CONTROL
     CMD_TELEMETRY_STREAM    = 0x20, // RP2350 -> ESP32: "Pacote de telemetria contínua / FFT"
+    CMD_ACOUSTIC_STREAM     = 0x21, // RP2350 -> ESP32: telemetria acústica (+ espectro opcional)
     CMD_URGENT_DTC_ALARM    = 0xFF  // RP2350 -> ESP32: "Alerta crítico BITE / Falha de hardware"
 } NetworkCommandID;
 
@@ -113,12 +116,23 @@ typedef enum {
     FSM_MODE_SEISMIC_STALTA = 0x03  // Sismografia: Oversampling 18-bit, Trigger STA/LTA
 } OperationModeFSM;
 
+// Modos do perfil acústico (PROFILE_ACOUSTIC_MEMS). O campo target_mode de
+// Payload_Configuration é interpretado conforme o perfil do sensor: o mesmo
+// valor 1 significa ROTATING no acelerômetro e LEVEL no microfone.
+typedef enum {
+    ACOUSTIC_MODE_IDLE    = 0x00, // aquisição pausada
+    ACOUSTIC_MODE_LEVEL   = 0x01, // nível sonoro, estatística e dose de ruído (NR-15 / NHO-01)
+    ACOUSTIC_MODE_MACHINE = 0x02, // assinatura acústica: tons, harmônicos e anomalia
+    ACOUSTIC_MODE_EVENTS  = 0x03  // sentinela de eventos sonoros: STA/LTA e classificação
+} AcousticModeFSM;
+
 typedef enum {
     ACQ_MODE_UNKNOWN   = 0x00,
     ACQ_MODE_DRDY      = 0x01, // INT/DRDY ativo, leitura I2C fora da ISR
     ACQ_MODE_POLLING   = 0x02, // fallback por polling I2C
     ACQ_MODE_SIMULATED = 0x03, // reservado; aquisição sintética não habilitada
-    ACQ_MODE_IDLE      = 0x04  // aquisição pausada
+    ACQ_MODE_IDLE      = 0x04, // aquisição pausada
+    ACQ_MODE_I2S_DMA   = 0x05  // microfone I2S lido pela PIO com DMA contínuo (perfil acústico)
 } AcquisitionMode;
 
 #define BATTERY_PCT_UNKNOWN 0xFF
@@ -141,9 +155,12 @@ typedef enum {
     DTC_NONE            = 0x0000,
     DTC_I2C_MPU_COMM    = DTC_CAT_BUS      | 0x01, // Falha de comunicação no I2C0
     DTC_I2C_BUS_STUCK   = DTC_CAT_BUS      | 0x02, // Linha SDA presa em GND / timeout de clock stretching
+    DTC_I2S_NO_DATA     = DTC_CAT_BUS      | 0x03, // Microfone I2S sem dados válidos (SD parado em 0 ou em 1)
     DTC_SENS_GRAVITY    = DTC_CAT_MECHANIC | 0x01, // Norma de gravidade fora de 1g (Soltura)
     DTC_SENS_CLIPPING   = DTC_CAT_MECHANIC | 0x02, // Saturação mecânica do acelerômetro (+-2g nesta configuração)
+    DTC_SENS_ACOUSTIC_OVERLOAD = DTC_CAT_MECHANIC | 0x03, // Pressão sonora acima do ponto de sobrecarga do microfone
     DTC_DSP_OVERRUN     = DTC_CAT_DSP      | 0x01, // Estouro de tempo no cálculo da FFT
+    DTC_DSP_CORE_STALL  = DTC_CAT_DSP      | 0x02, // Núcleo dedicado ao DSP sem progresso (vigilância do núcleo 1)
     DTC_SYS_LOW_VOLTAGE = DTC_CAT_SYSTEM   | 0x01, // Tensão da bateria crítica
     DTC_SYS_NET_TX_FAIL = DTC_CAT_SYSTEM   | 0x02, // Falhas repetidas de envio UDP
     DTC_SYS_AUTH_REJECT       = DTC_CAT_SYSTEM | 0x03, // Credencial/chave rejeitada
@@ -157,6 +174,7 @@ typedef enum {
     FTB_GENERAL_FAILURE     = 0x01,
     FTB_SIGNAL_OPEN         = 0x04, // Circuito aberto / Sem sinal (WHO_AM_I falhou)
     FTB_SIGNAL_STUCK_LOW    = 0x11, // Linha em curto para GND
+    FTB_SIGNAL_STUCK_HIGH   = 0x12, // Linha presa em nível alto
     FTB_OUT_OF_RANGE_HIGH   = 0x16, // Valor acima do limite máximo (Saturação / Choc)
     FTB_OUT_OF_RANGE_LOW    = 0x17, // Valor abaixo do limite (Gravidade < 0.8g ou VCC < 3.2V)
     FTB_SIGNAL_RATE_INVALID = 0x1F  // Taxa de amostragem corrompida (Overrun DSP)
@@ -171,7 +189,7 @@ typedef enum {
 typedef struct __attribute__((packed)) {
     uint32_t timestamp_ms;      // Uptime no milissegundo da falha
     uint8_t  fsm_state;         // Modo operacional ativo
-    int8_t   mpu_temp_c;        // Temperatura do die MPU-6050 (°C)
+    int8_t   mpu_temp_c;        // Temperatura do die MPU-6050 (°C); INT8_MIN no sensor acústico (INMP441 não mede)
     int8_t   mcu_temp_c;        // Temperatura do die RP2350 (°C)
     uint16_t vcc_mv;            // Tensão do barramento de alimentação (mV)
 } DTC_FreezeFrame;
@@ -328,5 +346,132 @@ typedef struct __attribute__((packed)) {
     uint16_t         replay_reject_count;
     uint16_t         config_reject_count;
 } Payload_DTCSnapshot;
+
+// ============================================================================
+// SENSOR ACÚSTICO (PROFILE_ACOUSTIC_MEMS, INMP441 em I2S) — v0.19
+// ============================================================================
+// O sensor acústico reaproveita todo o enlace (oferta BLE, HELLO/CHALLENGE/
+// CONFIRM, DATA_UP/DATA_DOWN), Payload_Configuration, Payload_ConfigMenu,
+// Payload_ConfigAck, CMD_PING e os DTCs. O que muda é o conteúdo da
+// telemetria: um relatório por segundo (Payload_AcousticStream), com níveis
+// já integrados no sensor, e dois comandos próprios (CMD_ACOUSTIC_CONTROL).
+//
+// Campos de Payload_Configuration no perfil acústico:
+//   target_mode    AcousticModeFSM
+//   sample_rate_hz 8000, 16000, 24000, 32000 ou 48000 Hz (frequência de WS)
+//   window_size    pontos da FFT: 256, 512, 1024 ou 2048
+//   window_type    mesmas janelas do acelerômetro
+//   stalta_thresh  limiar do modo: razão STA/LTA em EVENTS, escore z em MACHINE
+//   calib_gain     ganho de calibração da pressão (1,0 = sensibilidade nominal)
+
+#define ACOUSTIC_OCTAVE_BANDS   10          // bandas de oitava de 31,5 Hz a 16 kHz (ISO 266)
+#define ACOUSTIC_CB_NA          INT16_MIN   // nível indisponível, em centésimos de dB
+#define ACOUSTIC_AGE_NONE       0xFFFFu     // nenhum evento desde o reinício da medição
+
+// Bits de Payload_AcousticStream.flags
+#define ACOUSTIC_FLAG_SPECTRUM_VALID    0x01 // ao menos um bloco do intervalo passou pela FFT
+#define ACOUSTIC_FLAG_OVERLOAD          0x02 // amostras no fundo de escala (sobrecarga acústica)
+#define ACOUSTIC_FLAG_EVENT_ACTIVE      0x04 // EVENTS: detector disparado neste instante
+#define ACOUSTIC_FLAG_BASELINE_READY    0x08 // MACHINE: assinatura de referência disponível
+#define ACOUSTIC_FLAG_BASELINE_LEARNING 0x10 // MACHINE: aprendizado da referência em curso
+#define ACOUSTIC_FLAG_ANOMALY           0x20 // MACHINE: escore acima do limiar
+#define ACOUSTIC_FLAG_DOSE_LIMIT        0x40 // LEVEL: dose >= 100 % ou nível acima de 115 dB(A)
+#define ACOUSTIC_FLAG_MIC_FAULT         0x80 // microfone sem sinal válido
+
+typedef enum {
+    ACOUSTIC_EVENT_NONE      = 0,
+    ACOUSTIC_EVENT_IMPACT    = 1, // curto e impulsivo, energia em médias e baixas frequências
+    ACOUSTIC_EVENT_CRACK     = 2, // curto e impulsivo, agudo (estalo, quebra)
+    ACOUSTIC_EVENT_TONAL     = 3, // longo e tonal (alarme, apito, sirene)
+    ACOUSTIC_EVENT_TRANSIENT = 4  // longo e de banda larga (passagem, partida de máquina)
+} AcousticEventClass;
+
+typedef enum {
+    ACOUSTIC_CTRL_MEASURE_RESET  = 1, // reinicia LAeq,T, estatísticas, doses e contagem de eventos
+    ACOUSTIC_CTRL_BASELINE_LEARN = 2, // aprende a assinatura de referência por `argument` segundos
+    ACOUSTIC_CTRL_BASELINE_CLEAR = 3  // descarta a assinatura de referência
+} AcousticControlAction;
+
+// Relatório acústico, um por segundo. Níveis em centésimos de dB re 20 µPa;
+// ACOUSTIC_CB_NA marca o que o modo atual não calcula. Ao final seguem
+// `spectrum_bins` magnitudes float: pressão eficaz (Pa) por faixa do espectro
+// médio do intervalo (Welch), de 0 a fs/2.
+typedef struct __attribute__((packed)) {
+    uint16_t         magic_header;
+    uint8_t          cmd_type;          // CMD_ACOUSTIC_STREAM (0x21)
+    uint16_t         seq_num;
+    uint8_t          mode;              // AcousticModeFSM
+    uint8_t          flags;             // ACOUSTIC_FLAG_*
+    uint8_t          window_type;
+    uint16_t         fft_size;
+    float            sample_rate_req_hz;
+    float            sample_rate_eff_hz;
+    uint16_t         interval_ms;       // duração integrada neste relatório
+    uint8_t          coverage_pct;      // parcela do áudio analisada pela FFT
+    uint8_t          cpu_pct;           // ocupação do núcleo de DSP
+    // Níveis do intervalo
+    int16_t          laeq_cb;
+    int16_t          lceq_cb;
+    int16_t          lzeq_cb;
+    int16_t          lzpeak_cb;         // pico da pressão sem ponderação (dB re 20 µPa)
+    int16_t          laf_cb;            // LAF (rápida, 125 ms) no fim do intervalo
+    int16_t          lafmax_cb;
+    int16_t          lafmin_cb;
+    int16_t          crest_x100;        // fator de crista (pico / eficaz)
+    int16_t          kurtosis_x100;     // excesso de curtose (0 = gaussiano)
+    float            peak_hz;           // componente espectral dominante
+    uint16_t         centroid_hz;       // centroide espectral
+    uint16_t         flatness_x10000;   // planura espectral: 0 tonal, 1 ruído branco
+    // LEVEL: desde o último reinício da medição
+    int16_t          leq_total_cb;      // LAeq,T
+    int16_t          l10_cb;
+    int16_t          l50_cb;
+    int16_t          l90_cb;
+    uint16_t         dose_nr15_x10;     // dose em décimos de %: 85 dB(A), q = 5, limiar 80 dB(A)
+    uint16_t         dose_nho01_x10;    // dose em décimos de %: 85 dB(A), q = 3, limiar 80 dB(A)
+    uint32_t         elapsed_s;
+    // MACHINE
+    int16_t          tonal_cb;          // proeminência do componente dominante
+    float            f0_hz;             // fundamental da série harmônica (0 = não encontrada)
+    uint8_t          harmonics;         // harmônicos presentes na série
+    int16_t          anomaly_x100;      // escore z em relação à assinatura de referência
+    uint8_t          baseline_pct;      // progresso do aprendizado (100 = pronta)
+    // EVENTS
+    uint16_t         event_count;       // desde o último reinício da medição
+    uint8_t          events_interval;   // eventos iniciados neste intervalo
+    uint8_t          event_class;       // AcousticEventClass do último evento
+    int16_t          event_peak_cb;
+    int16_t          event_sel_cb;      // nível de exposição sonora do evento (SEL, ponderação A)
+    uint16_t         event_duration_ms;
+    uint16_t         event_centroid_hz;
+    uint16_t         event_age_s;       // tempo desde o fim do último evento; ACOUSTIC_AGE_NONE
+    int16_t          sta_lta_cb;        // razão STA/LTA atual, em dB
+    int16_t          background_cb;     // ruído de fundo (LTA), dB(A)
+    // Bandas de oitava sem ponderação (Z), 31,5 Hz .. 16 kHz
+    int16_t          octave_cb[ACOUSTIC_OCTAVE_BANDS];
+    // Sistema
+    uint8_t          battery_pct;
+    uint16_t         battery_mv;
+    uint8_t          dtc_count;
+    uint16_t         dtc_active_code;
+    uint16_t         spectrum_bins;     // float spectrum[spectrum_bins] após a estrutura
+} Payload_AcousticStream;
+
+typedef struct __attribute__((packed)) {
+    uint16_t         magic_header;
+    uint8_t          cmd_type;          // CMD_ACOUSTIC_CONTROL (0x1C)
+    uint32_t         request_counter;   // ecoado no ACK
+    uint8_t          action;            // AcousticControlAction
+    uint16_t         argument;          // BASELINE_LEARN: duração em segundos
+} Payload_AcousticControl;
+
+typedef struct __attribute__((packed)) {
+    uint16_t         magic_header;
+    uint8_t          cmd_type;          // CMD_ACOUSTIC_CONTROL_ACK (0x1D)
+    uint32_t         request_counter;
+    uint8_t          action;
+    uint8_t          status;            // 1 = aplicado, 2 = recusado
+    uint16_t         detail;
+} Payload_AcousticControlAck;
 
 #endif // EDGE_PROTOCOL_DEFINITIONS_H

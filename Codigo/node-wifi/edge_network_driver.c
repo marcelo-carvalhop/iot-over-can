@@ -16,12 +16,19 @@
  *
  * Nenhum datagrama sem tag válida altera estado. Não existe caminho de
  * compatibilidade com o CLAIM da v0x05.
+ *
+ * Este arquivo é compartilhado pelo sensor de vibração e pelo sensor
+ * acústico (Codigo/node-audio). O que depende do sensor — perfil, faixas de
+ * configuração, telemetria e comandos próprios — fica atrás dos ganchos de
+ * edge_app.h e de edge_config_validate().
  */
 #include "edge_network_driver.h"
 #include "battery_monitor.h"
 #include "config_validation.h"
 #include "device_identity.h"
+#include "edge_app.h"
 #include "edge_ble_beacon.h"
+#include "edge_diagnostics.h"
 #include "edge_link.h"
 #include "ioc_link.h"
 #include "ioc_sha256.h"
@@ -36,18 +43,6 @@
 #include "lwip/dhcp.h"
 #include "lwip/netif.h"
 #include "lwip/ip_addr.h"
-#include "mpu6050_dma_driver.h"
-
-// Definido em main.c — segue o mesmo padrão já usado para
-// diag_report_dtc_event(): um extern simples em vez de criar um módulo
-// "system_state" só para isso.
-extern OperationModeFSM main_get_active_fsm_mode(void);
-extern AcquisitionMode main_get_acquisition_mode(void);
-extern uint8_t diagnostics_get_count(void);
-extern void diagnostics_clear_all(void);
-extern uint16_t bite_get_current_status(void);
-extern float main_get_requested_sample_rate_hz(void);
-extern void diag_report_dtc_event(uint16_t code, uint8_t symptom, uint8_t severity);
 
 static NetworkMode     g_net_mode = NET_STATE_DISABLED;
 static struct udp_pcb *g_pcb      = NULL;
@@ -104,7 +99,7 @@ static uint16_t        g_net_tx_consecutive_fail = 0;
 
 // Maior payload interno que cabe em um datagrama sem fragmentação IP.
 #define NET_MAX_INNER_BYTES (NET_MAX_SAFE_PAYLOAD_BYTES - IOC_ENV_OVERHEAD)
-static uint8_t g_tx_inner[NET_MAX_INNER_BYTES];
+_Static_assert(NET_MAX_INNER_BYTES == EDGE_NET_MAX_PAYLOAD_BYTES, "EDGE_NET_MAX_PAYLOAD_BYTES desatualizado");
 static uint8_t g_rx_datagram[256]; // comandos do Node são curtos; o maior tem ~50 bytes
 
 // ---------------------------------------------------------------------------
@@ -229,9 +224,9 @@ static void net_send_config_ack_locked_ctx(struct udp_pcb *pcb, const Payload_Co
     ack.status = status;
     ack.target_mode = cfg->target_mode;
     ack.requested_window_size = cfg->window_size;
-    ack.effective_window_size = dsp_get_active_window_size();
+    ack.effective_window_size = edge_app_effective_window_size();
     ack.requested_sample_rate_hz = cfg->sample_rate_hz;
-    ack.effective_sample_rate_hz = mpu6050_get_configured_sample_rate_hz();
+    ack.effective_sample_rate_hz = edge_app_effective_sample_rate_hz();
     link_send_data_locked_ctx(pcb, &ack, sizeof(ack));
 }
 
@@ -258,20 +253,10 @@ static void net_send_config_menu_locked_ctx(struct udp_pcb *pcb) {
 
     Payload_ConfigMenu menu;
     memset(&menu, 0, sizeof(menu));
+    edge_app_fill_config_menu(&menu);
     menu.magic_header = NET_MAGIC_HEADER;
     menu.cmd_type = CMD_CONFIG_MENU;
-    menu.num_fsm_modes = FSM_MODE_SEISMIC_STALTA + 1;   // 0..3
-    menu.num_window_types = WIN_BLACKMAN_H + 1;          // 0..4
-    menu.min_sample_rate_hz = 4;
-    menu.max_sample_rate_hz = 1000;
-    menu.min_buffer_size = DSP_BUFFER_MIN_SAMPLES;
-    menu.max_buffer_size = DSP_BUFFER_MAX_SAMPLES;
-    menu.current_buffer_size = dsp_get_active_window_size();
-    menu.current_fsm_mode = (uint8_t)main_get_active_fsm_mode();
-    menu.current_window_type = (uint8_t)dsp_get_current_window();
-    menu.current_sample_rate_hz = mpu6050_get_configured_sample_rate_hz();
-    menu.current_stalta_thresh = dsp_get_stalta_threshold();
-    menu.current_calib_gain = dsp_get_calibration_gain();
+    menu.session_token = 0;
     link_send_data_locked_ctx(pcb, &menu, sizeof(menu));
 }
 
@@ -359,7 +344,7 @@ static void handle_session_command(struct udp_pcb *pcb, const uint8_t *inner, si
                 net_send_config_ack_locked_ctx(pcb, &cfg, 2);
                 break;
             }
-            dsp_apply_remote_config(&cfg);
+            edge_app_queue_config(&cfg);
             net_send_config_ack_locked_ctx(pcb, &cfg, 0);
             break;
         }
@@ -394,7 +379,10 @@ static void handle_session_command(struct udp_pcb *pcb, const uint8_t *inner, si
             break;
 
         default:
-            saturating_inc_u16(&g_protocol_reject_count);
+            // Comandos próprios do sensor (por exemplo CMD_ACOUSTIC_CONTROL).
+            if (!edge_app_handle_session_command(inner[2], inner, inner_len)) {
+                saturating_inc_u16(&g_protocol_reject_count);
+            }
             break;
     }
 }
@@ -835,7 +823,7 @@ void edge_net_send_discovery_beacon(uint8_t bite_status) {
     uint64_t r = get_rand_64();
     memcpy(nonce, &r, IOC_LINK_NONCE_LEN);
     hello.uuid = edge_device_uuid64();
-    hello.profile = (uint8_t)PROFILE_ACCELEROMETER;
+    hello.profile = edge_app_profile_id();
     hello.protocol = NET_PROTOCOL_VERSION;
     memcpy(hello.sensor_nonce, nonce, IOC_LINK_NONCE_LEN);
     ioc_hello_encode(&hello, raw);
@@ -874,55 +862,24 @@ void edge_net_send_discovery_beacon(uint8_t bite_status) {
     }
 }
 
-void edge_net_send_telemetry(const DSP_AnalysisResult *res, OperationModeFSM mode,
-                             uint16_t dtc_code, const float *fft_mag, uint16_t fft_bins) {
-    if (g_net_mode != NET_STATE_BOUND || !g_pcb || !res) return;
-
-    const uint32_t base_sz = sizeof(Payload_TelemetryStream);
-
-    // Item 5: limita quantos bins de FFT são anexados para não ultrapassar
-    // NET_MAX_SAFE_PAYLOAD_BYTES (já descontado o envelope) e cair em
-    // fragmentação IP. Se o chamador pedir mais do que cabe, trunca.
-    uint16_t max_bins_that_fit = (uint16_t)((NET_MAX_INNER_BYTES - base_sz) / sizeof(float));
-    uint16_t bins_to_send = (fft_mag != NULL && res->fft_valid) ? fft_bins : 0;
-    if (bins_to_send > max_bins_that_fit) bins_to_send = max_bins_that_fit;
-    const uint32_t arr_sz = (uint32_t)bins_to_send * sizeof(float);
-
-    Payload_TelemetryStream t;
-    memset(&t, 0, sizeof(t));
-    t.magic_header = NET_MAGIC_HEADER;
-    t.cmd_type = CMD_TELEMETRY_STREAM;
-    t.seq_num = g_seq_cnt++;
-    t.fsm_mode = (uint8_t)mode;
-    t.acquisition_mode = (uint8_t)main_get_acquisition_mode();
-    t.axis_mask = res->axis_mask;
-    t.fft_valid = res->fft_valid ? 1 : 0;
-    t.window_size = res->window_size;
-    t.sample_rate_req_hz = main_get_requested_sample_rate_hz();
-    t.sample_rate_eff_hz = mpu6050_get_configured_sample_rate_hz();
-    t.rms_ac = res->rms_ac;
-    t.kurtosis = res->kurtosis;
-    t.crest_factor = res->crest_factor;
-    t.peak_freq_hz = res->peak_freq_hz;
-    t.peak_amplitude = res->peak_amplitude;
-    t.entropy = res->spectral_entropy;
-    t.ppv_max_mm_s = res->ppv_max_mm_s;
-    t.seismic_triggered = res->seismic_triggered ? 1 : 0;
-    t.clipping_detected = res->clipping_detected ? 1 : 0;
-    t.battery_pct = battery_monitor_get_pct_for_beacon();
-    t.battery_mv = battery_monitor_get_mv();
-    t.dtc_count = diagnostics_get_count();
-    t.dtc_active_code = dtc_code;
-    t.fft_bins_count = bins_to_send;
-
-    // g_tx_inner é usado apenas pelo laço principal; os envios feitos de
-    // dentro do callback de recepção usam estruturas próprias na pilha.
-    memcpy(g_tx_inner, &t, base_sz);
-    if (arr_sz > 0) memcpy(&g_tx_inner[base_sz], fft_mag, arr_sz);
-
+// Envio genérico de um payload interno ao Node pai, a partir do laço
+// principal. A telemetria de cada sensor (vibração em edge_app_vibration.c,
+// acústico em Codigo/node-audio/audio_app.c) é montada fora deste arquivo.
+bool edge_net_send_data(const void *inner, size_t len) {
+    if (g_net_mode != NET_STATE_BOUND || !g_pcb || !inner || len == 0 || len > NET_MAX_INNER_BYTES) return false;
     cyw43_arch_lwip_begin();
-    link_send_data_locked_ctx(g_pcb, g_tx_inner, base_sz + arr_sz);
+    // O estado é conferido de novo com o lock: a sessão pode ter caído
+    // enquanto o chamador montava o payload.
+    const bool bound = g_net_mode == NET_STATE_BOUND && g_pcb != NULL;
+    if (bound) link_send_data_locked_ctx(g_pcb, inner, len);
     cyw43_arch_lwip_end();
+    return bound;
+}
+
+// Numeração da telemetria dentro da sessão; o Node a usa para contar perdas
+// no Wi-Fi. Reiniciada a cada nova sessão (link_reset_session/handle_challenge).
+uint16_t edge_net_next_seq(void) {
+    return g_seq_cnt++;
 }
 
 
