@@ -20,6 +20,8 @@ A documentação oficial é organizada por assunto, sem cópias paralelas ou rel
 | [`interface/tui.md`](interface/tui.md) | especificação completa da TUI, telas, comandos, wireless, layout e cores |
 | [`modulo-can/modulo-can.md`](modulo-can/modulo-can.md) | firmware e comportamento dos Nodes CAN |
 | [`sensor-wireless/sensor-wireless.md`](sensor-wireless/sensor-wireless.md) | firmware, aquisição e comunicação do Pico W |
+| [`sensor-acustico/sensor-acustico.md`](sensor-acustico/sensor-acustico.md) | sensor acústico INMP441 (Pico W e Pico 2 W): I2S na PIO, DSP em dois núcleos, modos LEVEL, MACHINE e EVENTS, transporte e análises na TUI |
+| [`livro.md`](livro.md) | marcação dos trechos destinados ao livro do projeto e roteiro dos capítulos |
 
 Capturas de referência da interface ficam em [`interface/img/`](interface/img/). As imagens `antes_*` documentam somente a densidade/truncamento que as regras atuais de layout evitam.
 

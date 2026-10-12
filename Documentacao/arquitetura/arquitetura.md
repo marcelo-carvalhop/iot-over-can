@@ -8,6 +8,8 @@ Os **Nodes CAN** são módulos ESP32 + MCP2515. O papel distribuído (`LEADER` o
 
 O **sensor wireless** é um Raspberry Pi Pico W com MPU6050. Ele executa aquisição, DSP, diagnóstico, advertising BLE e infraestrutura de rede local.
 
+O **sensor acústico** é um Raspberry Pi Pico W ou Pico 2 W com o microfone MEMS INMP441 em I2S. Usa o mesmo enlace e a mesma infraestrutura do sensor de vibração, anuncia o perfil `ACOUSTIC` e processa o áudio no segundo núcleo do microcontrolador; ver [`../sensor-acustico/sensor-acustico.md`](../sensor-acustico/sensor-acustico.md).
+
 ```text
                  BLE advertising
 Pico W  ─────────────────────────────► Nodes CAN
@@ -24,6 +26,10 @@ Pico W  ────────────────────────
 ## Domínios de comunicação
 
 O CAN coordena os módulos funcionais. BLE transporta identidade, perfil, versão de protocolo e presença do sensor wireless, além da oferta de vínculo que o Node responsável dirige ao sensor. A associação atribui um UUID a um Node responsável; não cria, por si só, canal de telemetria.
+
+<!-- livro:inicio id="acustico-perfis" capitulo="Sensor acústico INMP441" titulo="Perfis de sensor" -->
+O **perfil** do sensor (`0x01` vibração, `0x02` acústico) é anunciado no BLE e confirmado no HELLO autenticado. Tudo o que é comum — oferta, sessão, configuração, DTC, PING, espectro sob demanda — segue o mesmo caminho para os dois; muda o conteúdo da telemetria e os comandos próprios. O Node guarda o perfil da sessão em vigor e o publica junto da configuração, o que permite à TUI dar nomes certos aos modos (o número 1 é `ROTATING` em um sensor e `LEVEL` no outro) e ao próprio Node recusar um modo do perfil errado. No firmware do Pico, o enlace e o diagnóstico ficam em `Codigo/node-wifi` e cada sensor implementa os ganchos de `edge_app.h`, de modo que um terceiro sensor não precisa copiar a pilha de rede.
+<!-- livro:fim id="acustico-perfis" -->
 
 O plano de dados Pico W ↔ Node CAN é uma camada separada, sobre Wi-Fi/UDP, com sessão autenticada por HMAC-SHA256. Ele só existe enquanto o Node informa o estado `SECURE` para o filho; a TUI distingue os dois e não representa associação como se fosse plano de dados. O desenho completo está em [`plano-de-dados-wireless.md`](plano-de-dados-wireless.md).
 

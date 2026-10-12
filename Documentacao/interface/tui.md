@@ -138,7 +138,27 @@ A tela é orientada pelo tipo de sensor e, principalmente, pelo canal realmente 
 
 ### Sensor com plano de dados
 
-No acesso USB direto ao Pico W, ou pelo módulo CAN com sessão autenticada, a tela pode apresentar situação, modo, aquisição, telemetria, bateria, métricas de vibração, tendências, diagnósticos, estatísticas de sequência e configuração aplicada. Para perfil `VIBRATION`, FFT e métricas especializadas ficam disponíveis.
+No acesso USB direto ao Pico W, ou pelo módulo CAN com sessão autenticada, a tela pode apresentar situação, modo, aquisição, telemetria, bateria, métricas de vibração, tendências, diagnósticos, estatísticas de sequência e configuração aplicada. Para os perfis `VIBRATION` e `ACOUSTIC`, FFT e métricas especializadas ficam disponíveis; um perfil sem tela própria mostra os campos recebidos em "Dados recebidos".
+
+<!-- livro:inicio id="acustico-tela-sensor" capitulo="Sensor acústico INMP441" titulo="A tela do sensor" -->
+### Sensor acústico (`ACOUSTIC`)
+
+Para o INMP441 a tela troca as métricas de vibração por quatro blocos, montados por `pico_tui/acoustic_view.py` a partir das análises de `pico_tui/acoustics.py`:
+
+- **Níveis sonoros**: LAeq do último segundo em destaque, LCeq/LZeq, LAF com máximo e mínimo, pico, crista e curtose, frequência dominante, centroide, planura, cobertura da FFT e ocupação do núcleo de DSP; barras das bandas de oitava (31,5 Hz a 16 kHz, a dominante realçada, "acima de fs/2" para as omitidas) e a tendência do LAeq.
+- **Painel do modo**, com título e campos próprios:
+  - *Exposição ao ruído (NR-15 e NHO-01)* — LAeq,T, duração, L10/L50/L90, doses com projeção para 8 h, nível médio da NR-15, LEX,8h, tempo até 100 % e o critério de decisão da NHO-01; tendência da dose;
+  - *Diagnóstico de máquina* — fundamental, faixa de busca do tacômetro na configuração em uso, rotação estimada com média e dispersão, hipótese de motor de indução, harmônicos, proeminência tonal, estado da assinatura e escore de anomalia contra o limiar; tendência do escore;
+  - *Eventos sonoros* — contagem, evento em curso, razão STA/LTA contra o limiar em dB, fundo, último evento, taxa recente, evento mais forte e SEL combinado da sessão; tendência da razão STA/LTA.
+- **Leitura do ambiente**: frases curtas, da mais grave para a mais leve — exposição e critério da NHO-01, tacômetro e anomalia, microfone e sobrecarga, curva NC, distância de conversa, graves (LCeq − LAeq), impulsividade, variabilidade e caráter espectral.
+- **Eventos registrados nesta sessão**: os eventos mais recentes, com classe, pico, SEL, duração, centroide e o que a classe costuma indicar.
+
+A situação do sensor inclui o microfone (sinal presente e canal, sem sinal válido ou em sobrecarga) e, na conexão USB, a plataforma (Pico W ou Pico 2 W). Microfone sem sinal é condição crítica; sobrecarga, dose no limite e anomalia pedem atenção. Cada uma dessas transições, o fim de cada evento (uma linha por classe, com contagem) e a assinatura pronta viram intercorrências.
+
+Teclas próprias: `f` espectro em dB SPL, `z` reiniciar a medição e, no modo de máquina, `a` aprender a assinatura normal. Na tela Comandos o perfil acrescenta reiniciar a medição, aprender e descartar a assinatura e calibrar com calibrador; a configuração usa os modos, as taxas de WS e os pontos de FFT do INMP441 e propõe o limiar padrão de cada modo (3 em Máquina, 8 em Eventos). Na lista de equipamentos o sensor mostra LAeq e, conforme o modo, a dose, a rotação e o escore ou a contagem de eventos.
+
+A demonstração (`--demo`) inclui um sensor acústico no Módulo 22 que reage a modo, taxa, FFT, limiar, reinício da medição, assinatura e calibração. A análise completa e as referências normativas estão em [`../sensor-acustico/sensor-acustico.md`](../sensor-acustico/sensor-acustico.md), seção 10.
+<!-- livro:fim id="acustico-tela-sensor" -->
 
 ### Sensor wireless associado via Node CAN
 
@@ -333,6 +353,15 @@ O campo manual é deliberadamente secundário e oculto por padrão. Texto sem `:
 :quit
 ```
 
+Para o sensor acústico há também:
+
+```text
+:config [sensor] mode=EVENTS rate=16000 fft=1024 threshold=8
+:measure reset [sensor]
+:baseline learn [segundos] | :baseline clear
+:cal [94|114]
+```
+
 Esses comandos existem para diagnóstico e automação manual; a operação normal não depende deles.
 
 ## Rede CAN — `NetworkScreen`
@@ -421,6 +450,8 @@ Mensagens repetitivas de manutenção, dados locais `0xAA` e linhas não interpr
 
 Disponível quando o alvo realmente possui canal de dados e perfil compatível. O gráfico textual calcula sua largura a partir da área disponível. A tela apresenta espectro, picos e parâmetros. `n` pede novo espectro.
 
+Para o sensor acústico as magnitudes são pressão eficaz (Pa) por faixa e o gráfico usa dB SPL (re 20 µPa), com os 60 dB abaixo do topo; os picos aparecem em dB SPL.
+
 Para filhos wireless sem sessão autenticada, a ação FFT não é oferecida. Pelo módulo, o espectro chega reduzido ao número de faixas pedido e com as magnitudes reescaladas a partir do pico.
 
 ## Ajuda — `HelpScreen`
@@ -447,7 +478,7 @@ Coleta um parâmetro validado para uma ação declarativa, como intervalo de liv
 
 ### `ConfigScreen`
 
-Coleta modo, taxa, janela, tamanho, STA/LTA e ganho quando existe canal de configuração do sensor.
+Coleta modo, taxa, janela, tamanho, STA/LTA e ganho quando existe canal de configuração do sensor. Para o sensor acústico, os modos são Ocioso, Nível sonoro e exposição, Diagnóstico de máquina e Eventos sonoros; a taxa e os pontos da FFT são escolhidos entre os valores aceitos pelo INMP441, e o limiar muda de significado com o modo (escore z em Máquina, razão STA/LTA em Eventos).
 
 ### `TargetScreen`
 
@@ -595,6 +626,8 @@ Execução:
 
 A validação de layout deve incluir pelo menos 48×18, 60×24, 80×24, 100×30 e 160×48.
 
+`test_acoustic_tui_v019.py` cobre o sensor acústico: as análises (exposição, curvas NC, conversa, tacômetro, eventos, calibração), os decodificadores da Probe e do console USB, o estado a partir da gravação `acoustic_sensor` da bancada virtual e as telas na demonstração e com um console INMP441 simulado (`fake_acoustic_firmware.py`).
+
 `test_network_metrics_v018.py` cobre a versão 0.18 em quatro níveis: contrato do firmware; conferência da biblioteca C com referências em Python (duração de quadro, PDU autenticada); análise de tempo de resposta contra o exemplo publicado por Davis et al.; e ponta a ponta, entregando as gravações da bancada virtual ao decodificador, ao domínio, às métricas e ao registrador de ensaios. Um dos testes refaz as gravações e as compara com as versionadas. Os rótulos das seções em `Fields` não passam de 24 caracteres, para que a quebra de linha não intercale rótulo e valor.
 
 ## Capturas de referência
@@ -621,6 +654,7 @@ As imagens `antes_*` servem apenas para registrar o problema de densidade visual
 - a análise de tempo de resposta usa o tráfego observado, não um pior caso de projeto;
 - no modo demonstração a rede simulada não reage aos ensaios;
 - associação ainda não é persistida no Node após reinicialização;
-- só o perfil `VIBRATION` possui visualização especializada de telemetria;
+- só os perfis `VIBRATION` e `ACOUSTIC` possuem visualização especializada de telemetria;
+- as leituras acústicas (dose, curva NC, conversa, tacômetro) são indicativas: o INMP441 não é um medidor de nível sonoro normatizado;
 - preferências e intercorrências do modelo visual não substituem o JSONL técnico da sessão;
 - correlação completa de solicitação/resposta por transação ainda pode ser expandida.

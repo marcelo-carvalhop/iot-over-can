@@ -64,6 +64,8 @@ O ponto de acesso só existe enquanto há pelo menos um vínculo. Sem a chave me
 
 A Probe 00 converte `CMD TARGET=NN.CC ...` em quadros `0x304` e remonta as transferências `0x380 + N` em linhas `TEL`, `FRAG`, `DTC`, `ACK`, `WIRELESS_LINK` e `WIRELESS_CONFIG`. Ela não recebe chave e não fala com sensores.
 
+O Node guarda o perfil de cada sensor, informado no HELLO autenticado. Para o sensor acústico ele converte o relatório de um segundo na transferência tipo `7` (19 quadros), encaminha as ações `MEASURE_RESET`, `BASELINE_LEARN` e `BASELINE_CLEAR` (opcode `0x21`) e recusa modos e ações do perfil errado; a Probe imprime o relatório como `TEL ... PROFILE=ACOUSTIC` (ver [`../sensor-acustico/sensor-acustico.md`](../sensor-acustico/sensor-acustico.md)).
+
 BLE e Wi-Fi juntos não cabem na partição de aplicação padrão; `platformio.ini` usa `min_spiffs.csv`. Formatos e limites estão em [`../arquitetura/plano-de-dados-wireless.md`](../arquitetura/plano-de-dados-wireless.md).
 
 ### Diagnóstico do enlace no monitor serial

@@ -2,6 +2,8 @@
 
 Este documento registra defeitos técnicos que ajudam a compreender decisões atuais do projeto. O objetivo não é manter histórico de versões, mas registrar causa e solução de problemas que podem reaparecer.
 
+Novos problemas devem ser adicionados apenas quando houver impacto arquitetural, de protocolo, segurança, build ou operação. A numeração `CH-` é única no documento, inclusive entre as tabelas. Logs transitórios de bancada não precisam gerar uma entrada permanente.
+
 | ID | Problema | Causa | Solução aplicada | Estado |
 |---|---|---|---|---|
 | CH-001 | DTCs conhecidos apareciam como desconhecidos | catálogo incompleto na TUI | catálogo explícito e fallback por categoria | Resolvido |
@@ -40,7 +42,7 @@ Este documento registra defeitos técnicos que ajudam a compreender decisões at
 | CH-034 | a perda do Node responsável deixava o sensor sem caminho até o operador intervir | o vínculo era fixo e ficava em memória no Node | reassociação automática, autorizada por sensor, decidida pelo líder com as observações de RSSI que já trafegam no barramento | Implementado; validação em bancada pendente |
 | CH-035 | a primeira versão da decisão de reassociação escolhia o próprio Node que havia saído do ar | a última observação BLE feita por ele antes da falha ainda era recente | a observação do responsável só conta se for bem posterior ao último estado que ele publicou (sinal de que reiniciou) | Resolvido; encontrado na bancada virtual |
 | CH-036 | não havia como medir ocupação do barramento nem período das mensagens | o MCP2515 entrega apenas identificador, DLC e dados | a Probe reconstrói CRC-15 e bits de preenchimento de cada quadro e soma a duração exata; período por identificador a partir do instante de retirada da fila | Implementado; a variação medida inclui a latência do laço da Probe (cerca de 1 ms) |
-| CH-037 | a lógica distribuída só podia ser exercitada com vários ESP32 na bancada | eleição, vigilâncias e reassociação dependem de vários Nodes ao mesmo tempo | bancada virtual: o firmware completo compilado uma vez por Node, cada cópia em seu namespace, com barramento, rádios e sensores simulados | Implementado; quinze cenários na validação nativa |
+| CH-037 | a lógica distribuída só podia ser exercitada com vários ESP32 na bancada | eleição, vigilâncias e reassociação dependem de vários Nodes ao mesmo tempo | bancada virtual: o firmware completo compilado uma vez por Node, cada cópia em seu namespace, com barramento, rádios e sensores simulados | Implementado; dezesseis cenários na validação nativa |
 | CH-038 | "Última ação" da TUI era sobrescrita a cada segundo | o sinal de presença do líder era gravado como ação do operador | o sinal de presença deixou de alterar esse campo; líder e períodos ficam na tela de métricas | Resolvido |
 | CH-039 | a análise de tempo de resposta clássica subestima o pior caso | a formulação de 1995 examina só a primeira instância do período ocupado | uso da análise revisada de Davis et al. (2007), verificada com o exemplo do artigo; rajadas tratadas como quadros liberados juntos | Implementado |
 | CH-040 | uma reassociação por perda de alcance podia deixar o sensor sem responsável | o líder desfazia o vínculo anterior antes de o novo Node confirmar; um Node que aceitava o pedido sem ouvir o sensor ficava parado em `ASSOCIATING` | o líder só pede a nova associação; o responsável anterior cede ao ouvir o novo publicar o vínculo; o Node que não ouve o sensor em 15 s publica `STALE` e o líder escolhe outro | Resolvido; cenários `failover_retry` e `failover_dead_target` |
@@ -62,4 +64,20 @@ Este documento registra defeitos técnicos que ajudam a compreender decisões at
 | CH-056 | Nodes e sensor foram gravados sem chave de enlace sem que o operador percebesse | o `.env.local` vinha de uma versão anterior, sem a chave mestra; o script de credenciais não altera arquivos existentes e os scripts de compilação apenas avisam | `provision_sensor_security.sh --check` aponta a falta e `--add-link-key` a acrescenta; a entrega da chave sem compilação está proposta em `arquitetura/comissionamento-de-sensores.md` | Contornado; observado na primeira bancada física |
 | CH-057 | uma placa gravada pelo botão do editor saía com o número de Node 4 | `tools/node_id.py` usava 4 quando `IOT_NODE_ID` não era informado; duas placas assim disputam os mesmos identificadores CAN e o mesmo ponto de acesso | a compilação sem `IOT_NODE_ID` para com erro e indica o script | Resolvido |
 
-Novos problemas devem ser adicionados apenas quando houver impacto arquitetural, de protocolo, segurança, build ou operação. Logs transitórios de bancada não precisam gerar uma entrada permanente.
+<!-- livro:inicio id="acustico-desafios" capitulo="Sensor acústico INMP441" titulo="Desafios e resoluções" -->
+## Sensor acústico INMP441
+
+Problemas encontrados ao acrescentar o segundo tipo de sensor wireless (`Codigo/node-audio`, ver `sensor-acustico/sensor-acustico.md`).
+
+| ID | Problema | Causa | Solução aplicada | Estado |
+|---|---|---|---|---|
+| CH-058 | o segundo sensor exigiria copiar a pilha de rede do primeiro | enlace, BLE, sessão e DTCs estavam misturados ao código do acelerômetro | módulos comuns em `Codigo/node-wifi` e ganchos em `edge_app.h`, resolvidos na ligação; cada sensor implementa os seus | Implementado; o sensor de vibração não mudou de comportamento |
+| CH-059 | RP2040 e RP2350 não têm periférico I2S | o INMP441 só fala I2S | I2S mestre na PIO, com SCK e WS por *side-set* e leitura só nas bordas de subida; DMA encadeado em anel | Implementado; verificado por simulação ciclo a ciclo, bancada pendente |
+| CH-060 | o primeiro quadro I2S saía deslocado de um ou dois bits | a máquina de estados começava no início do programa, fora da fase do quadro | ponto de entrada na instrução certa e estado inicial de SCK e WS forçado antes de habilitar a máquina | Resolvido; encontrado na simulação da PIO |
+| CH-061 | PIO e DMA fixos colidiriam com o rádio | o driver CYW43 também usa uma máquina de estados e canais de DMA | reserva dinâmica, feita depois de o rádio reservar os dele | Implementado |
+| CH-062 | o RP2040 não acompanha uma FFT por quadro a taxas altas | o Cortex-M0+ emula ponto flutuante | níveis integrados no tempo, sem lacunas; ponderações A e C pela razão medida nos quadros analisados; FFT dispensada conforme o atraso do DMA, com a cobertura informada | Implementado; ocupação a medir em bancada |
+| CH-063 | o número do modo é ambíguo entre sensores | 1 é `ROTATING` no acelerômetro e `LEVEL` no microfone | o perfil viaja no HELLO e na configuração; o Node recusa o modo do perfil errado e a TUI nomeia os modos pelo perfil | Implementado |
+| CH-064 | a fundamental não era encontrada em sinais com muitos harmônicos | a referência de ruído incluía os harmônicos vizinhos | piso medido nos vales entre harmônicos e proeminência pela mediana; a faixa de busca (a partir de 4 faixas) é mostrada na TUI | Resolvido |
+| CH-065 | reconfigurar o DSP no RP2040 acusava perda de áudio | recalcular janela e ponderações leva décimos de segundo, e o anel de DMA enchia nesse meio-tempo | o áudio acumulado durante a reconfiguração é descartado sem contar como perda | Resolvido |
+| CH-066 | gravações da bancada virtual precisam ser idênticas em qualquer máquina | funções como `pow` e `log` podem diferir no último bit entre bibliotecas | o sensor acústico simulado usa níveis e incrementos de dose tabelados e só aritmética básica | Implementado |
+<!-- livro:fim id="acustico-desafios" -->

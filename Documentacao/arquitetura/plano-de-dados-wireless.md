@@ -159,6 +159,8 @@ O sensor envia ao Node, por Wi-Fi, uma amostra completa (com o espectro) a cada 
 
 A 500 kbit/s o barramento comporta cerca de 3 800 quadros de 8 bytes por segundo; a telemetria padrão de um sensor ocupa 9.
 
+O sensor acústico envia um relatório por segundo, já integrado, em vez de uma amostra por janela. O Node o converte em uma transferência própria (tipo `7`) de 108 bytes, ou 19 quadros; o espectro anexado segue a mesma regra acima, só sob pedido. Detalhes em [`../sensor-acustico/sensor-acustico.md`](../sensor-acustico/sensor-acustico.md), seção 8.
+
 ### Comandos
 
 ```text
@@ -173,8 +175,11 @@ seq | node | filho | opcode | arg0 | arg1 | arg2 | arg3
 | `0x10`–`0x14 SET_*` | prepara modo, taxa, janela, limiar ou ganho | Node (cópia em edição) |
 | `0x1F APPLY` | envia a configuração preparada | sensor |
 | `0x20 DTC_CLEAR` | limpa os diagnósticos | sensor |
+| `0x21 ACOUSTIC` | reinicia a medição, aprende ou descarta a assinatura (sensor acústico) | sensor |
 
 Cada comando recebe `CMD_ACK` com `ACCEPTED`, `APPLIED`, `REJECTED`, `NO_LINK` (sem sessão autenticada) ou `UNKNOWN`. Ações que dependem do sensor respondem `ACCEPTED` de imediato e o resultado final quando o sensor confirma, ou `REJECTED` após 3 s sem resposta (`REASON=SENSOR_TIMEOUT`).
+
+O argumento 1 de `0x10 SET_MODE` indica o perfil a que o nome do modo pertence; o Node recusa um modo do outro perfil (`REASON=PROFILE_MISMATCH`) e descarta a edição. `0x21` enviado a um sensor que não é acústico tem a mesma recusa.
 
 Alterações de configuração partem da configuração atual do sensor. Enquanto o Node não a conhece, `SET_*` e `APPLY` são recusados com `REASON=CONFIG_UNKNOWN` e o Node pede o menu novamente; basta repetir o comando.
 

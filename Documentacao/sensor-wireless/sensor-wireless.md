@@ -1,6 +1,6 @@
 # Sensor wireless
 
-O sensor wireless atual usa Raspberry Pi Pico W, MPU6050 e firmware em C/Pico SDK. O dispositivo executa aquisição em `POLLING`, processamento de sinais, diagnóstico, BLE advertising e infraestrutura Wi-Fi controlada por configuração em runtime.
+O sensor wireless de vibração usa Raspberry Pi Pico W, MPU6050 e firmware em C/Pico SDK. O sensor acústico (INMP441), que compartilha com ele o enlace, o BLE e o diagnóstico, está em [`../sensor-acustico/sensor-acustico.md`](../sensor-acustico/sensor-acustico.md). O dispositivo executa aquisição em `POLLING`, processamento de sinais, diagnóstico, BLE advertising e infraestrutura Wi-Fi controlada por configuração em runtime.
 
 ## Hardware
 
@@ -39,6 +39,10 @@ DISABLED ── oferta autêntica ──► DISCOVERY ── CHALLENGE válido �
 Em `DISCOVERY` o sensor envia um `HELLO` autenticado a cada 1,5–3,5 s. Em `BOUND`, cada janela processada gera um datagrama de telemetria com o espectro completo; o Node decide o que segue para o CAN. Comandos do Node (`SET_CONFIG`, `CLEAR_DTC`, `PING`, consulta do menu de configuração) só são aceitos com código de autenticação válido e contador crescente.
 
 `NET` informa também `LINK_KEYS` (`DEVICE`, `MASTER`, `NONE` ou `UUID_MISMATCH`), o Node pai, o filho lógico e os contadores de rejeição.
+
+## Módulos compartilhados
+
+Desde a versão 0.19 o enlace (`edge_network_driver.c`, `edge_link.c`), o BLE (`edge_ble_beacon.c`), a identidade, a bateria e os DTCs (`edge_diagnostics.c`) não dependem do acelerômetro. O que é de cada sensor — perfil anunciado, menu de configuração, taxa e janela efetivas, aplicação da configuração e comandos próprios da sessão — é obtido pelos ganchos de `edge_app.h`, implementados aqui em `edge_app_vibration.c` e no sensor acústico em `Codigo/node-audio/audio_app.c`. O comportamento do sensor de vibração não mudou.
 
 ## Segurança
 

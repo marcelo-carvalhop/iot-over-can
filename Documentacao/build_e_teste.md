@@ -81,6 +81,15 @@ Para um sensor de uso permanente, que não deve guardar a chave mestra, gere as 
 
 e grave o novo `.uf2` da mesma forma.
 
+O sensor acústico (INMP441) usa o mesmo procedimento com `--audio`, para Pico W ou Pico 2 W; a ligação do microfone está em [`sensor-acustico/sensor-acustico.md`](sensor-acustico/sensor-acustico.md), seção 2:
+
+```bash
+./Codigo/scripts/build_pico.sh pico_w --audio                        # bancada, chave mestra
+./Codigo/scripts/build_pico.sh pico2_w --audio --sensor <UUID64>      # Pico 2 W, chaves só dele
+```
+
+O artefato é `Codigo/node-audio/build/edge_audio_firmware.uf2`; no Pico 2 W a unidade que aparece com BOOTSEL se chama `RP2350`.
+
 ### 6. TUI
 
 ```bash
@@ -240,19 +249,50 @@ Codigo/node-wifi/build/edge_node_firmware.uf2
 
 O alvo operacional é `pico_w`.
 
+<!-- livro:inicio id="acustico-build" capitulo="Sensor acústico INMP441" titulo="Compilação e gravação" -->
+## Sensor acústico — Pico W ou Pico 2 W com INMP441
+
+```bash
+./Codigo/scripts/build_pico.sh pico_w --audio                      # Pico W (RP2040)
+./Codigo/scripts/build_pico.sh pico2_w --audio                     # Pico 2 W (RP2350)
+./Codigo/scripts/build_pico.sh pico_w --audio --sensor <UUID64>    # chaves derivadas para um sensor
+```
+
+Artefato:
+
+```text
+Codigo/node-audio/build/edge_audio_firmware.uf2
+```
+
+O código do diretório compila com `-Wall -Wextra -Werror`; o do SDK fica de fora. Os pinos do microfone podem ser trocados no CMake (`-DAUDIO_PIN_SCK=..`, `-DAUDIO_PIN_SD=..`; WS é sempre SCK + 1). As chaves e o token seguem exatamente o esquema do sensor de vibração, inclusive o arquivo `.env.sensor-<UUID>.local`.
+
+Depois de gravar, no console USB (115200, qualquer terminal):
+
+```text
+EDGE> VERSION
+VERSION PROTOCOL=6 NODE_UUID=0x... PROFILE=ACOUSTIC CHIP=RP2040 BOARD=pico_w
+EDGE> STATUS
+STATUS PROFILE=ACOUSTIC ... MODE=LEVEL ACQ=I2S RATE_HZ=16000.00 ... CHANNEL=LEFT MIC=OK CPU_PCT=.. COVERAGE_PCT=100 ...
+EDGE> TELEMETRY ONCE
+```
+
+`MIC=OK` e `COVERAGE_PCT=100` confirmam a ligação e a folga de processamento. Sem sinal, o console escreve `[MIC] ... confira alimentação, SCK=GP18, WS=GP19, SD=GP20 e o pino L/R`.
+<!-- livro:fim id="acustico-build" -->
+
 ## Testes nativos
 
 ```bash
 ./Codigo/scripts/test_native_firmware.sh
 ```
 
-O script executa, no computador, cinco verificações. Requer `cc` e `c++`.
+O script executa, no computador, seis verificações. Requer `cc` e `c++`.
 
 1. Validação de configuração do sensor.
-2. Biblioteca `ioc_link`: SHA-256/HMAC, autenticação do enlace, segmentação CAN.
+2. Biblioteca `ioc_link`: SHA-256/HMAC, autenticação do enlace, segmentação CAN, relatório acústico.
 3. Biblioteca `ioc_link`, parte de rede: duração de quadro e CRC-15, PDU autenticada, segmentação em quadros de até 64 bytes e decisão de reassociação.
-4. Simulação sensor ↔ Node ↔ Probe, que compila `Codigo/node-can/src/wireless_link.cpp` com os substitutos de `Codigo/node-can/test/host/stubs/`.
-5. Bancada virtual: a Probe 00 e três Nodes, cada um o firmware completo, em quinze cenários.
+4. Sensor acústico (`Codigo/node-audio/tests`): motor de DSP e validação da configuração; o DSP roda também com AddressSanitizer e UBSan quando o compilador os oferece.
+5. Simulação sensor ↔ Node ↔ Probe, que compila `Codigo/node-can/src/wireless_link.cpp` com os substitutos de `Codigo/node-can/test/host/stubs/`, com um sensor de vibração e um acústico.
+6. Bancada virtual: a Probe 00 e três Nodes, cada um o firmware completo, em dezesseis cenários (o último, `acoustic_sensor`, com o sensor acústico).
 
 Para inspecionar a saída que a Probe 00 produziria:
 
@@ -297,10 +337,10 @@ O roteiro para métricas, vigilância do líder, reassociação e ensaios de fal
 
 ## Integração contínua
 
-`.github/workflows/ci.yml` usa os scripts operacionais e executa os testes da TUI, a validação nativa (com a bancada virtual) e os builds de firmware: Pico W, Node CAN e Probe 00. Scripts devem estar versionados como executáveis (`100755`).
+`.github/workflows/ci.yml` usa os scripts operacionais e executa os testes da TUI (entre eles a conferência da marcação do livro, `test_livro.py`), a validação nativa (com a bancada virtual) e os builds de firmware: Pico W (vibração), sensor acústico para Pico W e Pico 2 W, Node CAN e Probe 00. Scripts devem estar versionados como executáveis (`100755`), inclusive `extrair_livro.py`.
 
 Verificação:
 
 ```bash
-git ls-files -s Codigo/scripts/*.sh
+git ls-files -s Codigo/scripts/*.sh Codigo/scripts/*.py
 ```
