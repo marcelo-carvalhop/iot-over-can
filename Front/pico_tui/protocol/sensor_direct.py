@@ -26,6 +26,7 @@ from pico_tui.core.models import (
     TelemetrySample,
 )
 from pico_tui.dtc_catalog import dtc_severity
+from pico_tui.protocol.acoustic import acoustic_telemetry_sample, is_acoustic_payload
 from pico_tui.protocol.common import parse_bool, parse_float, parse_int, parse_key_values
 
 
@@ -39,12 +40,14 @@ class SensorDirectDecoder:
         self.bus = bus
         self.uuid = ""
         self.protocol_version = ""
+        self.profile = ""
         self.acquisition_mode = AcquisitionMode.UNKNOWN
         self._last_status: dict[str, str] = {}
 
     def reset(self) -> None:
         self.uuid = ""
         self.protocol_version = ""
+        self.profile = ""
         self.acquisition_mode = AcquisitionMode.UNKNOWN
         self._last_status.clear()
 
@@ -103,6 +106,10 @@ class SensorDirectDecoder:
             # Diagnóstico do caminho até a sessão com o Node (oferta, Wi-Fi,
             # endereço, HELLO, recusas). Visível em Mensagens sem modo de depuração.
             await self.bus.publish(LogEvent("INFO", line, "REDE"))
+        elif token == "[MIC]":
+            # Sensor acústico: busca automática do canal L/R e falhas do microfone.
+            level = "WARNING" if "confira" in line.lower() or "sem sinal" in line.lower() else "INFO"
+            await self.bus.publish(LogEvent(level, line, "MIC"))
         else:
             # Banner, HELP e extensões desconhecidas permanecem disponíveis.
             level = "DEBUG" if token.isupper() else "INFO"
@@ -112,10 +119,13 @@ class SensorDirectDecoder:
         payload = parse_key_values(line)
         self.protocol_version = payload.get("PROTOCOL", "")
         self.uuid = payload.get("NODE_UUID", payload.get("UUID", ""))
+        # Firmwares anteriores à v0.19 não informam o perfil: são de vibração.
+        self.profile = str(payload.get("PROFILE", "VIBRATION")).upper()
         await self.bus.publish(
             DirectSensorVersionReceived(
                 protocol_version=self.protocol_version,
                 wireless_uuid=self.uuid,
+                profile_id=self.profile,
             )
         )
         await self.bus.publish(LogEvent("INFO", line, "SENSOR"))
@@ -165,6 +175,18 @@ class SensorDirectDecoder:
 
     async def _telemetry(self, line: str) -> None:
         payload = parse_key_values(line)
+        if is_acoustic_payload(payload):
+            self.profile = "ACOUSTIC"
+            sample = acoustic_telemetry_sample(
+                self.DEFAULT_PARENT,
+                self.DEFAULT_CHILD,
+                payload,
+                battery=_battery_from_payload(payload),
+                sample_rate_requested_hz=parse_float(self._last_status.get("RATE_HZ")),
+                window_type=self._last_status.get("WINDOW"),
+            )
+            await self.bus.publish(TelemetryReceived(sample))
+            return
         simulated = parse_bool(self._last_status.get("SIM"), False) is True
         explicit_acq = payload.get("ACQ", payload.get("ACQUISITION"))
         acquisition = _acquisition(explicit_acq) if explicit_acq else self.acquisition_mode
@@ -231,12 +253,16 @@ class SensorDirectDecoder:
                     "FFT",
                 )
             )
+        # O sensor acústico informa taxa e tamanho equivalente na própria linha.
         sample = SpectrumSample(
             parent_node_id=self.DEFAULT_PARENT,
             child_id=self.DEFAULT_CHILD,
             magnitudes=values,
-            sample_rate_hz=parse_float(self._last_status.get("RATE_EFF_HZ", self._last_status.get("RATE_HZ"))),
-            fft_size=parse_int(self._last_status.get("WINDOW_SIZE"), len(values) * 2),
+            sample_rate_hz=parse_float(
+                payload.get("RATE_HZ"),
+                parse_float(self._last_status.get("RATE_EFF_HZ", self._last_status.get("RATE_HZ"))),
+            ),
+            fft_size=parse_int(payload.get("FFT_SIZE"), parse_int(self._last_status.get("WINDOW_SIZE"), len(values) * 2)),
             window_type=self._last_status.get("WINDOW"),
             magnitude_unit=payload.get("UNIT", "raw"),
             valid=True,

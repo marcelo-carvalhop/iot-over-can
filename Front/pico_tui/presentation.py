@@ -155,7 +155,19 @@ def sensor_condition(sensor: SensorNode) -> Condition:
     sample = sensor.latest_telemetry
     if sample is not None and sample.clipping is True:
         reasons_attention.append("Acelerômetro saturado")
-    if sensor.quality in {DataQuality.DEGRADED, DataQuality.INVALID}:
+    acoustic = sample.acoustic if sample is not None else None
+    if acoustic is not None:
+        # Mesma régua do DTC: microfone sem sinal é crítico; sobrecarga,
+        # dose acima do limite e anomalia de máquina pedem atenção.
+        if acoustic.mic_fault:
+            reasons_critical.append("Microfone sem sinal válido")
+        if acoustic.overload:
+            reasons_attention.append("Microfone em sobrecarga acústica")
+        if acoustic.dose_limit:
+            reasons_attention.append("Dose de ruído acima do limite ou nível acima de 115 dB(A)")
+        if acoustic.anomaly:
+            reasons_attention.append("Assinatura sonora da máquina fora do normal")
+    if sensor.quality in {DataQuality.DEGRADED, DataQuality.INVALID} and acoustic is None:
         reasons_attention.append(f"Qualidade do dado {quality_label(sensor.quality).lower()}")
 
     if sensor.data_link_state.upper() == "NO_KEY":
@@ -326,6 +338,7 @@ _ROLE_LABELS = {"LEADER": "Líder", "FOLLOWER": "Seguidor", "GATEWAY": "Gateway"
 
 _PROFILE_LABELS = {
     "VIBRATION": "Vibração",
+    "ACOUSTIC": "Acústico",
     "DEMO_BYTE": "Byte de demonstração",
     "NONE": "Nenhum",
     "": "Perfil não informado",
@@ -336,6 +349,9 @@ _SENSOR_MODE_LABELS = {
     "ROTATING": "Máquina rotativa",
     "STRUCTURAL": "Estrutural",
     "SEISMIC": "Sísmico",
+    "LEVEL": "Nível sonoro e exposição",
+    "MACHINE": "Diagnóstico de máquina",
+    "EVENTS": "Eventos sonoros",
     "UNKNOWN": MISSING,
 }
 

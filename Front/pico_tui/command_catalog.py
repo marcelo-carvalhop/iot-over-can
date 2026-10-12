@@ -142,7 +142,7 @@ ACTIONS: tuple[CommandAction, ...] = (
         "Ver espectro de frequência (FFT)",
         "Solicita um espectro do buffer atual e abre o gráfico.",
         protected=True,
-        profiles=frozenset({"VIBRATION"}),
+        profiles=frozenset({"VIBRATION", "ACOUSTIC"}),
         parameter=Parameter(
             name="bins",
             label="Resolução do espectro",
@@ -199,9 +199,60 @@ ACTIONS: tuple[CommandAction, ...] = (
     CommandAction(
         "sensor.configure", "sensor", "Operar",
         "Alterar configuração de aquisição",
-        "Modo, taxa de amostragem, janela, limiar STA/LTA e ganho.",
+        "Modo, taxa de amostragem, janela, limiar e ganho.",
         protected=True,
-        profiles=frozenset({"VIBRATION"}),
+        profiles=frozenset({"VIBRATION", "ACOUSTIC"}),
+    ),
+    # ------------------------------------------------- sensor acústico
+    CommandAction(
+        "sensor.measure_reset", "sensor", "Operar",
+        "Reiniciar a medição acústica",
+        "Zera LAeq,T, L10/L50/L90, doses de ruído e a contagem de eventos; começa uma nova jornada.",
+        confirm="A dose e as estatísticas acumuladas serão descartadas. Continuar?",
+        protected=True,
+        profiles=frozenset({"ACOUSTIC"}),
+    ),
+    CommandAction(
+        "sensor.baseline_learn", "sensor", "Operar",
+        "Aprender a assinatura normal da máquina",
+        "No modo Diagnóstico de máquina, registra a assinatura sonora de referência com a máquina "
+        "em operação normal; depois disso o escore de anomalia é calculado contra ela.",
+        protected=True,
+        profiles=frozenset({"ACOUSTIC"}),
+        parameter=Parameter(
+            name="seconds",
+            label="Duração do aprendizado",
+            kind="int",
+            default="60",
+            minimum=5,
+            maximum=3600,
+            unit="s",
+            help="Cubra os regimes normais da máquina (carga, velocidade). 60 s é um bom começo.",
+        ),
+    ),
+    CommandAction(
+        "sensor.baseline_clear", "sensor", "Manutenção",
+        "Descartar a assinatura de referência",
+        "Apaga a assinatura normal aprendida; o escore de anomalia deixa de ser calculado.",
+        confirm="A assinatura de referência será apagada. Continuar?",
+        protected=True,
+        profiles=frozenset({"ACOUSTIC"}),
+    ),
+    CommandAction(
+        "sensor.acoustic_calibrate", "sensor", "Manutenção",
+        "Calibrar com calibrador acústico",
+        "Com o calibrador (1 kHz) encaixado no microfone há alguns segundos, ajusta o ganho para "
+        "que o nível medido coincida com o de referência.",
+        protected=True,
+        profiles=frozenset({"ACOUSTIC"}),
+        parameter=Parameter(
+            name="reference_db",
+            label="Nível do calibrador",
+            kind="choice",
+            default="94",
+            choices=(Choice("94 dB SPL (1 Pa)", "94"), Choice("114 dB SPL (10 Pa)", "114")),
+            help="Use o nível marcado no calibrador. O ganho só muda se as últimas leituras forem estáveis.",
+        ),
     ),
     CommandAction(
         "sensor.stop_now", "sensor", "Operar",
@@ -215,6 +266,7 @@ ACTIONS: tuple[CommandAction, ...] = (
         "Reinicia a leitura do acelerômetro no modo operacional POLLING.",
         protected=True,
         modes=frozenset({"SENSOR_DIRECT", "DEMO"}),
+        profiles=frozenset({"VIBRATION"}),
     ),
     CommandAction(
         "sensor.dtc_clear", "sensor", "Manutenção",

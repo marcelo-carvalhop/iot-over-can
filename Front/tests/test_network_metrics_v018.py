@@ -64,7 +64,7 @@ REPLAYS = ROOT / "Front" / "replays"
 SCENARIOS = (
     "formation", "sensor", "owner_failover", "sensor_moves", "manual_policy", "leader_failure",
     "leader_failure_no_probe", "silence_leader", "ap_outage", "drop_session", "bus_load", "two_sensors",
-    "failover_retry", "failover_dead_target", "silence_leader_with_sensor",
+    "failover_retry", "failover_dead_target", "silence_leader_with_sensor", "acoustic_sensor",
 )
 UUID = "0xE6616408432B6F39"
 

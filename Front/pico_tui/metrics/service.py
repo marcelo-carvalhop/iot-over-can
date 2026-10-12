@@ -204,6 +204,8 @@ class MetricsSnapshot:
     capacity: rta.Capacity | None            # limite teórico: todos os prazos cumpridos
     capacity_guideline: rta.Capacity | None  # com teto de ocupação (GUIDELINE_UTILIZATION)
     bitrate: int
+    # Mesmo cálculo para sensores acústicos (19 quadros por relatório, contra 9).
+    capacity_acoustic: rta.Capacity | None = None
 
     @property
     def has_bus_data(self) -> bool:
@@ -265,6 +267,7 @@ class MetricsService:
         self._analysis: rta.Analysis | None = None
         self._capacity: rta.Capacity | None = None
         self._capacity_guideline: rta.Capacity | None = None
+        self._capacity_acoustic: rta.Capacity | None = None
 
     def reset(self) -> None:
         """Zera os acumulados da sessão (a tela oferece isso ao operador)."""
@@ -488,10 +491,12 @@ class MetricsService:
                 self._analysis = rta.analyze(flows, self.bitrate)
                 self._capacity = rta.capacity(flows, self.bitrate)
                 self._capacity_guideline = rta.capacity(flows, self.bitrate, utilization_limit=GUIDELINE_UTILIZATION)
+                self._capacity_acoustic = rta.capacity(flows, self.bitrate, frames_per_sample=rta.ACOUSTIC_FRAMES)
             else:
                 self._analysis = None
                 self._capacity = None
                 self._capacity_guideline = None
+                self._capacity_acoustic = None
         return self._analysis, self._capacity, self._capacity_guideline
 
     def snapshot(self) -> MetricsSnapshot:
@@ -516,5 +521,6 @@ class MetricsService:
             analysis=analysis,
             capacity=capacity,
             capacity_guideline=capacity_guideline,
+            capacity_acoustic=self._capacity_acoustic,
             bitrate=self.bitrate,
         )

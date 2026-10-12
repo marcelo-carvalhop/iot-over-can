@@ -893,9 +893,16 @@ int main() {
   wirelessLinkOnUnbound(SENSOR_UUID, 1);
   mic.receive();
   sensor.receive();
-  g_millis += 500;
-  wirelessLinkPoll();
-  deliverFrames(true);
+  CHECK(mic.released && sensor.released);
+  for (int i = 0; i < 8; ++i) {   // os dois avisos de enlace encerrado chegam à Probe
+    g_millis += 100;
+    asNode();
+    wirelessLinkPoll();
+    deliverFrames(true);
+  }
+  CHECK(probeSaw("[GW] WIRELESS_LINK node=1 child=3 state=DOWN"));
+  CHECK(g_probe_output.rfind("[GW] WIRELESS_LINK node=1 child=1 state=DOWN") >
+        g_probe_output.rfind("[GW] WIRELESS_LINK node=1 child=1 state=SECURE"));
   takeCanFrames();
 
   /* Tempos de resposta: PING/PONG no enlace e comando/confirmação na Probe. */

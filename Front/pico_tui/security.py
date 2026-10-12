@@ -42,6 +42,10 @@ MUTATING_PREFIXES = (
     "WIFI ",
     "WIRELESS ",
     "CMD ",
+    # Sensor acústico: reinício da medição, assinatura de referência e calibração.
+    "MEASURE ",
+    "BASELINE ",
+    "CAL ",
     # Ensaios de injeção de falhas: derrubam módulos e ocupam o barramento.
     "FAULT ",
     # Comandos administrativos da rede CAN enviados pela Probe 00.

@@ -87,6 +87,8 @@ class LegacyGatewayDecoder:
         r"status=(?P<status>[A-Z]+)\s+mode=(?P<mode>[A-Z]+)\s+rate_req_hz=(?P<rate_req>[-0-9.]+)\s+"
         r"rate_eff_hz=(?P<rate_eff>[-0-9.]+)\s+window=(?P<window>[A-Z]+)\s+"
         r"window_size=(?P<window_size>\d+)\s+stalta=(?P<stalta>[-0-9.]+)\s+gain=(?P<gain>[-0-9.]+)"
+        # Perfil do sensor (v0.19); um Node anterior não o informa.
+        r"(?:\s+profile=(?P<profile>[A-Z_]+))?"
     )
     CONTROL_RX = re.compile(
         r"\[GW\]\s+CONTROLE RX\s+(?P<b0>[0-9A-Fa-f]{1,2})\s+"
@@ -268,6 +270,7 @@ class LegacyGatewayDecoder:
                         "WINDOW_SIZE": match.group("window_size"),
                         "STALTA": match.group("stalta"),
                         "GAIN": match.group("gain"),
+                        **({"PROFILE": match.group("profile").upper()} if match.group("profile") else {}),
                     },
                 )
             )

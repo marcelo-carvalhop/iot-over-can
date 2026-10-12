@@ -6,6 +6,7 @@ from collections import deque
 from copy import deepcopy
 
 from pico_tui.core.models import (
+    AcousticEvent,
     AppState,
     CanFrameRecord,
     ConnectionMode,
@@ -333,15 +334,28 @@ class StateStore:
             sensor.sensor_mode = sample.mode
             sensor.acquisition_mode = sample.acquisition_mode
             sensor.quality = sample.quality
-            sensor.configuration.mode = sample.mode
-            sensor.configuration.sample_rate_requested_hz = sample.sample_rate_requested_hz
-            sensor.configuration.sample_rate_effective_hz = sample.sample_rate_effective_hz
-            sensor.configuration.window_type = sample.window_type
-            sensor.configuration.window_size = sample.window_size
+            # A telemetria só substitui o que de fato informa: a linha da
+            # Probe não traz a janela, e a do sensor acústico não traz a taxa
+            # pedida; esses valores vêm de WIRELESS_CONFIG ou do STATUS.
+            cfg = sensor.configuration
+            cfg.mode = sample.mode
+            if sample.sample_rate_requested_hz is not None:
+                cfg.sample_rate_requested_hz = sample.sample_rate_requested_hz
+            if sample.sample_rate_effective_hz is not None:
+                cfg.sample_rate_effective_hz = sample.sample_rate_effective_hz
+            if sample.window_type is not None:
+                cfg.window_type = sample.window_type
+            if sample.window_size is not None:
+                cfg.window_size = sample.window_size
             sensor.configuration.simulation_enabled = sample.acquisition_mode.value == "SIM" or sample.quality.value == "SIMULATED"
             if sample.dtc_count is not None:
                 sensor.reported_dtc_count = sample.dtc_count
             return sensor
+
+    def add_acoustic_event(self, parent_node_id: int, child_id: int, event: AcousticEvent) -> None:
+        with self._lock:
+            sensor = self.ensure_sensor(parent_node_id, child_id)
+            sensor.acoustic_events.append(event)
 
     def update_spectrum(self, sample: SpectrumSample) -> None:
         with self._lock:

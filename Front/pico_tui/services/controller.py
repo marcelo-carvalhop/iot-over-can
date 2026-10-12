@@ -34,7 +34,10 @@ from pico_tui.core.events import (
     WirelessFailoverReceived,
     WirelessLinkReceived,
 )
+from pico_tui.acoustics import event_label
 from pico_tui.core.models import (
+    AcousticEvent,
+    AcousticMetrics,
     AcquisitionMode,
     CanFrameRecord,
     ConnectionState,
@@ -44,6 +47,7 @@ from pico_tui.core.models import (
     SensorMode,
     Severity,
     SpectrumSample,
+    profile_for_mode,
 )
 from pico_tui.core.state_store import StateStore
 from pico_tui.dtc_catalog import dtc_description, dtc_severity
@@ -66,6 +70,9 @@ class DomainController:
         # Últimos indicadores físicos por sensor, usados apenas para detectar
         # transições (saturação, gatilho STA/LTA) sem copiar o estado inteiro.
         self._last_flags: dict[tuple[int, int], tuple[bool | None, bool | None]] = {}
+        # Último relatório acústico por sensor: transições de sobrecarga,
+        # falha do microfone, anomalia, dose e o fim de cada evento sonoro.
+        self._last_acoustic: dict[tuple[int, int], AcousticMetrics] = {}
         self._subscribe()
 
     def _subscribe(self) -> None:
@@ -396,7 +403,13 @@ class DomainController:
             values["transaction_state"] = status
         self.state.update_sensor_configuration(event.parent_node_id, event.child_id, **values)
         if mode != SensorMode.UNKNOWN:
-            self.state.update_sensor(event.parent_node_id, event.child_id, sensor_mode=mode, profile_id="VIBRATION")
+            # O Node v0.19 informa o perfil; antes dele, o nome do modo o indica
+            # (IDLE não indica nenhum e mantém o perfil já conhecido).
+            profile = str(payload.get("PROFILE", "")).upper() or profile_for_mode(mode)
+            sensor_values: dict[str, object] = {"sensor_mode": mode}
+            if profile:
+                sensor_values["profile_id"] = profile
+            self.state.update_sensor(event.parent_node_id, event.child_id, **sensor_values)
         if status == "REJECTED":
             self.state.add_sensor_incident(
                 event.parent_node_id,
@@ -427,8 +440,8 @@ class DomainController:
             values["wireless_uuid"] = payload.get("UUID", payload.get("NODE_UUID", sensor.wireless_uuid))
         if "PROFILE" in payload or "PROFILE_ID" in payload:
             values["profile_id"] = str(payload.get("PROFILE", payload.get("PROFILE_ID", ""))).upper()
-        elif str(payload.get("MODE", "")).upper() in {"ROTATING", "STRUCTURAL", "SEISMIC"}:
-            values["profile_id"] = "VIBRATION"
+        elif profile := profile_for_mode(payload.get("MODE", "")):
+            values["profile_id"] = profile
         self.state.update_sensor(event.parent_node_id, event.child_id, **values)
         if "NET" in payload:
             self.state.update_sensor_health(event.parent_node_id, event.child_id, network_state=str(payload["NET"]))
@@ -444,7 +457,7 @@ class DomainController:
         self._direct_uuid = event.wireless_uuid
         self.state.update_node(1, node_type="DIRECT_SENSOR_HOST", status=NodeStatus.ONLINE)
         self.state.ensure_sensor(1, 1, wireless_uuid=event.wireless_uuid)
-        self.state.update_sensor(1, 1, protocol_version=event.protocol_version, profile_id="VIBRATION")
+        self.state.update_sensor(1, 1, protocol_version=event.protocol_version, profile_id=event.profile_id or "VIBRATION")
 
     async def _direct_status(self, event: DirectSensorStatusReceived) -> None:
         payload = event.payload
@@ -453,15 +466,16 @@ class DomainController:
         mode = _sensor_mode(payload.get("MODE"))
         acquisition = _acquisition(payload.get("ACQUISITION", payload.get("ACQ")))
         self.state.ensure_sensor(1, 1, wireless_uuid=self._direct_uuid)
-        self.state.update_sensor(
-            1,
-            1,
-            status=NodeStatus.ONLINE,
-            acquisition_mode=acquisition,
-            sensor_mode=mode,
-            quality=quality,
-            reported_dtc_count=parse_int(payload.get("DTC_COUNT")),
-        )
+        sensor_values: dict[str, object] = {
+            "status": NodeStatus.ONLINE,
+            "acquisition_mode": acquisition,
+            "sensor_mode": mode,
+            "quality": quality,
+            "reported_dtc_count": parse_int(payload.get("DTC_COUNT")),
+        }
+        if profile := str(payload.get("PROFILE", "")).upper() or profile_for_mode(mode):
+            sensor_values["profile_id"] = profile
+        self.state.update_sensor(1, 1, **sensor_values)
         period_ms = parse_float(payload.get("PERIOD_MS"))
         self.state.update_sensor_configuration(
             1,
@@ -471,7 +485,7 @@ class DomainController:
             sample_rate_effective_hz=parse_float(payload.get("RATE_EFF_HZ"), parse_float(payload.get("RATE_HZ"))),
             window_type=payload.get("WINDOW"),
             window_size=parse_int(payload.get("WINDOW_SIZE"), 512),
-            stalta_threshold=parse_float(payload.get("STALTA")),
+            stalta_threshold=parse_float(payload.get("THRESHOLD"), parse_float(payload.get("STALTA"))),
             calibration_gain=parse_float(payload.get("GAIN")),
             telemetry_rate_hz=(1000.0 / period_ms if period_ms not in {None, 0} else None),
             simulation_enabled=simulated,
@@ -486,6 +500,10 @@ class DomainController:
             network_state=str(payload.get("NET", "UNKNOWN")),
             telemetry_enabled=str(payload.get("TELEMETRY", "OFF")).upper() == "ON",
             telemetry_period_ms=parse_int(payload.get("PERIOD_MS")),
+            microphone_state=payload.get("MIC"),
+            audio_channel=payload.get("CHANNEL"),
+            chip=payload.get("CHIP"),
+            board=payload.get("BOARD"),
         )
         dtc_code = parse_int(payload.get("DTC"), 0) or 0
         dtc_count = parse_int(payload.get("DTC_COUNT"), 0) or 0
@@ -513,7 +531,7 @@ class DomainController:
             sample_rate_effective_hz=_first_float(payload, "RATE_EFF", "RATE_EFF_HZ"),
             window_type=window_type,
             window_size=window_size,
-            stalta_threshold=parse_float(payload.get("STALTA")),
+            stalta_threshold=parse_float(payload.get("THRESHOLD"), parse_float(payload.get("STALTA"))),
             calibration_gain=parse_float(payload.get("GAIN")),
             transaction_state="APPLIED",
         )
@@ -559,11 +577,15 @@ class DomainController:
             elif result.out_of_order:
                 await self.bus.publish(LogEvent("WARNING", f"{sample.logical_id}: sequência fora de ordem {sample.sequence}", "SEQUENCE"))
         self._record_physical_transitions(sample)
+        if sample.acoustic is not None:
+            self._record_acoustic_transitions(sample.parent_node_id, sample.child_id, sample.acoustic)
         self.state.update_telemetry(sample)
         telemetry_values: dict[str, object] = {
             "reported_dtc_count": sample.dtc_count,
         }
-        if sample.mode.value in {"ROTATING", "STRUCTURAL", "SEISMIC"} or any(
+        if sample.acoustic is not None:
+            telemetry_values["profile_id"] = "ACOUSTIC"
+        elif sample.mode.value in {"ROTATING", "STRUCTURAL", "SEISMIC"} or any(
             value is not None
             for value in (
                 sample.rms,
@@ -613,6 +635,74 @@ class DomainController:
                 key="event:stalta",
             )
         self._last_flags[key] = (sample.clipping, sample.stalta_triggered)
+
+    def _record_acoustic_transitions(self, parent_node_id: int, child_id: int, metrics: AcousticMetrics) -> None:
+        key = (parent_node_id, child_id)
+        previous = self._last_acoustic.get(key)
+        self._last_acoustic[key] = metrics
+
+        def rising(name: str) -> bool:
+            return getattr(metrics, name) is True and (previous is None or getattr(previous, name) is not True)
+
+        if rising("mic_fault"):
+            self.state.add_sensor_incident(
+                parent_node_id, child_id, Severity.CRITICAL, "MICROFONE",
+                "Microfone sem sinal válido: confira alimentação, SCK, WS, SD e o pino L/R do INMP441",
+                key="acoustic:mic",
+            )
+        if rising("overload"):
+            self.state.add_sensor_incident(
+                parent_node_id, child_id, Severity.WARNING, "EVENTO",
+                "Sobrecarga acústica: pressão acima do fundo de escala do microfone (cerca de 120 dB SPL)",
+                key="acoustic:overload",
+            )
+        if rising("dose_limit"):
+            self.state.add_sensor_incident(
+                parent_node_id, child_id, Severity.WARNING, "EXPOSICAO",
+                "Dose de ruído atingiu 100 % ou o nível passou de 115 dB(A)",
+                key="acoustic:dose",
+            )
+        if rising("anomaly"):
+            score = f" (escore {metrics.anomaly_z:.1f})".replace(".", ",") if metrics.anomaly_z is not None else ""
+            self.state.add_sensor_incident(
+                parent_node_id, child_id, Severity.WARNING, "MAQUINA",
+                f"Assinatura sonora da máquina fora do normal{score}",
+                key="acoustic:anomaly",
+            )
+        if (metrics.baseline or "") == "READY" and previous is not None and (previous.baseline or "") == "LEARNING":
+            self.state.add_sensor_incident(
+                parent_node_id, child_id, Severity.INFO, "MAQUINA",
+                "Assinatura de referência aprendida; anomalias passam a ser avaliadas",
+                key="acoustic:baseline",
+            )
+        # Fim de um evento sonoro: a idade do último evento volta a zero. Um
+        # evento antigo visto na primeira leitura não é registrado de novo.
+        age = metrics.event_age_s
+        previous_age = previous.event_age_s if previous is not None else None
+        fresh = age is not None and (age < previous_age if previous_age is not None else age <= 2)
+        if fresh and metrics.event_class:
+            event = AcousticEvent(
+                event_class=metrics.event_class,
+                peak_db=metrics.event_peak_db,
+                sel_db=metrics.event_sel_db,
+                duration_ms=metrics.event_duration_ms,
+                centroid_hz=metrics.event_centroid_hz,
+            )
+            self.state.add_acoustic_event(parent_node_id, child_id, event)
+            details = []
+            if event.peak_db is not None:
+                details.append(f"pico {event.peak_db:.1f} dB".replace(".", ","))
+            if event.sel_db is not None:
+                details.append(f"SEL {event.sel_db:.1f} dB".replace(".", ","))
+            if event.duration_ms is not None:
+                details.append(f"{event.duration_ms} ms")
+            suffix = f" ({', '.join(details)})" if details else ""
+            self.state.add_sensor_incident(
+                parent_node_id, child_id, Severity.INFO, "EVENTO",
+                f"Evento sonoro: {event_label(event.event_class)}{suffix}",
+                # Uma linha por classe: repetições próximas viram contagem.
+                key=f"acoustic:event:{event.event_class}",
+            )
 
     def _record_dtc_incident(self, parent_node_id: int, child_id: int, code: int, severity: Severity) -> None:
         """Registra a intercorrência só quando o DTC passa de inativo para ativo."""

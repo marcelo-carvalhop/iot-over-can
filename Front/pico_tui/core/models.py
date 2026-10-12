@@ -47,6 +47,8 @@ class AcquisitionMode(str, Enum):
     SIM = "SIM"
     IDLE = "IDLE"
     DRDY = "DRDY"
+    # Sensor acústico: fluxo contínuo do INMP441 por I2S e DMA.
+    I2S = "I2S"
 
     # Aliases de compatibilidade com versões anteriores da TUI.
     SIMULATED = "SIM"
@@ -54,11 +56,37 @@ class AcquisitionMode(str, Enum):
 
 
 class SensorMode(str, Enum):
+    """Modos de operação dos perfis de sensor.
+
+    O número do modo no firmware só tem significado junto com o perfil; aqui
+    os nomes são únicos: ROTATING/STRUCTURAL/SEISMIC pertencem ao sensor de
+    vibração e LEVEL/MACHINE/EVENTS ao sensor acústico (INMP441). IDLE vale
+    para os dois.
+    """
+
     IDLE = "IDLE"
     ROTATING = "ROTATING"
     STRUCTURAL = "STRUCTURAL"
     SEISMIC = "SEISMIC"
+    LEVEL = "LEVEL"
+    MACHINE = "MACHINE"
+    EVENTS = "EVENTS"
     UNKNOWN = "UNKNOWN"
+
+
+VIBRATION_MODES = frozenset({"ROTATING", "STRUCTURAL", "SEISMIC"})
+ACOUSTIC_MODES = frozenset({"LEVEL", "MACHINE", "EVENTS"})
+
+
+def profile_for_mode(mode: object) -> str:
+    """Perfil a que um nome de modo pertence; "" para IDLE e desconhecidos."""
+
+    name = str(getattr(mode, "value", mode) or "").upper()
+    if name in VIBRATION_MODES:
+        return "VIBRATION"
+    if name in ACOUSTIC_MODES:
+        return "ACOUSTIC"
+    return ""
 
 
 class Severity(str, Enum):
@@ -87,6 +115,79 @@ class BatteryInfo:
     source: str = "NOT_INSTRUMENTED"
     valid: bool = False
     charging: bool | None = None
+
+
+@dataclass(slots=True)
+class AcousticMetrics:
+    """Relatório de um segundo do sensor acústico (perfil ACOUSTIC).
+
+    Níveis em dB re 20 µPa. ``None`` marca o que o modo não calcula ou o
+    que o firmware não informou. As bandas de oitava cobrem 31,5 Hz a 16 kHz
+    (ISO 266), sem ponderação.
+    """
+
+    interval_ms: int | None = None
+    coverage_pct: int | None = None
+    dsp_load_pct: int | None = None
+    channel: str | None = None
+    spectrum_valid: bool | None = None
+    overload: bool | None = None
+    mic_fault: bool | None = None
+    laeq_db: float | None = None
+    lceq_db: float | None = None
+    lzeq_db: float | None = None
+    lzpeak_db: float | None = None
+    laf_db: float | None = None
+    lafmax_db: float | None = None
+    lafmin_db: float | None = None
+    crest: float | None = None
+    kurtosis: float | None = None
+    peak_hz: float | None = None
+    centroid_hz: float | None = None
+    flatness: float | None = None
+    octave_db: list[float | None] = field(default_factory=list)
+    # LEVEL
+    leq_t_db: float | None = None
+    l10_db: float | None = None
+    l50_db: float | None = None
+    l90_db: float | None = None
+    dose_nr15_pct: float | None = None
+    dose_nho01_pct: float | None = None
+    elapsed_s: int | None = None
+    dose_limit: bool | None = None
+    # MACHINE
+    tonal_db: float | None = None
+    f0_hz: float | None = None
+    harmonics: int | None = None
+    anomaly_z: float | None = None
+    baseline: str | None = None          # NONE, LEARNING ou READY
+    baseline_pct: int | None = None
+    anomaly: bool | None = None
+    # EVENTS
+    events_total: int | None = None
+    events_interval: int | None = None
+    event_active: bool | None = None
+    sta_lta_db: float | None = None
+    background_db: float | None = None
+    event_class: str | None = None       # IMPACT, CRACK, TONAL, TRANSIENT
+    event_peak_db: float | None = None
+    event_sel_db: float | None = None
+    event_duration_ms: int | None = None
+    event_centroid_hz: float | None = None
+    event_age_s: int | None = None
+
+
+@dataclass(slots=True)
+class AcousticEvent:
+    """Evento sonoro detectado no modo EVENTS e registrado pela TUI."""
+
+    event_class: str
+    peak_db: float | None = None
+    sel_db: float | None = None
+    duration_ms: int | None = None
+    centroid_hz: float | None = None
+    count: int = 1                        # eventos somados quando vários chegam no mesmo relatório
+    received_wall_time: float = field(default_factory=time.time)
 
 
 @dataclass(slots=True)
@@ -122,6 +223,8 @@ class TelemetrySample:
     quality: DataQuality = DataQuality.UNKNOWN
     battery: BatteryInfo = field(default_factory=BatteryInfo)
     raw: dict[str, Any] = field(default_factory=dict)
+    # Presente apenas na telemetria do sensor acústico.
+    acoustic: AcousticMetrics | None = None
 
     @property
     def logical_id(self) -> str:
@@ -179,6 +282,7 @@ class Incident:
 
 
 INCIDENT_HISTORY = 60
+ACOUSTIC_EVENT_HISTORY = 200
 
 
 @dataclass(slots=True)
@@ -204,6 +308,11 @@ class SensorHealth:
     telemetry_enabled: bool = False
     telemetry_period_ms: int | None = None
     drdy_enabled: bool | None = None
+    # Sensor acústico: estado do microfone, canal I2S em uso e plataforma.
+    microphone_state: str | None = None
+    audio_channel: str | None = None
+    chip: str | None = None
+    board: str | None = None
 
 
 @dataclass(slots=True)
@@ -250,6 +359,8 @@ class SensorNode:
         default_factory=lambda: deque(maxlen=2000),
     )
     incidents: deque[Incident] = field(default_factory=lambda: deque(maxlen=INCIDENT_HISTORY))
+    # Eventos sonoros registrados nesta sessão (sensor acústico, modo EVENTS).
+    acoustic_events: deque[AcousticEvent] = field(default_factory=lambda: deque(maxlen=ACOUSTIC_EVENT_HISTORY))
 
     @property
     def logical_id(self) -> str:

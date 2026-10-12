@@ -1,7 +1,10 @@
 """Formatação do espectro FFT em texto, com largura adaptável à tela."""
 from __future__ import annotations
 
+import math
+
 from pico_tui import presentation as pres
+from pico_tui.acoustics import pa_to_db
 from pico_tui.core.models import SpectrumSample
 
 LABEL_WIDTH = 11  # "  1,23e+03 ┤"
@@ -83,6 +86,69 @@ def spectrum_peaks(spectrum: SpectrumSample, count: int = 5) -> list[str]:
         frequency_text = pres.fmt_number(frequency, 3, "Hz") if frequency is not None else f"faixa {index}"
         rows.append(f"{position}. {frequency_text}  magnitude {pres.fmt_number(value, 6)}  faixa {index}")
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Sensor acústico: magnitudes em Pa eficaz, exibidas em dB SPL
+# ---------------------------------------------------------------------------
+
+ACOUSTIC_DYNAMIC_RANGE_DB = 60.0
+
+
+def spectrum_levels_db(spectrum: SpectrumSample) -> list[float | None]:
+    """Nível de cada faixa em dB re 20 µPa (None para faixas zeradas)."""
+
+    return [pa_to_db(value) for value in spectrum.magnitudes]
+
+
+def acoustic_spectrum_chart(spectrum: SpectrumSample, width: int = 72, height: int = 12) -> str:
+    """Gráfico em dB SPL, com os 60 dB abaixo do topo (faixas mais fracas no piso)."""
+
+    levels = spectrum_levels_db(spectrum)
+    present = [level for level in levels if level is not None]
+    if not present:
+        return pres.MISSING
+    top = math.ceil(max(present) / 10.0) * 10.0
+    floor = top - ACOUSTIC_DYNAMIC_RANGE_DB
+    chart_width = max(8, min(width - LABEL_WIDTH, len(levels)))
+    columns: list[float] = []
+    for column in range(chart_width):
+        start = column * len(levels) // chart_width
+        end = max(start + 1, (column + 1) * len(levels) // chart_width)
+        local = [level for level in levels[start:end] if level is not None]
+        columns.append(max(local) if local else floor)
+    lines: list[str] = []
+    for row in range(height, 0, -1):
+        threshold = floor + (top - floor) * row / height
+        body = "".join("█" if value >= threshold else " " for value in columns)
+        lines.append(f"{threshold:>6.0f} dB ┤" + body)
+    lines.append(f"{floor:>6.0f} dB └" + "─" * chart_width)
+    max_frequency = spectrum_frequency(spectrum, len(levels) - 1)
+    left, right = ("0 Hz", pres.fmt_number(max_frequency, 0, "Hz")) if max_frequency is not None else ("faixa 0", f"faixa {len(levels) - 1}")
+    gap = max(1, chart_width - len(left) - len(right))
+    lines.append(" " * LABEL_WIDTH + left + " " * gap + right)
+    lines.append("Nível de pressão sonora [dB re 20 µPa] por frequência; cada coluna mostra a faixa mais forte")
+    return "\n".join(lines)
+
+
+def acoustic_spectrum_peaks(spectrum: SpectrumSample, count: int = 5) -> list[str]:
+    levels = spectrum_levels_db(spectrum)
+    ranked = sorted((item for item in enumerate(levels) if item[1] is not None), key=lambda item: item[1], reverse=True)
+    rows = []
+    for position, (index, level) in enumerate(ranked[:count], start=1):
+        frequency = spectrum_frequency(spectrum, index)
+        frequency_text = pres.fmt_number(frequency, 1, "Hz") if frequency is not None else f"faixa {index}"
+        rows.append(f"{position}. {frequency_text}  {pres.fmt_number(level, 1, 'dB SPL')}  faixa {index}")
+    return rows
+
+
+def acoustic_spectrum_fields(spectrum: SpectrumSample) -> list[tuple[str, str]]:
+    fields = [(label, value) for label, value in spectrum_fields(spectrum) if label != "Unidade da magnitude"]
+    present = [level for level in spectrum_levels_db(spectrum) if level is not None]
+    fields.append(("Unidade", "dB SPL (pressão eficaz por faixa, re 20 µPa)"))
+    fields.append(("Faixa mais forte", pres.fmt_number(max(present), 1, "dB SPL") if present else pres.MISSING))
+    fields.append(("Média do intervalo", "Welch: média dos blocos de um segundo"))
+    return fields
 
 
 # Nomes anteriores, mantidos para compatibilidade com testes e scripts.

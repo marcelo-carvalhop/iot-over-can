@@ -27,7 +27,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Input, Label, OptionList, Sparkline, Static
 
-from pico_tui import palette
+from pico_tui import acoustic_view, palette
 from pico_tui import presentation as pres
 from pico_tui.command_catalog import ACTIONS_BY_KEY, GROUP_ORDER, actions_for, can_command
 from pico_tui.core.models import AppState, ConnectionMode, SensorNode
@@ -35,6 +35,9 @@ from pico_tui.spectrum import (  # noqa: F401 - reexportados por compatibilidade
     _spectrum_chart,
     _spectrum_metadata,
     _spectrum_peaks,
+    acoustic_spectrum_chart,
+    acoustic_spectrum_fields,
+    acoustic_spectrum_peaks,
     spectrum_chart,
     spectrum_fields,
     spectrum_peaks,
@@ -290,16 +293,23 @@ class SensorScreen(BaseScreen):
         Binding("s", "status", "Atualizar", show=False),
         Binding("d", "unbind", "Desassociar", show=False),
         Binding("w", "wireless", "Sensores sem fio", show=False),
+        # Sensor acústico: reinício da medição e assinatura de referência.
+        Binding("z", "measure_reset", "Reiniciar medição", show=False),
+        Binding("a", "baseline_learn", "Aprender referência", show=False),
     ]
+
+    SPECTRUM_PROFILES = frozenset({"VIBRATION", "ACOUSTIC"})
 
     def __init__(self, logical_id: str) -> None:
         super().__init__()
         self.logical_id = logical_id
         self.parent_id = int(logical_id.split(".", 1)[0])
         self._profile = ""
+        self._mode = ""
         self._wireless_associated = False  # associado, porém sem plano de dados
         self._wireless_bound = False       # associado a um módulo (com ou sem plano de dados)
         self._hints_profile: str | None = None
+        self._octave_key: tuple = ()
 
     def key_hints(self) -> list[tuple[str, str, str | None]]:
         hints: list[tuple[str, str, str | None]] = [("Esc", "Voltar", "screen.back")]
@@ -312,8 +322,12 @@ class SensorScreen(BaseScreen):
             )
         else:
             hints.append(("c", "Comandos", "screen.commands"))
-            if self._profile == "VIBRATION":
+            if self._profile in self.SPECTRUM_PROFILES:
                 hints.append(("f", "Espectro FFT", "screen.spectrum"))
+            if self._profile == "ACOUSTIC":
+                hints.append(("z", "Reiniciar medição", "screen.measure_reset"))
+                if self._mode == "MACHINE":
+                    hints.append(("a", "Aprender referência", "screen.baseline_learn"))
             hints.append(("s", "Atualizar", "screen.status"))
             if self._wireless_bound:
                 hints.append(("w", "Sensores sem fio", "screen.wireless"))
@@ -333,7 +347,21 @@ class SensorScreen(BaseScreen):
                     yield Sparkline([], id="trend-ppv", classes="trend")
                 with section("Dados recebidos", id="sec-raw"):
                     yield Fields(id="sensor-raw")
+                with section("Níveis sonoros", id="sec-acoustic"):
+                    yield Fields(id="acoustic-levels")
+                    yield Label("Bandas de oitava (sem ponderação)", classes="trend-label")
+                    yield Static("", id="acoustic-octaves")
+                    yield Label("Tendência do LAeq", classes="trend-label")
+                    yield Sparkline([], id="trend-laeq", classes="trend")
+                with section("Medição acústica", id="sec-acoustic-mode"):
+                    yield Fields(id="acoustic-mode")
+                    yield Label("", id="trend-mode-label", classes="trend-label")
+                    yield Sparkline([], id="trend-mode", classes="trend")
             with Vertical(classes="column"):
+                with section("Leitura do ambiente", id="sec-insights"):
+                    yield Paragraphs(id="acoustic-insights", empty="Aguardando o primeiro relatório acústico.")
+                with section("Eventos registrados nesta sessão", id="sec-events"):
+                    yield Paragraphs(id="acoustic-events", empty="Nenhum evento sonoro registrado ainda.")
                 with section("Intercorrências", id="sec-incidents"):
                     yield Paragraphs(id="sensor-incidents", empty="Nenhuma intercorrência registrada nesta sessão.")
                     yield Fields(id="sensor-link", classes="subfields")
@@ -356,26 +384,35 @@ class SensorScreen(BaseScreen):
             )
             return
         profile = (sensor.profile_id or "").upper()
+        mode = sensor.sensor_mode.value
         wireless_associated = sensor.wireless_associated
         # Sem sessão autenticada com o módulo, a tela mostra o vínculo e
         # esconde ações que dependem do canal de dados.
         control_only = wireless_associated and not sensor.has_data_plane
         if (
             profile != self._profile
+            or mode != self._mode
             or control_only != self._wireless_associated
             or wireless_associated != self._wireless_bound
         ):
             self._profile = profile
+            self._mode = mode
             self._wireless_associated = control_only
             self._wireless_bound = wireless_associated
             self.query_one("#key-bar", KeyBar).set_hints(self.key_hints())
         is_vibration = profile == "VIBRATION"
+        is_acoustic = profile == "ACOUSTIC"
         self.query_one("#sec-metrics").display = is_vibration
-        self.query_one("#sec-raw").display = not is_vibration
+        self.query_one("#sec-raw").display = not (is_vibration or is_acoustic)
+        for section_id in ("#sec-acoustic", "#sec-acoustic-mode", "#sec-insights"):
+            self.query_one(section_id).display = is_acoustic
+        self.query_one("#sec-events").display = is_acoustic and (mode == "EVENTS" or bool(sensor.acoustic_events))
 
         self.query_one("#sensor-status", Fields).set_fields(self._status_fields(sensor))
         if is_vibration:
             self._update_vibration(sensor)
+        elif is_acoustic:
+            self._update_acoustic(sensor)
         else:
             raw = sensor.latest_telemetry.raw if sensor.latest_telemetry else {}
             fields = [(str(key).title(), str(value)) for key, value in sorted(raw.items())]
@@ -437,6 +474,8 @@ class SensorScreen(BaseScreen):
     @staticmethod
     def _config_fields(sensor: SensorNode) -> list[tuple[str, Text | str]]:
         cfg = sensor.configuration
+        if (sensor.profile_id or "").upper() == "ACOUSTIC":
+            return [*acoustic_view.config_fields(sensor), ("Última alteração", _transaction_label(cfg.transaction_state))]
         return [
             ("Modo", pres.sensor_mode_label(cfg.mode.value)),
             ("Taxa solicitada", pres.fmt_number(cfg.sample_rate_requested_hz, 1, "Hz")),
@@ -469,6 +508,8 @@ class SensorScreen(BaseScreen):
             acquisition = "POLLING (modo oficial)"
         elif acquisition == "DRDY":
             acquisition = "DRDY (experimental)"
+        elif acquisition == "I2S":
+            acquisition = "I2S contínuo por DMA (INMP441)"
         elif acquisition == "UNKNOWN":
             acquisition = pres.MISSING
         if sensor.wireless_associated and not sensor.has_data_plane and sample is None:
@@ -481,7 +522,7 @@ class SensorScreen(BaseScreen):
                 ("Perfil", pres.profile_label(sensor.profile_id)),
                 ("Identificador", sensor.wireless_uuid or pres.MISSING),
             ]
-        return [
+        fields: list[tuple[str, Text | str]] = [
             ("Condição", _condition_value(pres.sensor_condition(sensor))),
             ("Comunicação", f"{pres.status_label(sensor.status)}, última leitura {pres.fmt_age(pres.sensor_age(sensor))}"),
             ("Modo de operação", pres.sensor_mode_label(sensor.sensor_mode.value)),
@@ -491,6 +532,11 @@ class SensorScreen(BaseScreen):
             ("Bateria", battery),
             ("Identificador", sensor.wireless_uuid or pres.MISSING),
         ]
+        if (sensor.profile_id or "").upper() == "ACOUSTIC":
+            fields[4:4] = [("Microfone", acoustic_view.microphone_text(sensor))]
+            if sensor.health.chip or sensor.health.board:
+                fields.append(("Plataforma", acoustic_view.platform_text(sensor)))
+        return fields
 
     def _update_vibration(self, sensor: SensorNode) -> None:
         sample = sensor.latest_telemetry
@@ -529,12 +575,52 @@ class SensorScreen(BaseScreen):
         self.query_one("#trend-rms", Sparkline).data = [item.rms for item in history if item.rms is not None]
         self.query_one("#trend-ppv", Sparkline).data = [item.ppv_mm_s for item in history if item.ppv_mm_s is not None]
 
+    def _update_acoustic(self, sensor: SensorNode) -> None:
+        metrics = acoustic_view.latest(sensor)
+        mode_section = self.query_one("#sec-acoustic-mode")
+        mode_section.border_title = acoustic_view.mode_title(sensor.sensor_mode.value)
+        if metrics is None:
+            message = "Sem relatório acústico recebido."
+            if sensor.wireless_associated and not sensor.has_data_plane:
+                message += " O plano de dados via módulo CAN ainda não tem sessão autenticada."
+            self.query_one("#acoustic-levels", Fields).set_fields([("Leituras", message)])
+            self.query_one("#acoustic-mode", Fields).set_fields([])
+            self.query_one("#acoustic-insights", Paragraphs).set_items([])
+            return
+        self.query_one("#acoustic-levels", Fields).set_fields(acoustic_view.level_fields(metrics))
+        width = max(24, self.query_one("#sec-acoustic").content_size.width or 60)
+        key = (tuple(metrics.octave_db), width)
+        if key != self._octave_key:
+            self._octave_key = key
+            self.query_one("#acoustic-octaves", Static).update(acoustic_view.octave_lines(metrics, width))
+        self.query_one("#trend-laeq", Sparkline).data = acoustic_view.laeq_trend(sensor)
+        self.query_one("#acoustic-mode", Fields).set_fields(acoustic_view.mode_fields(sensor, metrics))
+        label, data = acoustic_view.mode_trend(sensor)
+        self.query_one("#trend-mode-label", Label).update(label)
+        self.query_one("#trend-mode-label", Label).display = bool(label)
+        trend = self.query_one("#trend-mode", Sparkline)
+        trend.display = bool(label)
+        trend.data = data
+        self.query_one("#acoustic-insights", Paragraphs).set_items(acoustic_view.insight_items(sensor, metrics))
+        self.query_one("#acoustic-events", Paragraphs).set_items(acoustic_view.event_items(sensor))
+
+    def on_resize(self) -> None:
+        self._octave_key = ()
+
     def action_commands(self) -> None:
         self.tui.open_commands(f"sensor:{self.logical_id}")
 
     def action_spectrum(self) -> None:
-        if self._profile == "VIBRATION":
+        if self._profile in self.SPECTRUM_PROFILES:
             self.tui.start_action("sensor.fft", f"sensor:{self.logical_id}")
+
+    def action_measure_reset(self) -> None:
+        if self._profile == "ACOUSTIC" and not self._wireless_associated:
+            self.tui.start_action("sensor.measure_reset", f"sensor:{self.logical_id}")
+
+    def action_baseline_learn(self) -> None:
+        if self._profile == "ACOUSTIC" and self._mode == "MACHINE" and not self._wireless_associated:
+            self.tui.start_action("sensor.baseline_learn", f"sensor:{self.logical_id}")
 
     def action_status(self) -> None:
         if not self._wireless_associated:
@@ -1327,12 +1413,16 @@ class FftScreen(BaseScreen):
             chart.update("Aguardando o espectro do sensor. O vetor chega separado da telemetria, após o pedido.")
             return
         width = max(20, self.query_one("#sec-chart").content_size.width or 60)
-        key = (spectrum.received_wall_time, width)
+        # O sensor acústico envia pressão eficaz (Pa) por faixa: o gráfico usa dB SPL.
+        acoustic = (sensor.profile_id or "").upper() == "ACOUSTIC"
+        key = (spectrum.received_wall_time, width, acoustic)
         if key != self._chart_key:
             self._chart_key = key
-            chart.update(Text(spectrum_chart(spectrum, width=width), style=palette.ACCENT_FOCUS))
-        self.query_one("#fft-peaks", Paragraphs).set_items([Text(row) for row in spectrum_peaks(spectrum)])
-        self.query_one("#fft-meta", Fields).set_fields(spectrum_fields(spectrum))
+            text = acoustic_spectrum_chart(spectrum, width=width) if acoustic else spectrum_chart(spectrum, width=width)
+            chart.update(Text(text, style=palette.ACCENT_FOCUS))
+        peaks = acoustic_spectrum_peaks(spectrum) if acoustic else spectrum_peaks(spectrum)
+        self.query_one("#fft-peaks", Paragraphs).set_items([Text(row) for row in peaks])
+        self.query_one("#fft-meta", Fields).set_fields(acoustic_spectrum_fields(spectrum) if acoustic else spectrum_fields(spectrum))
 
     def on_resize(self) -> None:
         self._chart_key = ()
@@ -1395,6 +1485,7 @@ class HelpScreen(BaseScreen):
             items=[
                 Text("Na tela inicial, Enter sobre um módulo ou sensor abre a tela própria dele."),
                 Text("A tela do sensor mostra situação, métricas do perfil, intercorrências e a configuração aplicada."),
+                Text("Sensores acústicos (INMP441) mostram níveis em dB(A), dB(C) e dB(Z), bandas de oitava, a leitura do ambiente (curva NC, conversa, graves, impulsividade) e um painel por modo: exposição ao ruído (NR-15 e NHO-01), diagnóstico de máquina (tacômetro acústico e anomalia) e eventos sonoros. Na tela do sensor, z reinicia a medição e a, no modo de máquina, aprende a assinatura normal; f abre o espectro em dB SPL."),
                 Text("A tela do módulo mostra papel na rede, sensor local, sensores sem fio e descoberta BLE."),
                 Text("F7 ou w abre o gerenciamento wireless: candidatos disponíveis, vínculos ativos, associação e desassociação."),
                 Text("Na associação escolhe-se a política de reassociação. Na automática, o líder entrega o sensor a outro módulo quando o responsável sai do ar ou deixa de ouvi-lo; f, na lista de associados, altera a política."),
@@ -1411,6 +1502,8 @@ class HelpScreen(BaseScreen):
                 Text(":tel on|off|once|fast|slow|period <ms>   :fft [sensor] bins=64   :acq polling"),
                 Text(":dtc list [sensor]   :dtc clear [sensor] all|0xCÓDIGO   :wifi on|off|status"),
                 Text(":config [sensor] mode=STRUCTURAL rate=250 window=HANN   :connect [porta] [modo]"),
+                Text(":config [sensor] mode=EVENTS rate=16000 fft=1024 threshold=8   :measure reset [sensor]"),
+                Text(":baseline learn [segundos] | :baseline clear   :cal [94|114] (calibrador no microfone)"),
                 Text(":wireless   :bind [uuid] [módulo] [auto]   :unbind [uuid] [módulo]   :policy [sensor] auto|manual"),
                 Text(":metrics [on|off|reset|export]   :ensaios [nome|stop]   :export metrics"),
                 Text(":disconnect   :reconnect   :export csv   :snapshot   :security   :lock   :quit"),

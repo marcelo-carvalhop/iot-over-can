@@ -466,6 +466,14 @@ def _sensor_metric_segments(sensor: SensorNode) -> list[Text]:
     sample = sensor.latest_telemetry
     if sample is None:
         return []
+    if sample.acoustic is not None:
+        # Importação tardia: o módulo acústico só é carregado quando há um sensor desse perfil.
+        from pico_tui.acoustic_view import summary_segments
+
+        parts = summary_segments(sensor)
+        if sample.battery.valid and sample.battery.percentage is not None:
+            parts.append(f"bateria {sample.battery.percentage:.0f}%")
+        return [Text(part, style=palette.TEXT_MUTED) for part in parts]
     parts = []
     if sample.rms is not None:
         parts.append(f"RMS {pres.fmt_number(sample.rms, 3, sample.rms_unit)}")

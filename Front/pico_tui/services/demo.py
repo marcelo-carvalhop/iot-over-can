@@ -7,6 +7,7 @@ import random
 from pico_tui.core.event_bus import EventBus
 from pico_tui.core.events import (
     BusStatsReceived,
+    WirelessConfigReceived,
     FaultCommandSent,
     FaultEventReceived,
     GatewayDetected,
@@ -18,10 +19,12 @@ from pico_tui.core.events import (
     TelemetryReceived,
 )
 from pico_tui.core.models import (
+    AcousticMetrics,
     AcquisitionMode,
     BatteryInfo,
     DataQuality,
     SensorMode,
+    SpectrumSample,
     TelemetrySample,
 )
 
@@ -38,8 +41,202 @@ DEMO_TRAFFIC = (
     (0x349, 1, 10000, 8),
     (0x394, 18, 1000, 8),
     (0x395, 9, 1000, 8),
+    (0x396, 19, 1000, 8),   # relatório acústico: 108 bytes em 19 quadros
 )
 DEMO_LEADER = 23
+ACOUSTIC_DEMO = (22, 1, "0x10C1")
+
+# Forma do espectro em bandas de oitava (31,5 Hz a 16 kHz) de uma oficina,
+# relativa ao LAeq; somada ao nível do momento.
+_OCTAVE_SHAPE = (-14.0, -6.0, -2.0, 0.0, 1.0, 0.5, -2.5, -7.0, -14.0, -23.0)
+_EVENT_CLASSES = ("IMPACT", "CRACK", "TONAL", "TRANSIENT")
+
+
+class DemoAcousticSensor:
+    """Sensor acústico simulado: um relatório por segundo, nos três modos.
+
+    Reage à configuração (modo e limiar), ao reinício da medição, ao
+    aprendizado da assinatura de referência e à calibração, para que as
+    análises da TUI possam ser exploradas sem hardware.
+    """
+
+    def __init__(self, parent: int, child: int) -> None:
+        self.parent = parent
+        self.child = child
+        self.mode = "LEVEL"
+        self.threshold = 8.0
+        self.gain_db = 0.0
+        self.seconds = 0
+        self.measure_seconds = 0
+        self.dose_nr15 = 0.0
+        self.dose_nho01 = 0.0
+        self.levels: list[float] = []
+        self.events = 0
+        self.next_event = 6
+        self.last_event: tuple[str, float, float, int, float, int] | None = None   # classe, pico, SEL, ms, Hz, fim
+        self.baseline = "NONE"
+        self.baseline_until = 0
+        self.baseline_length = 0
+        self.seq = 0
+
+    # -------------------------------------------------------------- controle
+    def configure(self, mode: str, threshold: float | None) -> None:
+        if mode.upper() in {"IDLE", "LEVEL", "MACHINE", "EVENTS"}:
+            self.mode = mode.upper()
+        if threshold is not None and threshold > 1.0:
+            self.threshold = threshold
+
+    def control(self, action: str, seconds: int) -> None:
+        if action == "MEASURE_RESET":
+            self.measure_seconds = 0
+            self.dose_nr15 = self.dose_nho01 = 0.0
+            self.levels.clear()
+            self.events = 0
+            self.last_event = None
+        elif action == "BASELINE_LEARN":
+            self.baseline = "LEARNING"
+            self.baseline_length = max(5, seconds)
+            self.baseline_until = self.seconds + self.baseline_length
+        elif action == "BASELINE_CLEAR":
+            self.baseline = "NONE"
+
+    # ---------------------------------------------------------------- medida
+    def _laeq(self) -> float:
+        return 81.0 + 3.0 * math.sin(self.seconds / 23.0) + 1.2 * math.sin(self.seconds / 3.1) + self.gain_db
+
+    def report(self) -> TelemetrySample | None:
+        self.seconds += 1
+        if self.mode == "IDLE":
+            return None
+        self.seq = (self.seq + 1) & 0xFFFF
+        self.measure_seconds += 1
+        laeq = self._laeq()
+        # A 16 kHz de amostragem o firmware omite as bandas de 8 e 16 kHz (acima de fs/2).
+        octaves: list[float | None] = [laeq + shape + random.uniform(-0.6, 0.6) for shape in _OCTAVE_SHAPE[:8]]
+        octaves += [None, None]
+        metrics = AcousticMetrics(
+            interval_ms=1000,
+            coverage_pct=100,
+            dsp_load_pct=34 + self.seconds % 6,
+            channel="LEFT",
+            spectrum_valid=True,
+            overload=False,
+            mic_fault=False,
+            laeq_db=laeq,
+            lceq_db=laeq + 8.2,
+            lzeq_db=laeq + 9.1,
+            lzpeak_db=laeq + 9.1 + 11.5 + random.uniform(-0.5, 0.5),
+            laf_db=laeq - 0.4,
+            lafmax_db=laeq + 3.1,
+            lafmin_db=laeq - 2.7,
+            crest=3.8,
+            kurtosis=0.2,
+            peak_hz=1000.0,
+            centroid_hz=1350.0,
+            flatness=0.21,
+            octave_db=octaves,
+        )
+        if self.mode == "LEVEL":
+            self.levels.append(laeq)
+            self.dose_nr15 += 100.0 / (28800.0 / 2.0 ** ((laeq - 85.0) / 5.0)) if laeq >= 80.0 else 0.0
+            self.dose_nho01 += 100.0 / (28800.0 / 2.0 ** ((laeq - 85.0) / 3.0)) if laeq >= 80.0 else 0.0
+            ordered = sorted(self.levels)
+            metrics.leq_t_db = 10.0 * math.log10(sum(10.0 ** (v / 10.0) for v in self.levels) / len(self.levels))
+            metrics.l10_db = ordered[int(0.9 * (len(ordered) - 1))]
+            metrics.l50_db = ordered[int(0.5 * (len(ordered) - 1))]
+            metrics.l90_db = ordered[int(0.1 * (len(ordered) - 1))]
+            metrics.dose_nr15_pct = self.dose_nr15
+            metrics.dose_nho01_pct = self.dose_nho01
+            metrics.elapsed_s = self.measure_seconds
+            metrics.dose_limit = self.dose_nho01 >= 100.0
+        elif self.mode == "MACHINE":
+            # Motor de 4 polos a 60 Hz com 1,7 % de escorregamento: 1770 rpm.
+            metrics.f0_hz = 29.5 + random.uniform(-0.05, 0.05)
+            metrics.harmonics = 5
+            metrics.tonal_db = 13.5 + random.uniform(-0.5, 0.5)
+            metrics.peak_hz = 4 * metrics.f0_hz
+            metrics.flatness = 0.04
+            if self.baseline == "LEARNING" and self.seconds >= self.baseline_until:
+                self.baseline = "READY"
+            metrics.baseline = self.baseline
+            if self.baseline == "LEARNING":
+                done = self.baseline_length - (self.baseline_until - self.seconds)
+                metrics.baseline_pct = max(0, min(99, round(100.0 * done / self.baseline_length)))
+            elif self.baseline == "READY":
+                metrics.baseline_pct = 100
+                metrics.anomaly_z = 0.9 + 0.6 * abs(math.sin(self.seconds / 9.0))
+                metrics.anomaly = metrics.anomaly_z >= self.threshold
+            else:
+                metrics.baseline_pct = 0
+        elif self.mode == "EVENTS":
+            metrics.background_db = laeq - 3.0
+            metrics.sta_lta_db = random.uniform(0.0, 2.0)
+            metrics.events_interval = 0
+            metrics.event_active = False
+            if self.measure_seconds >= self.next_event:
+                self.next_event = self.measure_seconds + random.randint(7, 15)
+                self.events += 1
+                kind = random.choice(_EVENT_CLASSES)
+                peak = laeq + random.uniform(12.0, 22.0)
+                duration = 900 if kind in {"TONAL", "TRANSIENT"} else random.randint(25, 120)
+                centroid = 5200.0 if kind == "CRACK" else (2400.0 if kind == "TONAL" else 700.0)
+                self.last_event = (kind, peak, peak - 14.0 + duration / 200.0, duration, centroid, self.measure_seconds)
+                metrics.events_interval = 1
+                metrics.event_active = True
+                metrics.sta_lta_db = peak - laeq
+            metrics.events_total = self.events
+            if self.last_event is not None:
+                kind, peak, sel, duration, centroid, ended = self.last_event
+                metrics.event_class = kind
+                metrics.event_peak_db = peak
+                metrics.event_sel_db = sel
+                metrics.event_duration_ms = duration
+                metrics.event_centroid_hz = centroid
+                metrics.event_age_s = self.measure_seconds - ended
+        return TelemetrySample(
+            parent_node_id=self.parent,
+            child_id=self.child,
+            sequence=self.seq,
+            mode=SensorMode(self.mode),
+            acquisition_mode=AcquisitionMode.I2S,
+            sample_rate_requested_hz=16000.0,
+            sample_rate_effective_hz=16000.0,
+            window_type="HANN",
+            window_size=1024,
+            fft_valid=True,
+            kurtosis=metrics.kurtosis,
+            crest_factor=metrics.crest,
+            peak_frequency_hz=metrics.peak_hz,
+            quality=DataQuality.REAL,
+            battery=BatteryInfo(present=True, percentage=78.0, voltage_v=3.86, source="ADC", valid=True),
+            acoustic=metrics,
+        )
+
+    def spectrum(self, bins: int) -> SpectrumSample:
+        """Espectro em Pa eficaz por faixa, de 0 a fs/2 (16 kHz de amostragem)."""
+
+        rate = 16000.0
+        df = rate / 2.0 / bins
+        reference = 20e-6 * 10.0 ** (self._laeq() / 20.0)
+        values = []
+        for index in range(bins):
+            if index == 0:
+                values.append(0.0)   # o firmware descarta a componente contínua
+                continue
+            frequency = index * df
+            pink = reference * 0.02 / math.sqrt(1.0 + frequency / 400.0)
+            value = pink * random.uniform(0.85, 1.15)
+            if self.mode == "MACHINE":
+                for harmonic in range(1, 6):
+                    if abs(frequency - harmonic * 29.5) < df:
+                        value += reference * 0.25 / harmonic
+            elif abs(frequency - 1000.0) < df:
+                value += reference * 0.12
+            values.append(value)
+        return SpectrumSample(
+            self.parent, self.child, values, transfer_id=self.seq, sample_rate_hz=rate, fft_size=bins * 2,
+            window_type="HANN", magnitude_unit="Pa",
+        )
 
 
 class DemoProducer:
@@ -53,6 +250,27 @@ class DemoProducer:
         self._fault_ticks = 0
         self._fault: tuple[int, str, int, int] | None = None   # módulo, tipo, duração (ms), sequência
         self._fault_seq = 0
+        self.acoustic = DemoAcousticSensor(ACOUSTIC_DEMO[0], ACOUSTIC_DEMO[1])
+
+    # Sensor acústico da demonstração: chamado pelo app no lugar do envio serial.
+    def _acoustic_for(self, parent: int, child: int) -> DemoAcousticSensor | None:
+        return self.acoustic if (parent, child) == (self.acoustic.parent, self.acoustic.child) else None
+
+    def configure(self, parent: int, child: int, mode: str, threshold: float | None) -> None:
+        if (sensor := self._acoustic_for(parent, child)) is not None:
+            sensor.configure(mode, threshold)
+
+    def acoustic_control(self, parent: int, child: int, action: str, seconds: int) -> None:
+        if (sensor := self._acoustic_for(parent, child)) is not None:
+            sensor.control(action, seconds)
+
+    def acoustic_gain(self, parent: int, child: int, factor: float) -> None:
+        if (sensor := self._acoustic_for(parent, child)) is not None and factor > 0:
+            sensor.gain_db += 20.0 * math.log10(factor)
+
+    def acoustic_spectrum(self, parent: int, child: int, bins: int) -> SpectrumSample:
+        sensor = self._acoustic_for(parent, child) or self.acoustic
+        return sensor.spectrum(bins)
 
     def handle_command(self, command: str) -> None:
         """Comandos de ensaio têm um efeito mínimo na demonstração.
@@ -178,6 +396,25 @@ class DemoProducer:
                     {"STATE": "ONLINE", "UUID": uuid, "ACQ": "POLLING", "QUALITY": "REAL", "TELEMETRY": "ON", "PERIOD_MS": "500"},
                 )
             )
+        parent, child, uuid = ACOUSTIC_DEMO
+        await self.bus.publish(
+            SensorStatusReceived(
+                parent,
+                child,
+                {"STATE": "ONLINE", "UUID": uuid, "PROFILE": "ACOUSTIC", "MODE": "LEVEL", "ACQ": "I2S",
+                 "QUALITY": "REAL", "TELEMETRY": "ON", "PERIOD_MS": "1000"},
+            )
+        )
+        # Configuração em vigor, como o Node a publica depois do handshake.
+        await self.bus.publish(
+            WirelessConfigReceived(
+                parent,
+                child,
+                "CURRENT",
+                {"MODE": "LEVEL", "RATE_REQ_HZ": "16000", "RATE_EFF_HZ": "16000", "WINDOW": "HANN",
+                 "WINDOW_SIZE": "1024", "STALTA": f"{self.acoustic.threshold:g}", "GAIN": "1.0", "PROFILE": "ACOUSTIC"},
+            )
+        )
 
         tick = 0
         while self._running:
@@ -220,6 +457,8 @@ class DemoProducer:
                     ),
                 )
                 await self.bus.publish(TelemetryReceived(sample))
+            if tick % 2 == 0 and (acoustic := self.acoustic.report()) is not None:
+                await self.bus.publish(TelemetryReceived(acoustic))
             await asyncio.sleep(0.5)
 
     def stop(self) -> None:
