@@ -445,10 +445,14 @@ struct Sensor {
     a.tonal_cb = a.anomaly_x100 = ACOUSTIC_CB_NA;
     a.event_peak_cb = a.event_sel_cb = a.sta_lta_cb = a.background_cb = ACOUSTIC_CB_NA;
     a.event_age_s = ACOUSTIC_AGE_NONE;
-    // Oitavas Z de 31,5 Hz a 4 kHz; a 16 kHz de amostragem, 8 e 16 kHz ficam fora.
-    static const int16_t OCTAVES[] = {7210, 7830, 8120, 8260, 8340, 8410, 8150, 7620};
+    // Oitavas Z; como no firmware, fica de fora a banda cujo limite superior
+    // (fc·√2) passa de fs/2: a 16 kHz, as de 8 e 16 kHz; a 8 kHz, também a de 4 kHz.
+    static const int16_t OCTAVES[] = {7210, 7830, 8120, 8260, 8340, 8410, 8150, 7620, 6980, 6120};
+    static const float UPPER_EDGE_HZ[] = {44.19f, 88.39f, 176.78f, 353.55f, 707.11f,
+                                          1414.21f, 2828.43f, 5656.85f, 11313.71f, 22627.42f};
     for (unsigned b = 0; b < ACOUSTIC_OCTAVE_BANDS; ++b) {
-      a.octave_cb[b] = b < 8 ? static_cast<int16_t>(OCTAVES[b] + level.laeqCb - 8650) : ACOUSTIC_CB_NA;
+      a.octave_cb[b] = UPPER_EDGE_HZ[b] <= acousticRateHz / 2.0f ? static_cast<int16_t>(OCTAVES[b] + level.laeqCb - 8650)
+                                                                  : ACOUSTIC_CB_NA;
     }
     float f0 = 0.0f;
     if (acousticMode == ACOUSTIC_MODE_LEVEL) {
@@ -1378,9 +1382,12 @@ int scenarioAcousticSensor() {
   runFor(5000);
 
   // Diagnóstico de máquina: referência aprendida, depois a assinatura muda.
-  probeCommand("CMD TARGET=02.01 ACTION=CONFIG TX=C00003 MODE=MACHINE THRESHOLD=4");
+  // A 8 kHz com 2048 pontos (Δf = 3,9 Hz) a busca do tacômetro começa em 20 Hz e
+  // alcança o motor de 1776 rpm (29,6 Hz); a 16 kHz e 1024 pontos começaria em 62,5 Hz.
+  probeCommand("CMD TARGET=02.01 ACTION=CONFIG TX=C00003 MODE=MACHINE RATE_HZ=8000 FFT_SIZE=2048 THRESHOLD=4");
   CHECK(runUntilTrue([] { return logHas(probe(), "ACK COMMAND=CONFIG STATE=APPLIED TX=C00003"); }, 4000));
-  CHECK(runUntilTrue([] { return logHas(probe(), "status=APPLIED mode=MACHINE"); }, 4000));
+  CHECK(runUntilTrue([] { return logHas(probe(), "status=APPLIED mode=MACHINE rate_req_hz=8000.00"); }, 4000));
+  CHECK(logHas(probe(), "window_size=2048 stalta=4.000"));
   CHECK(runUntilTrue([] { return logHas(probe(), "PROFILE=ACOUSTIC MODE=MACHINE"); }, 4000));
   probeCommand("CMD TARGET=02.01 ACTION=BASELINE_LEARN TX=C00004 SECONDS=10");
   CHECK(runUntilTrue([] { return logHas(probe(), "ACK COMMAND=BASELINE_LEARN STATE=APPLIED TX=C00004"); }, 4000));
@@ -1390,8 +1397,8 @@ int scenarioAcousticSensor() {
   CHECK(runUntilTrue([] { return logHas(probe(), "ANOMALY=YES"); }, 5000));
   runFor(4000);
 
-  // Eventos sonoros.
-  probeCommand("CMD TARGET=02.01 ACTION=CONFIG TX=C00005 MODE=EVENTS THRESHOLD=3");
+  // Eventos sonoros, de volta a 16 kHz e 1024 pontos.
+  probeCommand("CMD TARGET=02.01 ACTION=CONFIG TX=C00005 MODE=EVENTS RATE_HZ=16000 FFT_SIZE=1024 THRESHOLD=3");
   CHECK(runUntilTrue([] { return logHas(probe(), "ACK COMMAND=CONFIG STATE=APPLIED TX=C00005"); }, 4000));
   runFor(26000);
   CHECK(logHas(probe(), "EVENT_CLASS=CRACK") && logHas(probe(), "EVENT_CLASS=TONAL"));

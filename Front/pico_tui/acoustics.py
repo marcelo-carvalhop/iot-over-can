@@ -417,6 +417,23 @@ def _db(value: float) -> str:
 # Tacômetro acústico (modo MACHINE)
 # ---------------------------------------------------------------------------
 
+def f0_range(sample_rate_hz: float | None, fft_size: int | None) -> tuple[float, float] | None:
+    """Faixa de fundamentais que o firmware procura (busca HPS de 5 harmônicos).
+
+    Mínimo de 4 faixas (os lóbulos dos harmônicos não podem se sobrepor) e de
+    20 Hz; máximo de (N/2 - 2)/5 faixas, para que o 5º harmônico caiba no
+    espectro. Ex.: 16 kHz e 1024 pontos procuram de 62,5 a 1594 Hz; 8 kHz e
+    2048 pontos, de 20 a 798 Hz.
+    """
+
+    if not sample_rate_hz or not fft_size or fft_size < 16:
+        return None
+    df = sample_rate_hz / fft_size
+    low = max(4.0 * df, 20.0)
+    high = (fft_size / 2 - 2) * df / 5.0
+    return (low, high) if high > low else None
+
+
 def rpm_from_frequency(f0_hz: float | None, events_per_revolution: int = 1) -> float | None:
     if f0_hz is None or f0_hz <= 0 or events_per_revolution <= 0:
         return None
@@ -488,11 +505,16 @@ def tachometer(metrics: AcousticMetrics, f0_history: Sequence[float] = ()) -> Ta
     )
 
 
-def machine_insights(metrics: AcousticMetrics, threshold_z: float | None, f0_history: Sequence[float] = ()) -> list[Insight]:
+def machine_insights(metrics: AcousticMetrics, threshold_z: float | None, f0_history: Sequence[float] = (),
+                     f0_limits: tuple[float, float] | None = None) -> list[Insight]:
     items: list[Insight] = []
     tach = tachometer(metrics, f0_history)
     if tach.f0_hz is None:
-        items.append(Insight(0, "Tacômetro", "Sem série harmônica estável: fundamental não identificada"))
+        text = "Sem série harmônica estável: fundamental não identificada"
+        if f0_limits is not None:
+            text += (f" (nesta configuração a busca vai de {_num(f0_limits[0], 1)} a {_num(f0_limits[1], 0)} Hz; "
+                     "para rotações mais baixas, reduza a taxa ou aumente a FFT)")
+        items.append(Insight(0, "Tacômetro", text))
     elif tach.mains_multiple:
         frequency = tach.mains_multiple * MAINS_HZ
         items.append(Insight(0, "Tacômetro",

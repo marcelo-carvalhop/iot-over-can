@@ -1612,7 +1612,9 @@ class PicoTuiApp(App[None]):
                     await asyncio.sleep(0.03)
             # A verificação será disparada somente após CONFIG_APPLIED.
         elif mode == ConnectionMode.DEMO:
-            self.demo_producer.configure(sensor.parent_node_id, sensor.child_id, request.mode, request.stalta)
+            self.demo_producer.configure(
+                sensor.parent_node_id, sensor.child_id, request.mode, request.stalta, request.rate_hz, request.window_size
+            )
             self.state_store.update_sensor_configuration(
                 sensor.parent_node_id,
                 sensor.child_id,

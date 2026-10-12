@@ -65,6 +65,8 @@ class DemoAcousticSensor:
         self.child = child
         self.mode = "LEVEL"
         self.threshold = 8.0
+        self.rate_hz = 16000.0
+        self.fft_size = 1024
         self.gain_db = 0.0
         self.seconds = 0
         self.measure_seconds = 0
@@ -80,11 +82,16 @@ class DemoAcousticSensor:
         self.seq = 0
 
     # -------------------------------------------------------------- controle
-    def configure(self, mode: str, threshold: float | None) -> None:
+    def configure(self, mode: str, threshold: float | None, rate_hz: float | None = None,
+                  fft_size: int | None = None) -> None:
         if mode.upper() in {"IDLE", "LEVEL", "MACHINE", "EVENTS"}:
             self.mode = mode.upper()
         if threshold is not None and threshold > 1.0:
             self.threshold = threshold
+        if rate_hz in {8000.0, 16000.0, 24000.0, 32000.0, 48000.0}:
+            self.rate_hz = float(rate_hz)
+        if fft_size in {256, 512, 1024, 2048}:
+            self.fft_size = int(fft_size)
 
     def control(self, action: str, seconds: int) -> None:
         if action == "MEASURE_RESET":
@@ -111,9 +118,12 @@ class DemoAcousticSensor:
         self.seq = (self.seq + 1) & 0xFFFF
         self.measure_seconds += 1
         laeq = self._laeq()
-        # A 16 kHz de amostragem o firmware omite as bandas de 8 e 16 kHz (acima de fs/2).
-        octaves: list[float | None] = [laeq + shape + random.uniform(-0.6, 0.6) for shape in _OCTAVE_SHAPE[:8]]
-        octaves += [None, None]
+        # O firmware omite as bandas cujo limite superior (fc·√2) passa de fs/2.
+        octaves: list[float | None] = [
+            laeq + shape + random.uniform(-0.6, 0.6) if 1000.0 * 2.0 ** (index - 5) * math.sqrt(2.0) <= self.rate_hz / 2.0
+            else None
+            for index, shape in enumerate(_OCTAVE_SHAPE)
+        ]
         metrics = AcousticMetrics(
             interval_ms=1000,
             coverage_pct=100,
@@ -150,9 +160,12 @@ class DemoAcousticSensor:
             metrics.elapsed_s = self.measure_seconds
             metrics.dose_limit = self.dose_nho01 >= 100.0
         elif self.mode == "MACHINE":
-            # Motor de 4 polos a 60 Hz com 1,7 % de escorregamento: 1770 rpm.
-            metrics.f0_hz = 29.5 + random.uniform(-0.05, 0.05)
-            metrics.harmonics = 5
+            # Motor de 4 polos a 60 Hz com 1,7 % de escorregamento: 1770 rpm. Como
+            # no firmware, a fundamental só é encontrada dentro da faixa da busca.
+            df = self.rate_hz / self.fft_size
+            found = max(4.0 * df, 20.0) <= 29.5
+            metrics.f0_hz = 29.5 + random.uniform(-0.05, 0.05) if found else 0.0
+            metrics.harmonics = 5 if found else 0
             metrics.tonal_db = 13.5 + random.uniform(-0.5, 0.5)
             metrics.peak_hz = 4 * metrics.f0_hz
             metrics.flatness = 0.04
@@ -199,10 +212,10 @@ class DemoAcousticSensor:
             sequence=self.seq,
             mode=SensorMode(self.mode),
             acquisition_mode=AcquisitionMode.I2S,
-            sample_rate_requested_hz=16000.0,
-            sample_rate_effective_hz=16000.0,
+            sample_rate_requested_hz=self.rate_hz,
+            sample_rate_effective_hz=self.rate_hz,
             window_type="HANN",
-            window_size=1024,
+            window_size=self.fft_size,
             fft_valid=True,
             kurtosis=metrics.kurtosis,
             crest_factor=metrics.crest,
@@ -215,7 +228,7 @@ class DemoAcousticSensor:
     def spectrum(self, bins: int) -> SpectrumSample:
         """Espectro em Pa eficaz por faixa, de 0 a fs/2 (16 kHz de amostragem)."""
 
-        rate = 16000.0
+        rate = self.rate_hz
         df = rate / 2.0 / bins
         reference = 20e-6 * 10.0 ** (self._laeq() / 20.0)
         values = []
@@ -256,9 +269,10 @@ class DemoProducer:
     def _acoustic_for(self, parent: int, child: int) -> DemoAcousticSensor | None:
         return self.acoustic if (parent, child) == (self.acoustic.parent, self.acoustic.child) else None
 
-    def configure(self, parent: int, child: int, mode: str, threshold: float | None) -> None:
+    def configure(self, parent: int, child: int, mode: str, threshold: float | None,
+                  rate_hz: float | None = None, fft_size: int | None = None) -> None:
         if (sensor := self._acoustic_for(parent, child)) is not None:
-            sensor.configure(mode, threshold)
+            sensor.configure(mode, threshold, rate_hz, fft_size)
 
     def acoustic_control(self, parent: int, child: int, action: str, seconds: int) -> None:
         if (sensor := self._acoustic_for(parent, child)) is not None:

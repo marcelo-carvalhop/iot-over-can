@@ -181,8 +181,21 @@ def f0_history(sensor: SensorNode, count: int = 30) -> list[float]:
     ]
 
 
+def f0_limits(sensor: SensorNode) -> tuple[float, float] | None:
+    cfg = sensor.configuration
+    return acoustics.f0_range(cfg.sample_rate_effective_hz or cfg.sample_rate_requested_hz, cfg.window_size)
+
+
 def _machine_fields(sensor: SensorNode, metrics: AcousticMetrics) -> list[Field]:
     tach = acoustics.tachometer(metrics, f0_history(sensor))
+    limits = f0_limits(sensor)
+    if limits is None:
+        search = pres.MISSING
+    else:
+        search = (
+            f"f0 de {pres.fmt_number(limits[0], 1, 'Hz')} a {pres.fmt_number(limits[1], 0, 'Hz')} "
+            f"({pres.fmt_int(round(60 * limits[0]))} a {pres.fmt_int(round(60 * limits[1]))} rpm a 1 evento por volta)"
+        )
     threshold = sensor.configuration.stalta_threshold
     baseline = (metrics.baseline or "NONE").upper()
     baseline_text = {
@@ -214,6 +227,7 @@ def _machine_fields(sensor: SensorNode, metrics: AcousticMetrics) -> list[Field]
     )
     return [
         ("Fundamental (f0)", _bold(pres.fmt_number(tach.f0_hz, 2, "Hz"))),
+        ("Faixa do tacômetro", search),
         ("Rotação estimada", rotation),
         ("Hipótese de motor", motors or pres.MISSING),
         ("Harmônicos na série", pres.fmt_int(metrics.harmonics)),
@@ -287,7 +301,9 @@ def insights(sensor: SensorNode, metrics: AcousticMetrics) -> list[acoustics.Ins
     if mode == "LEVEL":
         items += acoustics.level_insights(metrics)
     elif mode == "MACHINE":
-        items += acoustics.machine_insights(metrics, sensor.configuration.stalta_threshold, f0_history(sensor))
+        items += acoustics.machine_insights(
+            metrics, sensor.configuration.stalta_threshold, f0_history(sensor), f0_limits(sensor)
+        )
     items += acoustics.character_insights(metrics)
     items.sort(key=lambda item: -item.level)
     return items

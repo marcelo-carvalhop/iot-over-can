@@ -118,6 +118,14 @@ def test_speech_interference_and_conversation_distance() -> None:
     assert acoustics.speech_summary(acoustics.speech_interference_level(loud)) is not None
 
 
+def test_tachometer_search_range_follows_resolution() -> None:
+    low, high = acoustics.f0_range(16000.0, 1024)
+    assert low == pytest.approx(62.5) and high == pytest.approx(1593.75)
+    low, high = acoustics.f0_range(8000.0, 2048)
+    assert low == pytest.approx(20.0) and high == pytest.approx(798.4, abs=0.1)
+    assert acoustics.f0_range(None, 1024) is None
+
+
 def test_acoustic_tachometer_and_induction_motor_hypothesis() -> None:
     metrics = AcousticMetrics(f0_hz=29.6, harmonics=6)
     tach = acoustics.tachometer(metrics, [29.6, 29.61, 29.59])
@@ -220,7 +228,7 @@ def test_wireless_config_with_profile_keeps_acoustic_mode_names() -> None:
         await router.decode(PROBE_LEVEL)
         await router.decode(
             "[GW] WIRELESS_CONFIG node=2 child=1 status=APPLIED mode=MACHINE rate_req_hz=48000.00 "
-            "rate_eff_hz=48001.20 window=BLACKMAN window_size=2048 stalta=3.000 gain=1.1220 profile=ACOUSTIC"
+            "rate_eff_hz=48003.07 window=BLACKMAN window_size=2048 stalta=3.000 gain=1.1220 profile=ACOUSTIC"
         )
         sensor = state.snapshot().nodes[2].sensors[1]
         cfg = sensor.configuration
@@ -374,8 +382,11 @@ async def test_demo_acoustic_sensor_screen_and_modes(prefs_file) -> None:
         hints = screen.query_one("#key-bar").source_text()
         assert "Espectro" in hints and "Reiniciar medição" in hints and "Aprender referência" not in hints
 
-        # Modo MACHINE pela configuração (demonstração): tacômetro e tecla de referência.
+        # Modo MACHINE pela configuração (demonstração). A 16 kHz com 1024 pontos a
+        # busca começa em 62,5 Hz: o motor de 1770 rpm (29,5 Hz) não aparece.
         app.demo_producer.configure(22, 1, "MACHINE", 3.0)
+        assert await wait_for(pilot, lambda: "62,5 a 1594 Hz" in _text(screen, "#acoustic-insights"), 5.0)
+        app.demo_producer.configure(22, 1, "MACHINE", 3.0, 8000.0, 2048)
         assert await wait_for(pilot, lambda: screen.query_one("#sec-acoustic-mode").border_title == "Diagnóstico de máquina", 5.0)
         assert await wait_for(pilot, lambda: "rpm" in _text(screen, "#acoustic-mode"), 5.0)
         assert "Aprender referência" in screen.query_one("#key-bar").source_text()
@@ -436,3 +447,22 @@ async def test_direct_acoustic_firmware_calibration_and_measure_reset(security_f
             assert any(command.startswith("AUTH UNLOCK") for command in firmware.received_commands)
     finally:
         firmware.stop()
+
+
+async def test_config_dialog_proposes_the_threshold_of_each_mode(prefs_file) -> None:
+    app = demo_app(prefs_file)
+    async with app.run_test(size=(150, 50)) as pilot:
+        await settle(pilot, 5)
+        from textual.widgets import Input, Select
+
+        dialog = ConfigScreen(app.state_store.find_sensor("22.01"))
+        app.push_screen(dialog)
+        await settle(pilot, 2)
+        threshold = dialog.query_one("#cfg-stalta", Input)
+        assert threshold.value == "8"                    # limiar atual do sensor (padrão de EVENTS)
+        dialog.query_one("#cfg-mode", Select).value = "MACHINE"
+        assert await wait_for(pilot, lambda: threshold.value == "3")
+        threshold.value = "5"                            # valor escolhido pelo operador fica
+        dialog.query_one("#cfg-mode", Select).value = "EVENTS"
+        await settle(pilot, 2)
+        assert threshold.value == "5"

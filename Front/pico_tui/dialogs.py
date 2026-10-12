@@ -404,6 +404,25 @@ class ConfigScreen(ModalScreen[ConfigRequest | None]):
             apply_and_verify=verify,
         )
 
+    # Limiar proposto ao escolher o modo, como no console do sensor
+    # (AUDIO_DEFAULT_THRESHOLD_* em Codigo/node-audio/audio_config.h).
+    ACOUSTIC_DEFAULT_THRESHOLDS: ClassVar[dict[str, str]] = {"MACHINE": "3", "EVENTS": "8"}
+
+    @on(Select.Changed, "#cfg-mode")
+    def _acoustic_mode_changed(self, event: Select.Changed) -> None:
+        if not self.acoustic:
+            return
+        proposed = self.ACOUSTIC_DEFAULT_THRESHOLDS.get(str(event.value))
+        field = self.query_one("#cfg-stalta", Input)
+        try:
+            current = _float_or_none(field.value)
+        except ValueError:
+            return
+        defaults = {float(value) for value in self.ACOUSTIC_DEFAULT_THRESHOLDS.values()}
+        # Só troca um valor vazio ou o padrão do outro modo: um limiar digitado fica.
+        if proposed and (current is None or current in defaults):
+            field.value = proposed
+
     def _build_acoustic(self, verify: bool) -> ConfigRequest | None:
         error = self.query_one("#cfg-error", Static)
         try:
