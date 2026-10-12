@@ -7,7 +7,6 @@ import random
 from pico_tui.core.event_bus import EventBus
 from pico_tui.core.events import (
     BusStatsReceived,
-    WirelessConfigReceived,
     FaultCommandSent,
     FaultEventReceived,
     GatewayDetected,
@@ -17,6 +16,7 @@ from pico_tui.core.events import (
     PhysicalNodeReceived,
     SensorStatusReceived,
     TelemetryReceived,
+    WirelessConfigReceived,
 )
 from pico_tui.core.models import (
     AcousticMetrics,
@@ -27,7 +27,6 @@ from pico_tui.core.models import (
     SpectrumSample,
     TelemetrySample,
 )
-
 
 # Identificadores e períodos (ms) do tráfego sintético da demonstração:
 # (identificador, quadros por rajada, período da rajada, DLC).
@@ -43,6 +42,7 @@ DEMO_TRAFFIC = (
     (0x395, 9, 1000, 8),
     (0x396, 19, 1000, 8),   # relatório acústico: 108 bytes em 19 quadros
 )
+DEMO_NODES = (20, 21, 22, 23)
 DEMO_LEADER = 23
 ACOUSTIC_DEMO = (22, 1, "0x10C1")
 
@@ -340,6 +340,12 @@ class DemoProducer:
             return
         second = tick // 2
         await self.bus.publish(LegacyHeartbeatReceived(DEMO_LEADER, second & 0xFF, 3, 3, 1000))
+        # Os seguidores também se manifestam a cada segundo; o módulo derrubado
+        # ou silenciado por um ensaio fica calado até o fim do ensaio.
+        silent = self._fault[0] if self._fault and self._fault[1] in {"POWER_CYCLE", "SILENCE"} else None
+        for node in DEMO_NODES:
+            if node not in (DEMO_LEADER, silent):
+                await self.bus.publish(PhysicalNodeReceived(node, {"STATE": "ONLINE", "TYPE": "SENSOR_BRIDGE"}))
 
         frames = sum(burst * 1000 / period for _id, burst, period, _dlc in DEMO_TRAFFIC)
         bits = sum(burst * 1000 / period * (47 + 8 * dlc + 12) for _id, burst, period, dlc in DEMO_TRAFFIC)
@@ -363,7 +369,7 @@ class DemoProducer:
                 frames=int(frames),
                 bits=int(load * 5000),
                 load_percent=round(load, 2),
-                peak_percent=round(load * 1.6 + 0.3, 2),
+                peak_percent=round(min(100.0, load * 1.6 + 0.3), 2),  # pico de 100 ms: no máximo 100 %
                 rx_queue_peak=9,
                 ids=len(DEMO_TRAFFIC) + (1 if own else 0),
                 transfers_ok=second * 3,
@@ -400,7 +406,7 @@ class DemoProducer:
             )
         )
         sensors = ((20, 1, "0x10A4"), (20, 2, "0x10A5"), (21, 1, "0x10B1"))
-        for parent in (20, 21, 22, 23):
+        for parent in DEMO_NODES:
             await self.bus.publish(PhysicalNodeReceived(parent, {"STATE": "ONLINE", "TYPE": "SENSOR_BRIDGE"}))
         for parent, child, uuid in sensors:
             await self.bus.publish(
