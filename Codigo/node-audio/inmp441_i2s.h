@@ -48,8 +48,9 @@ bool     inmp441_init(void);
 
 /**
  * Inicia (ou reinicia) a aquisição. Retorna a taxa efetiva, que pode diferir
- * da pedida pelo arredondamento do divisor 16.8 da PIO (ex.: 48001,2 Hz no
- * RP2040 a 125 MHz). Deve ser chamada pelo núcleo que tratará a interrupção.
+ * da pedida pelo arredondamento do divisor 16.8 da PIO (ex.: 48003,07 Hz no
+ * RP2040 a 125 MHz; 48000 Hz exatos no RP2350 a 150 MHz). Deve ser chamada
+ * pelo núcleo que tratará a interrupção.
  */
 float    inmp441_start(float sample_rate_hz, Inmp441Channel channel);
 void     inmp441_stop(void);

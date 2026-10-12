@@ -40,6 +40,10 @@ jobs:
           git -C "$PICO_SDK_PATH" submodule update --init --recursive
       - name: Build Pico W firmware (secure defaults)
         run: ./Codigo/scripts/build_pico.sh
+      - name: Build acoustic sensor firmware (Pico W)
+        run: ./Codigo/scripts/build_pico.sh pico_w --audio
+      - name: Build acoustic sensor firmware (Pico 2 W)
+        run: ./Codigo/scripts/build_pico.sh pico2_w --audio
 
   esp32-platformio:
     runs-on: ubuntu-latest

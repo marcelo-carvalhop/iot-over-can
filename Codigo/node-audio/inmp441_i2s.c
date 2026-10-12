@@ -96,7 +96,7 @@ float inmp441_start(float sample_rate_hz, Inmp441Channel channel) {
     inmp441_stop();
 
     // Divisor 16.8 da PIO: clk_sys / (128 · fs). A taxa efetiva é recalculada
-    // a partir do divisor arredondado (125 MHz -> 16 kHz exatos, 48001,2 Hz).
+    // a partir do divisor arredondado (125 MHz -> 16 kHz exatos, 48003,07 Hz).
     const double sys_hz = (double)clock_get_hz(clk_sys);
     const double div = sys_hz / (128.0 * (double)sample_rate_hz);
     uint32_t div_int = (uint32_t)div;
