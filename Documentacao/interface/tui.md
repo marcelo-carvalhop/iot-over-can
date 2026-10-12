@@ -87,6 +87,7 @@ Início
 | `F7` / `w` | Sensores sem fio | `action_show_wireless` |
 | `F8` / `b` | Métricas da rede | `action_show_metrics` |
 | `F9` / `e` | Ensaios | `action_show_experiments` |
+| `F12` / `v` | Supervisório | `action_show_supervisor` |
 | `F10` / `q` | Sair com confirmação | `action_exit_confirm` |
 | `Esc` | Voltar | `BaseScreen.action_back` |
 | `Ctrl+C` | interromper stream no sensor USB direto | tratamento em `on_key` |
@@ -422,6 +423,20 @@ Durante o ensaio, a tela mostra o tempo decorrido, as medidas já obtidas e os a
 O resultado é medido a partir das mensagens da rede. Uma medida que não pôde ser obtida aparece como "não observado", e não como zero. O maior intervalo sem telemetria conta a partir da última amostra recebida antes da falha, de sensores que vinham enviando nos 10 s anteriores ao ensaio. Um ensaio iniciado fora da tela (comando digitado no campo manual, reprodução de uma gravação) é reconhecido pelas linhas `FAULT_TX` e `FAULT_EVENT` e medido da mesma forma.
 
 No modo demonstração a rede simulada não reage à falha; apenas o início, o fim e a carga no barramento são representados. Para ver um ensaio completo sem hardware, use a reprodução de uma gravação.
+
+## Supervisório — `SupervisorScreen`
+
+Abre com `F12` ou `v` (`pico_tui/supervisor.py`). Reúne até cinco painéis na mesma tela, para testar sensores enquanto se acompanha o uso da rede: o painel **Rede e barramento** (ocupação, pico, quadros por segundo, estado de erro, líder, módulos em falha e enlaces sem fio) e um painel por sensor (condição, comunicação, modo, métricas principais do perfil, enlace e perdas, com tendência). Cada sensor e a rede entram uma vez só; a escolha oferece apenas o que ainda não está na tela.
+
+| Tecla | Ação |
+|---|---|
+| `a` | adicionar painel (recusado com cinco) |
+| `x` | remover o painel em foco |
+| `Enter` | abrir a tela completa do painel (Esc volta ao supervisório) |
+| `Tab` | próximo painel |
+| `<` `>` | mover o painel em foco |
+
+A grade se ajusta à largura: em tela larga, 2 painéis lado a lado, 3 em linha, 4 em 2×2 e 5 em 3 + 2; de 60 a 99 colunas, duas colunas; abaixo de 60, um painel por linha. O último painel ocupa as células que sobrarem. A composição fica em `supervisor_panels` no arquivo de preferências (`~/.config/iot-over-can/tui.json`) e volta na próxima sessão; um sensor ausente continua no painel, à espera de dados.
 
 ## Reprodução de gravações
 

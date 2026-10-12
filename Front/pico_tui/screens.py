@@ -1455,6 +1455,7 @@ class HelpScreen(BaseScreen):
                         ("F7 ou w", "Sensores sem fio: descobrir, associar e desassociar"),
                         ("F8 ou b", "Métricas da rede: ocupação, períodos, tempos de resposta e enlaces"),
                         ("F9 ou e", "Ensaios: injeção de falhas com medição do resultado"),
+                        ("F12 ou v", "Supervisório: até 5 painéis (rede e sensores, cada um uma vez) na mesma tela"),
                         ("F1 ou ?", "Esta ajuda"),
                         ("F10 ou q", "Sair"),
                         ("Tab", "Passar para a próxima lista ou campo"),

@@ -74,6 +74,7 @@ from pico_tui.screens import (
     WirelessScreen,
 )
 from pico_tui.security import SecurityManager
+from pico_tui.supervisor import SupervisorScreen
 from pico_tui.serial_client import SerialClient
 from pico_tui.services.controller import DomainController
 from pico_tui.services.demo import DemoProducer
@@ -167,6 +168,8 @@ class PicoTuiApp(App[None]):
         Binding("b", "show_metrics", "Métricas", show=False),
         Binding("f9", "show_experiments", "Ensaios", show=False),
         Binding("e", "show_experiments", "Ensaios", show=False),
+        Binding("f12", "show_supervisor", "Supervisório", show=False),
+        Binding("v", "show_supervisor", "Supervisório", show=False),
         Binding("f10", "exit_confirm", "Sair", show=False),
         Binding("q", "exit_confirm", "Sair", show=False),
     ]
@@ -1663,6 +1666,7 @@ class PicoTuiApp(App[None]):
                     ("F7/w", "Sensores sem fio", "app.show_wireless"),
                     ("F8/b", "Métricas", "app.show_metrics"),
                     ("F9/e", "Ensaios", "app.show_experiments"),
+                    ("F12/v", "Supervisório", "app.show_supervisor"),
                 ]
             )
         if help:
@@ -1693,7 +1697,7 @@ class PicoTuiApp(App[None]):
             if isinstance(screen, HomeScreen):
                 screen.set_messages_visible(visible)
 
-    def set_preference(self, name: str, value: bool) -> None:
+    def set_preference(self, name: str, value: object) -> None:
         setattr(self.preferences, name, value)
         error = save_preferences(self.preferences, self.preferences_path)
         if error:
@@ -1742,6 +1746,10 @@ class PicoTuiApp(App[None]):
     def action_show_experiments(self) -> None:
         if not self._modal_open() and not isinstance(self.screen, ExperimentsScreen):
             self._replace_top(ExperimentsScreen())
+
+    def action_show_supervisor(self) -> None:
+        if not self._modal_open() and not isinstance(self.screen, SupervisorScreen):
+            self._replace_top(SupervisorScreen())
 
     # ------------------------------------------------------------------
     # Métricas e ensaios

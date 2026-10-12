@@ -501,3 +501,25 @@ Toast {
     max-height: 12;
     background: $bg-widget;
 }
+
+/* ---------------------------------------------------------------- supervisório */
+
+#sup-grid {
+    layout: grid;
+    grid-size: 1 1;
+    grid-gutter: 0 1;
+    height: 1fr;
+    padding: 0 1;
+}
+
+.sup-panel {
+    width: 1fr;
+    height: 1fr;
+    margin-bottom: 0;
+    scrollbar-size-vertical: 1;
+}
+
+.sup-panel:focus {
+    border: round $accent-focus;
+    border-title-color: $accent-focus;
+}
