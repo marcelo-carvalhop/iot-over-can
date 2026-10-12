@@ -34,6 +34,21 @@ cc -std=c11 -Wall -Wextra -Werror \
   -lm -o "$OUT_DIR/test_ioc_net"
 "$OUT_DIR/test_ioc_net"
 
+# 3a. Fuzz determinístico dos decodificadores do enlace e do plano de dados
+#     (oferta BLE, envelope UDP, handshake, relatórios, segmentos, PDU
+#     autenticada): entradas aleatórias e mensagens válidas mutadas, em buffers
+#     do tamanho exato, com AddressSanitizer/UBSan quando o compilador oferece.
+FUZZ_FLAGS=(-std=c11 -O1 -g -Wall -Wextra -Werror)
+if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined - -o "$OUT_DIR/san_probe" 2>/dev/null &&
+   "$OUT_DIR/san_probe" 2>/dev/null; then
+  FUZZ_FLAGS+=(-fsanitize=address,undefined -fno-sanitize-recover=all)
+fi
+cc "${FUZZ_FLAGS[@]}" -I"$LINK" \
+  "$LINK/ioc_sha256.c" "$LINK/ioc_link.c" "$LINK/ioc_wdata.c" "$LINK/ioc_canbits.c" "$LINK/ioc_secpdu.c" \
+  "$REPO_ROOT/Codigo/common/tests/fuzz_ioc_decoders.c" \
+  -lm -o "$OUT_DIR/fuzz_ioc_decoders"
+"$OUT_DIR/fuzz_ioc_decoders" 50000 > /dev/null
+
 # 3b. Sensor acústico (Codigo/node-audio): motor de DSP (níveis ponderados,
 #     doses, Ln, eventos, tacômetro acústico, anomalia) e validação da
 #     configuração. O DSP roda também com AddressSanitizer/UBSan quando o

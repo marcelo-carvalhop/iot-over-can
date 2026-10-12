@@ -285,14 +285,15 @@ EDGE> TELEMETRY ONCE
 ./Codigo/scripts/test_native_firmware.sh
 ```
 
-O script executa, no computador, seis verificações. Requer `cc` e `c++`.
+O script executa, no computador, sete verificações. Requer `cc` e `c++`.
 
 1. Validação de configuração do sensor.
 2. Biblioteca `ioc_link`: SHA-256/HMAC, autenticação do enlace, segmentação CAN, relatório acústico.
 3. Biblioteca `ioc_link`, parte de rede: duração de quadro e CRC-15, PDU autenticada, segmentação em quadros de até 64 bytes e decisão de reassociação.
-4. Sensor acústico (`Codigo/node-audio/tests`): motor de DSP e validação da configuração; o DSP roda também com AddressSanitizer e UBSan quando o compilador os oferece.
-5. Simulação sensor ↔ Node ↔ Probe, que compila `Codigo/node-can/src/wireless_link.cpp` com os substitutos de `Codigo/node-can/test/host/stubs/`, com um sensor de vibração e um acústico.
-6. Bancada virtual: a Probe 00 e três Nodes, cada um o firmware completo, em dezesseis cenários (o último, `acoustic_sensor`, com o sensor acústico).
+4. Fuzz determinístico dos decodificadores (`Codigo/common/tests/fuzz_ioc_decoders.c`): oferta BLE, envelope UDP, handshake, relatórios, remontagem de segmentos e PDU autenticada recebem entradas aleatórias e mensagens válidas mutadas, em buffers do tamanho exato, com AddressSanitizer e UBSan quando disponíveis (`fuzz_ioc_decoders <iterações> <semente>` roda campanhas maiores).
+5. Sensor acústico (`Codigo/node-audio/tests`): motor de DSP e validação da configuração; o DSP roda também com AddressSanitizer e UBSan quando o compilador os oferece.
+6. Simulação sensor ↔ Node ↔ Probe, que compila `Codigo/node-can/src/wireless_link.cpp` com os substitutos de `Codigo/node-can/test/host/stubs/`, com um sensor de vibração e um acústico.
+7. Bancada virtual: a Probe 00 e três Nodes, cada um o firmware completo, em dezesseis cenários (o último, `acoustic_sensor`, com o sensor acústico).
 
 Para inspecionar a saída que a Probe 00 produziria:
 
