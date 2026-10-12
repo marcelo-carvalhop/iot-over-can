@@ -43,8 +43,8 @@ def load_preferences(path: str | Path | None = None) -> tuple[Preferences, str]:
         default = getattr(prefs, item.name)
         if isinstance(default, bool) and isinstance(value, bool):
             setattr(prefs, item.name, value)
-        elif isinstance(default, list) and isinstance(value, list) and all(isinstance(v, str) for v in value):
-            setattr(prefs, item.name, list(value))
+        elif isinstance(default, list) and isinstance(value, list):
+            setattr(prefs, item.name, [v for v in value if isinstance(v, str)])
     return prefs, ""
 
 

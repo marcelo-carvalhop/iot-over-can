@@ -426,13 +426,19 @@ No modo demonstração a rede simulada não reage à falha; apenas o início, o 
 
 ## Supervisório — `SupervisorScreen`
 
-Abre com `F12` ou `v` (`pico_tui/supervisor.py`). Reúne até cinco painéis na mesma tela, para testar sensores enquanto se acompanha o uso da rede: o painel **Rede e barramento** (ocupação, pico, quadros por segundo, estado de erro, líder, módulos em falha e enlaces sem fio) e um painel por sensor (condição, comunicação, modo, métricas principais do perfil, enlace e perdas, com tendência). Cada sensor e a rede entram uma vez só; a escolha oferece apenas o que ainda não está na tela.
+Abre com `F12` ou `v` (`pico_tui/supervisor.py`). Reúne até cinco painéis na mesma tela, para testar sensores enquanto se acompanha o uso da rede:
+
+- **Rede e barramento**: ocupação, pico, quadros por segundo, estado de erro, uso do barramento pelos dados sem fio de cada módulo (identificador `0x380 + N`: quadros/s, kbit/s e fração do barramento), líder, módulos em falha e enlaces sem fio;
+- **Módulos CAN**: condição, papel (líder ou seguidor) e número de sensores de cada módulo;
+- **um painel por sensor**: condição, comunicação, modo, métricas principais do perfil, DTCs ativos, enlace e perdas, com tendência.
+
+Cada sensor e cada painel de rede entram uma vez só; a escolha oferece apenas o que ainda não está na tela. A borda de cada painel toma a cor da condição do que ele mostra: âmbar em atenção e vermelho em crítico (a rede fica em atenção a partir de 40 % de ocupação ou com módulo em falha e crítica a partir de 70 % ou em erro passivo/bus-off). O painel em foco tem borda grossa.
 
 | Tecla | Ação |
 |---|---|
 | `a` | adicionar painel (recusado com cinco) |
 | `x` | remover o painel em foco |
-| `Enter` | abrir a tela completa do painel (Esc volta ao supervisório) |
+| `Enter` | abrir a tela completa do painel: sensor, Métricas da rede ou Rede CAN (Esc volta ao supervisório) |
 | `Tab` | próximo painel |
 | `<` `>` | mover o painel em foco |
 

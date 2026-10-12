@@ -3,12 +3,15 @@
     Início ── Supervisório (F12 ou v)
 
 Cada sensor entra no máximo uma vez; o painel "Rede e barramento" resume as
-métricas da Probe 00 (ocupação, erros, líder e enlaces sem fio). A composição
+métricas da Probe 00 (ocupação, erros, líder e enlaces sem fio) e o painel
+"Módulos CAN" a condição de cada módulo. A borda de cada painel toma a cor da
+condição do que ele mostra (âmbar em atenção, vermelho em crítico). A composição
 fica nas preferências (``supervisor_panels`` em tui.json) e volta na próxima
 sessão; um sensor ausente continua no painel, à espera de dados.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
 from rich.text import Text
@@ -18,17 +21,29 @@ from textual.containers import Container, VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import Label, Sparkline, Static
 
-from pico_tui import acoustic_view
+from pico_tui import acoustic_view, palette
 from pico_tui import presentation as pres
 from pico_tui.core.models import AppState, SensorNode
 from pico_tui.dialogs import ChoiceScreen
+from pico_tui.metrics.catalog import WIRELESS_DATA_BASE
 from pico_tui.metrics.service import MetricsSnapshot
-from pico_tui.metrics_screens import ERROR_STATES, LINK_STATES, MetricsScreen, _decimal, _load_text
-from pico_tui.screens import BaseScreen, _condition_value, _value
+from pico_tui.metrics_screens import (
+    ERROR_STATES,
+    LINK_STATES,
+    LOAD_ATTENTION,
+    LOAD_CRITICAL,
+    MetricsScreen,
+    _decimal,
+    _load_text,
+)
+from pico_tui.screens import BaseScreen, NetworkScreen, _condition_value, _value
 from pico_tui.widgets import Fields, KeyBar, level_text
 
 PANEL_LIMIT = 5
 NETWORK_PANEL = "rede"
+NODES_PANEL = "modulos"
+SENSOR_KEY = re.compile(r"^sensor:\d{2}\.\d{2}$")
+LEVEL_CLASSES = {pres.Level.ATTENTION: "-attention", pres.Level.CRITICAL: "-critical"}
 
 Field = tuple[str, Text | str]
 
@@ -51,6 +66,10 @@ ACOUSTIC_LABELS = frozenset(
 )
 
 
+def valid_key(key: object) -> bool:
+    return key in (NETWORK_PANEL, NODES_PANEL) or (isinstance(key, str) and bool(SENSOR_KEY.match(key)))
+
+
 def find_sensor(state: AppState, ident: str) -> SensorNode | None:
     parent, _, child = ident.partition(".")
     try:
@@ -66,6 +85,8 @@ def panel_options(state: AppState, current: Sequence[str]) -> list[tuple[str, st
     options: list[tuple[str, str]] = []
     if NETWORK_PANEL not in current:
         options.append(("Rede e barramento: ocupação, erros, líder e enlaces sem fio", NETWORK_PANEL))
+    if NODES_PANEL not in current:
+        options.append(("Módulos CAN: condição, papel e sensores de cada módulo", NODES_PANEL))
     for node_id in sorted(state.nodes):
         for _child, sensor in sorted(state.nodes[node_id].sensors.items()):
             key = f"sensor:{sensor.logical_id}"
@@ -116,6 +137,9 @@ def sensor_fields(sensor: SensorNode) -> list[Field]:
         ]
         if sample.clipping:
             fields.append(("Saturação", level_text(pres.Level.ATTENTION, "Sim, sinal saturado", bold=True)))
+    codes = sorted(code for code, record in sensor.active_dtcs.items() if record.active)
+    if codes:
+        fields.append(("DTC ativos", ", ".join(f"0x{code:04X}" for code in codes)))
     if sensor.wireless_associated:
         link = [pres.data_link_label(sensor.data_link_state).capitalize()]
         if sensor.data_link_rssi_dbm is not None:
@@ -157,6 +181,19 @@ def network_fields(snapshot: MetricsSnapshot) -> list[Field]:
             ("Quadros por segundo", _decimal(per_second, 1)),
             ("Estado de erro", level_text(state_level, state_label, bold=state_level != pres.Level.NORMAL)),
         ]
+    # Dados dos sensores sem fio: um identificador por módulo (0x380 + N), medido pela Probe a cada 5 s.
+    for sample in sorted(snapshot.ids, key=lambda item: item.can_id):
+        if not (WIRELESS_DATA_BASE < sample.can_id < WIRELESS_DATA_BASE + 0x20 and sample.window_ms):
+            continue
+        per_second = sample.count * 1000.0 / sample.window_ms
+        bits_per_second = sample.bits * 1000.0 / sample.window_ms
+        share = f" ({_decimal(100.0 * bits_per_second / snapshot.bitrate, 2, '%')} do barramento)" if snapshot.bitrate else ""
+        fields.append(
+            (
+                f"Dados do Módulo {sample.can_id - WIRELESS_DATA_BASE:02d}",
+                f"{_decimal(per_second, 1)} quadros/s, {_decimal(bits_per_second / 1000.0, 1, 'kbit/s')}{share}",
+            )
+        )
     coordination = snapshot.coordination
     fields += [
         ("Líder", f"Módulo {coordination.leader:02d}" if coordination.leader else pres.MISSING),
@@ -168,6 +205,34 @@ def network_fields(snapshot: MetricsSnapshot) -> list[Field]:
             text += f", ida e volta {_decimal(link.rtt_ms, 1, 'ms')}"
         fields.append((f"Enlace {link.logical_id}", f"{text}, {link.telemetry_lost} perdidas"))
     return fields
+
+
+def network_level(snapshot: MetricsSnapshot) -> pres.Level:
+    bus = snapshot.bus
+    if bus is None:
+        return pres.Level.NO_DATA
+    level = ERROR_STATES.get(snapshot.error_state, ("", pres.Level.NORMAL))[1]
+    if bus.load_percent >= LOAD_CRITICAL:
+        level = max(level, pres.Level.CRITICAL)
+    elif bus.load_percent >= LOAD_ATTENTION or snapshot.coordination.nodes_in_fault:
+        level = max(level, pres.Level.ATTENTION)
+    return level
+
+
+def nodes_fields(state: AppState) -> tuple[list[Field], pres.Level]:
+    """Uma linha por módulo CAN e a pior condição entre eles."""
+
+    fields: list[Field] = []
+    worst = pres.Level.NO_DATA
+    for node_id, node in sorted(state.nodes.items()):
+        condition = pres.node_condition(node)
+        worst = max(worst, condition.level)
+        value = _condition_value(condition)
+        role = "líder" if (node.role or "").upper() == "LEADER" else "seguidor"
+        count = len(node.sensors)
+        value.append(f"  {role}, {count} {'sensor' if count == 1 else 'sensores'}", style=palette.TEXT_SECONDARY)
+        fields.append((f"Módulo {node_id:02d}", value))
+    return fields or [("Módulos", "Nenhum módulo CAN conhecido nesta sessão")], worst
 
 
 # ---------------------------------------------------------------------------
@@ -187,8 +252,12 @@ class SupervisorPanel(VerticalScroll):
         yield Label("", classes="trend-label")
         yield Sparkline([], classes="trend")
 
-    def show(self, title: str, fields: list[Field], trend_label: str, trend: list[float]) -> None:
+    def show(
+        self, title: str, fields: list[Field], trend_label: str, trend: list[float], level: pres.Level = pres.Level.NORMAL
+    ) -> None:
         self.border_title = title
+        for item, css in LEVEL_CLASSES.items():
+            self.set_class(item == level, css)
         try:
             self.query_one(Fields).set_fields(fields)
             label = self.query_one(Label)
@@ -243,7 +312,7 @@ class SupervisorScreen(BaseScreen):
 
     def on_mount(self) -> None:
         # Preferências editadas à mão: sem repetidos e no máximo cinco painéis.
-        cleaned = list(dict.fromkeys(self.keys))[:PANEL_LIMIT]
+        cleaned = [key for key in dict.fromkeys(self.keys) if valid_key(key)][:PANEL_LIMIT]
         if cleaned != self.keys:
             self.tui.set_preference("supervisor_panels", cleaned)
         super().on_mount()
@@ -287,7 +356,13 @@ class SupervisorScreen(BaseScreen):
                     self.tui.metrics.set_bitrate(state.gateway.arbitration_bitrate)
                     snapshot = self.tui.metrics.snapshot()
                 trend = [sample.load_percent for sample in snapshot.bus_history[-120:]]
-                panel.show("Rede e barramento", network_fields(snapshot), "Ocupação por segundo", trend)
+                panel.show(
+                    "Rede e barramento", network_fields(snapshot), "Ocupação por segundo", trend, network_level(snapshot)
+                )
+                continue
+            if panel.key == NODES_PANEL:
+                fields, level = nodes_fields(state)
+                panel.show("Módulos CAN", fields, "", [], level)
                 continue
             ident = panel.key.partition(":")[2]
             sensor = find_sensor(state, ident)
@@ -301,7 +376,7 @@ class SupervisorScreen(BaseScreen):
                 continue
             label, trend = sensor_trend(sensor)
             title = f"Sensor {ident} · {pres.profile_label(sensor.profile_id)}"
-            panel.show(title, sensor_fields(sensor), label, trend)
+            panel.show(title, sensor_fields(sensor), label, trend, pres.sensor_condition(sensor).level)
 
     # ------------------------------------------------------------------ ações
 
@@ -334,7 +409,7 @@ class SupervisorScreen(BaseScreen):
 
     def action_remove(self) -> None:
         panel = self._focused_panel()
-        if panel is None:
+        if panel is None or panel.key not in self.keys:  # painel já saindo (teclas rápidas)
             return
         keys = [key for key in self.keys if key != panel.key]
         index = self.keys.index(panel.key)
@@ -346,12 +421,14 @@ class SupervisorScreen(BaseScreen):
             return
         if panel.key == NETWORK_PANEL:
             self.app.push_screen(MetricsScreen())
+        elif panel.key == NODES_PANEL:
+            self.app.push_screen(NetworkScreen())
         else:
             self.tui.open_target(panel.key)
 
     def action_move(self, step: int) -> None:
         panel = self._focused_panel()
-        if panel is None:
+        if panel is None or panel.key not in self.keys:
             return
         keys = list(self.keys)
         index = keys.index(panel.key)

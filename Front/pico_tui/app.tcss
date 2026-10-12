@@ -520,6 +520,25 @@ Toast {
 }
 
 .sup-panel:focus {
-    border: round $accent-focus;
+    border: heavy $accent-focus;
     border-title-color: $accent-focus;
+}
+
+/* Condição do que o painel mostra; em foco, a borda fica grossa e mantém a cor. */
+.sup-panel.-attention {
+    border: round $state-warning;
+    border-title-color: $state-warning;
+}
+
+.sup-panel.-attention:focus {
+    border: heavy $state-warning;
+}
+
+.sup-panel.-critical {
+    border: round #F4706A;
+    border-title-color: #F4706A;
+}
+
+.sup-panel.-critical:focus {
+    border: heavy #F4706A;
 }
