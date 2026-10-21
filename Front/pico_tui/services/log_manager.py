@@ -45,12 +45,14 @@ class LogManager:
         session_id: str,
         directory: str | Path = "logs",
         enable_file: bool = True,
+        persist_streams: bool = True,
         max_entries: int = 5000,
     ) -> None:
         self.bus = bus
         self.session_id = session_id
         self.directory = Path(directory)
         self.enable_file = enable_file
+        self.persist_streams = persist_streams
         self.history: deque[LogEntry] = deque(maxlen=max_entries)
         self.telemetry_rows: deque[dict[str, Any]] = deque(maxlen=100000)
         self._file = None
@@ -105,9 +107,12 @@ class LogManager:
             ";".join("" if value is None else f"{value:.1f}" for value in acoustic.octave_db) if acoustic is not None else None
         )
         self.telemetry_rows.append(row)
-        self._write_jsonl({"type": "telemetry", **row})
+        if self.persist_streams:
+            self._write_jsonl({"type": "telemetry", **row})
 
     async def _on_local_node_telemetry(self, event: LocalNodeTelemetryReceived) -> None:
+        if not self.persist_streams:
+            return
         self._write_jsonl(
             {
                 "type": "local_node_telemetry",
@@ -121,6 +126,8 @@ class LogManager:
         )
 
     async def _on_wireless_candidate(self, event: WirelessCandidateReceived) -> None:
+        if not self.persist_streams:
+            return
         self._write_jsonl(
             {
                 "type": "wireless_candidate",
@@ -134,6 +141,8 @@ class LogManager:
         )
 
     async def _on_wireless_association(self, event: WirelessAssociationReceived) -> None:
+        if not self.persist_streams:
+            return
         self._write_jsonl(
             {
                 "type": "wireless_association",

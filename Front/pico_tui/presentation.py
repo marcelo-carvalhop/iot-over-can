@@ -225,8 +225,13 @@ def attention_items(state: AppState) -> list[AttentionItem]:
 
     items: list[AttentionItem] = []
     for node_id, node in sorted(state.nodes.items()):
-        condition = node_condition(node)
-        if condition.level >= Level.ATTENTION:
+        # O host artificial do modo USB direto nao e um modulo CAN monitoravel.
+        synthetic_host = (
+            state.connection_mode == ConnectionMode.SENSOR_DIRECT
+            and node.node_type == "DIRECT_SENSOR_HOST"
+        )
+        condition = None if synthetic_host else node_condition(node)
+        if condition is not None and condition.level >= Level.ATTENTION:
             for reason in condition.reasons:
                 items.append(AttentionItem(condition.level, f"node:{node_id:02d}", f"Módulo {node_id:02d}", reason))
         for _child_id, sensor in sorted(node.sensors.items()):
@@ -254,8 +259,15 @@ class SystemCondition:
 
 def system_condition(state: AppState) -> SystemCondition:
     connected = state.connection_state not in {ConnectionState.DISCONNECTED}
-    modules_total = len(state.nodes)
-    modules_ok = sum(1 for node in state.nodes.values() if node_condition(node).level == Level.NORMAL)
+    direct_sensor = state.connection_mode == ConnectionMode.SENSOR_DIRECT
+    # O contêiner DIRECT_SENSOR_HOST existe somente para preservar o ID 01.01;
+    # nao deve ser contado como um equipamento fisico adicional.
+    physical_nodes = [
+        node for node in state.nodes.values()
+        if not (direct_sensor and node.node_type == "DIRECT_SENSOR_HOST")
+    ]
+    modules_total = len(physical_nodes)
+    modules_ok = sum(1 for node in physical_nodes if node_condition(node).level == Level.NORMAL)
     sensors = [sensor for node in state.nodes.values() for sensor in node.sensors.values()]
     sensors_ok = sum(1 for sensor in sensors if sensor_condition(sensor).level == Level.NORMAL)
     items = attention_items(state)
@@ -264,11 +276,12 @@ def system_condition(state: AppState) -> SystemCondition:
     network_attention: list[str] = []
     if state.connection_state == ConnectionState.INCOMPATIBLE:
         network_critical.append("Firmware incompatível com esta versão da TUI")
-    if state.network.bus_off:
+    # Indicadores CAN nao se aplicam ao Pico ligado diretamente a USB.
+    if not direct_sensor and state.network.bus_off:
         network_critical.append("Barramento CAN em bus-off")
-    elif state.network.error_passive:
+    elif not direct_sensor and state.network.error_passive:
         network_attention.append("Barramento CAN em estado error-passive")
-    elif state.network.error_warning:
+    elif not direct_sensor and state.network.error_warning:
         network_attention.append("Barramento CAN com alerta de erros")
 
     base = SystemCondition(

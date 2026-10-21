@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "Codigo" / "scripts" / "extrair_livro.py"
@@ -61,7 +62,7 @@ def test_draft_follows_the_outline_and_keeps_links_working(tmp_path: Path) -> No
     # Links relativos reescritos para o local do rascunho; em [`caminho`](caminho), o texto acompanha.
     for target in re.findall(r"\]\(([^)\s#]+)", text):
         if "://" not in target:
-            assert (out.parent / target).exists(), target
+            assert (out.parent / unquote(target)).exists(), target
     for label, target in re.findall(r"\[`([^`]+)`\]\(([^)\s]+)\)", text):
         if label.endswith(".md"):
             assert label == target
@@ -128,3 +129,20 @@ def test_verification_reports_broken_markup(tmp_path: Path) -> None:
     assert "ordem 5 fora de sequência" in err
     assert "'t-fantasma' não está marcado em nenhum documento" in err
     assert "o trecho 'Errado' não está no roteiro" in err
+
+
+def test_relative_links_with_spaces_are_percent_encoded(tmp_path: Path) -> None:
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("extrair_livro", SCRIPT)
+    assert spec and spec.loader
+    import sys
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    origin = tmp_path / "2026 -2" / "Documentacao"
+    origin.mkdir(parents=True)
+    source = origin / "arquivo com espaço.md"
+    source.write_text("# Documento", encoding="utf-8")
+    target = module._reescrever_link("arquivo com espaço.md", origin, tmp_path)
+    assert "%20" in target and " " not in target
+    assert (tmp_path / unquote(target)).resolve() == source.resolve()

@@ -24,6 +24,15 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <cerrno>
+#include <chrono>
+#include <cstdint>
+#include <fcntl.h>
+#include <poll.h>
+#include <sstream>
+#include <stdexcept>
+#include <unistd.h>
+#include <utility>
 
 #include "sim_prelude.h"
 
@@ -41,6 +50,7 @@
 ::SimInstance* sim_make_n2b();
 ::SimInstance* sim_make_n3a();
 ::SimInstance* sim_make_n3b();
+#include "sim_factory_decls.inc"
 
 namespace {
 
@@ -53,6 +63,7 @@ constexpr uint32_t BOOT_DELAY_MS = 1200;    // tempo até o firmware voltar a ex
 uint64_t g_now_us = 1000;
 uint32_t g_rng = 0x1234567u;
 bool g_verbose = false;
+bool g_interactive_runtime = false;
 int g_failures = 0;
 
 uint32_t nowMs() { return static_cast<uint32_t>(g_now_us / 1000u); }
@@ -94,6 +105,7 @@ struct Node {
   std::vector<std::pair<uint32_t, std::string>> log;
   uint8_t tec = 0;
   uint32_t restarts = 0;
+  uint8_t cpuBudgetPct = 100;  // fração de passos do loop atendidos (modelo)
 };
 
 std::vector<Node> g_nodes;
@@ -105,6 +117,12 @@ Node& node(uint8_t id) {
   for (Node& n : g_nodes) if (n.id == id) return n;
   fprintf(stderr, "Node %u inexistente\n", id);
   exit(2);
+}
+
+// Nodes removidos continuam podendo figurar nas observacoes radio armazenadas.
+Node* simTryNode(uint8_t id) {
+  for (Node& n : g_nodes) if (n.id == id) return &n;
+  return nullptr;
 }
 
 Node& probe() { return node(0); }
@@ -166,6 +184,9 @@ void collectSerial(Node& n) {
       printf("#N%u@%u %s\n", n.id, nowMs(), line.c_str());
     }
     n.log.emplace_back(nowMs(), std::move(line));
+    if (g_interactive_runtime && n.log.size() > 10000) {
+      n.log.erase(n.log.begin(), n.log.begin() + 5000);
+    }
   }
   n.partial.erase(0, start);
 }
@@ -276,6 +297,14 @@ constexpr AcousticSecond ACOUSTIC_LEVELS[] = {
 constexpr uint8_t ACOUSTIC_EVENT_CLASSES[] = {ACOUSTIC_EVENT_IMPACT, ACOUSTIC_EVENT_CRACK, ACOUSTIC_EVENT_TONAL,
                                               ACOUSTIC_EVENT_TRANSIENT};
 
+// RSSI e uma observacao; perdas sao parametros independentes.
+std::map<std::pair<uint64_t,uint8_t>,uint8_t> g_radio_loss_pct;
+bool simRadioDrop(uint64_t uuid,uint8_t id) {
+  if (!g_interactive_runtime) return false;
+  auto it=g_radio_loss_pct.find({uuid,id});
+  return it!=g_radio_loss_pct.end() && it->second>0 && sim_random32()%100u<it->second;
+}
+
 struct Sensor {
   enum class Mode { Idle, Discovery, Bound };
 
@@ -286,6 +315,18 @@ struct Sensor {
   uint8_t devKey[IOC_LINK_KEY_LEN] = {0};
   std::map<uint8_t, int> rssi;   // nós que o alcançam (BLE e Wi-Fi)
   bool poweredOn = true;
+  // IOC_USB_HYBRID_STAGE5: origem USB, sem sintetizar dados faltantes.
+  bool usbSource = false;
+  uint32_t usbLastRxMs = 0;
+  uint32_t usbSampleVersion = 0;
+  uint32_t usbForwardedVersion = 0;
+  std::map<std::string,double> usbValues;
+  // IOC_USB_FFT_STAGE6: pedido iniciado pela Probe; FFT fisica de entrega unica.
+  uint32_t usbFftRequest = 0;
+  uint32_t usbFftInjected = 0;
+  std::vector<float> usbSpectrum;
+  float usbSpectrumRateHz = 0.0f;
+  uint16_t usbSpectrumFftSize = 0;
   // Como o Pico W: uma amostra por janela processada (512 amostras a 1 kHz).
   // O Node encaminha ao CAN uma por segundo.
   uint32_t telemetryPeriodMs = 500;
@@ -335,11 +376,11 @@ struct Sensor {
 
   bool linkUp() const {
     if (parent == 0 || g_now_us < wifiReadyUs || !inRange(parent)) return false;
-    Node& n = node(parent);
-    if (!n.powered || !n.inst) return false;
+    Node* n = simTryNode(parent);
+    if (!n || !n->powered || !n->inst) return false;
     std::string ssid, psk;
     int channel = 0;
-    if (!n.inst->apInfo(ssid, psk, channel)) return false;
+    if (!n->inst->apInfo(ssid, psk, channel)) return false;
     char expectSsid[IOC_LINK_SSID_LEN];
     char expectPsk[IOC_LINK_PSK_LEN];
     ioc_link_wifi_ssid(parent, expectSsid);
@@ -356,7 +397,7 @@ struct Sensor {
     CHECK(n == d.data.size());
     memcpy(d.ip, ip, 4);
     d.port = port;
-    node(parent).inst->udpDeliver(d);
+    if (!simRadioDrop(uuid,parent)) node(parent).inst->udpDeliver(d);
   }
 
   void sendData(const void* inner, size_t len) {
@@ -593,7 +634,11 @@ struct Sensor {
     ++controlsAnswered;
   }
 
+  // IOC_USB_HYBRID_STAGE5
+#include "sim_usb_telemetry.inc"
+
   void telemetry() {
+    if (usbSource) { usbTelemetry(); return; }
     if (profile == PROFILE_ACOUSTIC_MEMS) {
       acousticReport();
       return;
@@ -737,8 +782,8 @@ struct Sensor {
       mfg[6] = static_cast<char>(NET_PROTOCOL_VERSION);
       for (int i = 0; i < 8; ++i) mfg[7 + i] = static_cast<char>((uuid >> (56 - 8 * i)) & 0xFFu);
       for (const auto& entry : rssi) {
-        Node& n = node(entry.first);
-        if (n.powered && n.inst) n.inst->bleDeliver(mfg, entry.second);
+        Node* n = simTryNode(entry.first);
+        if (n && n->powered && n->inst && !simRadioDrop(uuid,entry.first)) n->inst->bleDeliver(mfg, entry.second);
       }
     }
 
@@ -746,10 +791,10 @@ struct Sensor {
     if (mode != Mode::Bound && g_now_us >= nextOfferScanUs) {
       nextOfferScanUs = g_now_us + static_cast<uint64_t>(OFFER_SCAN_MS) * 1000u;
       for (const auto& entry : rssi) {
-        Node& n = node(entry.first);
-        if (!n.powered || !n.inst) continue;
+        Node* n = simTryNode(entry.first);
+        if (!n || !n->powered || !n->inst) continue;
         std::string mfg;
-        if (!n.inst->bleOffer(mfg)) continue;
+        if (!n->inst->bleOffer(mfg) || simRadioDrop(uuid,entry.first)) continue;
         ioc_offer_t offer;
         if (!ioc_offer_verify(devKey, reinterpret_cast<const uint8_t*>(mfg.data()), mfg.size(), &offer)) continue;
         if (offer.uuid != uuid || offer.node_id != entry.first) continue;
@@ -806,7 +851,7 @@ void routeWifi() {
     ::SimDatagram d;
     while (n.inst->udpTake(d)) {
       for (Sensor& s : g_sensors) {
-        if (s.poweredOn && s.parent == n.id && s.port == d.port && s.linkUp()) s.onDatagram(d);
+        if (s.poweredOn && s.parent == n.id && s.port == d.port && s.linkUp() && !simRadioDrop(s.uuid,n.id)) s.onDatagram(d);
       }
     }
   }
@@ -821,6 +866,9 @@ void tick() {
   for (Sensor& s : g_sensors) s.step();
   for (Node& n : g_nodes) {
     if (!n.powered || !n.inst) continue;
+    // Reducao sintetica de capacidade; nao representa medicao fisica de CPU.
+    if (g_interactive_runtime && n.id != 0 && n.cpuBudgetPct < 100 &&
+        sim_random32()%100u >= n.cpuBudgetPct) continue;
     try {
       n.inst->step();
     } catch (const ::SimRestart&) {
@@ -852,6 +900,19 @@ bool runUntilTrue(const std::function<bool()>& condition, uint32_t timeoutMs) {
 }
 
 void probeCommand(const std::string& line) {
+  // IOC_USB_FFT_STAGE6: nao gerar resposta sintética: sinaliza apenas ao
+  // dispositivo USB com o mesmo parent.child, caso exista e esteja ligado.
+  unsigned parent=0,child=0;
+  if (sscanf(line.c_str(), "CMD TARGET=%u.%u ACTION=FFT", &parent, &child)==2 &&
+      parent>0 && parent<=255 && child>0 && child<=255) {
+    for (Sensor& sensor:g_sensors) {
+      if (sensor.usbSource && sensor.poweredOn &&
+          sensor.parent==parent && sensor.child==child && sensor.mode==Sensor::Mode::Bound) {
+        ++sensor.usbFftRequest;
+        break;
+      }
+    }
+  }
   note("comando: %s", line.c_str());
   probe().inst->serialWrite(line + "\n");
 }
@@ -1482,6 +1543,8 @@ const Scenario SCENARIOS[] = {
   {"restart_keeps_binding", scenarioRestartKeepsBinding, "Node reinicia e retoma o vinculo gravado na NVS"},
 };
 
+#include "sim_interactive.inc"
+
 }  // namespace
 
 uint64_t sim_now_us() { return g_now_us; }
@@ -1517,20 +1580,34 @@ void sim_nvs_put(int node_id, const std::string& key, const uint8_t* data, size_
 
 int main(int argc, char** argv) {
   const char* name = nullptr;
+  bool interactive = false;
+  bool interactivePaused = false;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--verbose") == 0) g_verbose = true;
+    else if (strcmp(argv[i], "--interactive") == 0) interactive = true;
+    else if (strcmp(argv[i], "--interactive-paused") == 0) { interactive = true; interactivePaused = true; }
     else if (strcmp(argv[i], "--list") == 0) {
       for (const Scenario& s : SCENARIOS) printf("%s\t%s\n", s.name, s.description);
       return 0;
     } else name = argv[i];
   }
-  if (!name) {
-    fprintf(stderr, "Uso: %s <cenario> [--verbose] | --list\n", argv[0]);
+  if (!name && !interactive) {
+    fprintf(stderr, "Uso: %s <cenario> [--verbose] | --list | --interactive\n", argv[0]);
     return 2;
   }
 
   if (!ioc_link_hex_to_key(IOT_LINK_MASTER_KEY_HEX, g_master)) return 2;
   ioc_link_derive_network_key(g_master, g_network_key);
+
+  if (interactive) {
+    if (name) { fprintf(stderr, "--interactive nao aceita nome de cenario\n"); return 2; }
+    setvbuf(stdout, nullptr, _IOLBF, 0);
+    g_interactive_runtime = true;
+    setupBench();
+    simPrepareFactories();
+    formNetwork();
+    return simInteractiveLoop(interactivePaused);
+  }
 
   for (const Scenario& s : SCENARIOS) {
     if (strcmp(s.name, name) != 0) continue;

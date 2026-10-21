@@ -1,0 +1,10 @@
+{
+  "name": "Falha e recuperação do líder",
+  "description": "Desliga o Node 03, aguarda a eleição e o retorna. Registra a sequência observada pela Probe.",
+  "duration_ms": 40000,
+  "repetitions": 2,
+  "steps": [
+    {"at_ms": 2000, "command": "NODE 3 POWER OFF"},
+    {"at_ms": 22000, "command": "NODE 3 POWER ON"}
+  ]
+}

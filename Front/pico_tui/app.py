@@ -60,6 +60,10 @@ from pico_tui.metrics.experiments import EXPERIMENTS_BY_KEY, ExperimentRecorder
 from pico_tui.metrics.export import export_metrics
 from pico_tui.metrics.service import MetricsService
 from pico_tui.metrics_screens import ExperimentsScreen, MetricsScreen
+from pico_tui.history.storage import HistoryStore
+from pico_tui.history.service import HistoryService
+from pico_tui.history.captures import CaptureManager
+from pico_tui.history.screen import HistoryScreen
 from pico_tui.preferences import load_preferences, save_preferences
 from pico_tui.protocol.router import DecoderRouter
 from pico_tui.screens import (
@@ -170,6 +174,8 @@ class PicoTuiApp(App[None]):
         Binding("b", "show_metrics", "Métricas", show=False),
         Binding("f9", "show_experiments", "Ensaios", show=False),
         Binding("e", "show_experiments", "Ensaios", show=False),
+        Binding("f11", "show_history", "Histórico", show=False),
+        Binding("h", "show_history", "Histórico", show=False),
         Binding("f12", "show_supervisor", "Supervisório", show=False),
         Binding("v", "show_supervisor", "Supervisório", show=False),
         Binding("f10", "exit_confirm", "Sair", show=False),
@@ -184,6 +190,7 @@ class PicoTuiApp(App[None]):
         mode: str = "auto",
         demo: bool = False,
         enable_file_log: bool = True,
+        enable_raw_recording: bool = False,
         security_mode: str = "presence",
         security_config: str | None = None,
         show_messages: bool | None = None,
@@ -204,6 +211,7 @@ class PicoTuiApp(App[None]):
         self.requested_mode = mode
         self.demo_requested = demo
         self.enable_file_log = enable_file_log
+        self.enable_raw_recording = enable_raw_recording
         self.security = SecurityManager(security_mode, security_config)
         self.preferences_path = preferences_path
         self.preferences, self._preferences_warning = load_preferences(preferences_path)
@@ -227,7 +235,11 @@ class PicoTuiApp(App[None]):
             session_id=self.session_id,
             directory=Path.cwd() / "logs",
             enable_file=enable_file_log,
+            persist_streams=False,
         )
+        self.history: HistoryService | None = None
+        self.captures: CaptureManager | None = None
+        self._history_flush_running = False
         self.demo_producer = DemoProducer(self.bus)
         self.serial_client: SerialClient | None = None
         self._line_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=5000)
@@ -265,6 +277,14 @@ class PicoTuiApp(App[None]):
         self.theme = "iot-over-can-industrial"
         self._apply_breakpoints(self.size.width, self.size.height)
         self._register_event_handlers()
+        try:
+            origin = "REPLAY" if self.replay_path is not None else ("DEMO" if self.demo_requested else "LIVE")
+            db = HistoryStore(Path.cwd() / "logs" / "historico.sqlite3")
+            self.history = HistoryService(self.bus, db, self.session_id, origin=origin, port=self._last_port)
+            self.captures = CaptureManager(self.bus, self.history)
+        except Exception as exc:
+            self.notify(f"Histórico indisponível: {exc}", severity="warning", timeout=8)
+        self.set_interval(2.0, self._flush_history)
         self.run_worker(self._process_lines(), group="decoder", exclusive=True)
         self.set_interval(REFRESH_SECONDS, self._refresh_ui)
         self.set_interval(1.0, self._expire_fragment_transfers)
@@ -273,7 +293,32 @@ class PicoTuiApp(App[None]):
     async def on_unmount(self) -> None:
         self.demo_producer.stop()
         await asyncio.to_thread(self._close_serial)
+        if self.history is not None:
+            try:
+                await asyncio.to_thread(self.history.flush)
+                if self.captures is not None:
+                    await asyncio.to_thread(self.captures.close)
+                await asyncio.to_thread(self.history.close)
+            except Exception as exc:
+                self.notify(f"Falha ao encerrar histórico: {exc}", severity="error")
         self.log_manager.close()
+
+    def _flush_history(self) -> None:
+        if self.history is None or self._history_flush_running:
+            return
+        self.run_worker(self._flush_history_async(), group="history-db", exclusive=True)
+
+    async def _flush_history_async(self) -> None:
+        self._history_flush_running = True
+        try:
+            if self.history is not None:
+                await asyncio.to_thread(self.history.flush)
+                if self.captures is not None:
+                    await asyncio.to_thread(self.captures.flush)
+        except Exception as exc:
+            self.notify(f"Falha na persistência histórica: {exc}", severity="error", timeout=8)
+        finally:
+            self._history_flush_running = False
 
     def _register_event_handlers(self) -> None:
         self.bus.subscribe(LogEvent, self._on_log_event)
@@ -537,7 +582,7 @@ class PicoTuiApp(App[None]):
             client.close()
 
     def _start_recording(self, port: str, mode: str) -> None:
-        if not self.enable_file_log:
+        if not (self.enable_file_log and self.enable_raw_recording):
             return
         path = self.log_manager.directory / f"gravacao_{time.strftime('%Y%m%d-%H%M%S')}_{self.session_id}.log"
         try:
@@ -1707,6 +1752,7 @@ class PicoTuiApp(App[None]):
                     ("F7/w", "Sensores sem fio", "app.show_wireless"),
                     ("F8/b", "Métricas", "app.show_metrics"),
                     ("F9/e", "Ensaios", "app.show_experiments"),
+                    ("F11/h", "Histórico", "app.show_history"),
                     ("F12/v", "Supervisório", "app.show_supervisor"),
                 ]
             )
@@ -1801,6 +1847,10 @@ class PicoTuiApp(App[None]):
     def action_show_experiments(self) -> None:
         if not self._modal_open() and not isinstance(self.screen, ExperimentsScreen):
             self._replace_top(ExperimentsScreen())
+
+    def action_show_history(self) -> None:
+        if not self._modal_open() and not isinstance(self.screen, HistoryScreen):
+            self._replace_top(HistoryScreen())
 
     def action_show_supervisor(self) -> None:
         if not self._modal_open() and not isinstance(self.screen, SupervisorScreen):

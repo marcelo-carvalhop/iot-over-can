@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="ioc-token" content="__IOC_TOKEN__"/>
+  <title>IoT-over-CAN | Simulation Studio</title>
+  <link rel="stylesheet" href="/static/style.css"/>
+  <script defer src="/static/app.js"></script>
+</head>
+<body>
+  <div class="application">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">i<span>o</span>c</div><div><b>IoT-over-CAN</b><small>SIMULATION STUDIO <span class="version">0.4</span></small></div></div>
+      <div class="sidebar-label">LABORATÓRIO</div>
+      <nav aria-label="Navegação principal">
+        <button class="nav-item active" data-view="topology">▤ <span>Topologia</span></button>
+        <button class="nav-item" data-view="metrics">▥ <span>Métricas e eventos</span></button>
+        <button class="nav-item" data-view="experiments">◫ <span>Experimentos</span></button>
+      </nav>
+      <div class="sidebar-note"><div class="status-dot"></div><div><strong id="connection-label">Conectando</strong><small id="connection-subtitle">Aguardando estado virtual</small></div></div>
+      <div class="sidebar-bottom">Somente rede local (127.0.0.1)<div>Resultados modelados, não medições físicas</div></div>
+    </aside>
+    <div class="content">
+      <header class="topbar"><div><div class="eyebrow">AMBIENTE DE EXPERIMENTAÇÃO</div><h1 id="page-title">Topologia interativa</h1></div><div class="header-actions"><div class="clock">TEMPO VIRTUAL<strong id="clock-text">—</strong></div><button id="pause-btn" class="btn btn-secondary">Pausar</button><button id="step-btn" class="btn btn-secondary" title="Executar um segundo de tempo virtual quando pausado">+1 s</button></div></header>
+      <main>
+        <section id="summary" class="summary-grid" aria-label="Indicadores de rede">
+          <div class="metric-card"><span>OCUPAÇÃO CAN ESTIMADA</span><strong id="metric-load">—</strong><small>Quadros confirmados · 500 kbit/s</small></div>
+          <div class="metric-card"><span>TRÁFEGO CAN</span><strong id="metric-frames">—</strong><small>Quadros/s no período observado</small></div>
+          <div class="metric-card"><span>DISPOSITIVOS</span><strong id="metric-devices">—</strong><small>Nodes ativos / sensores virtuais</small></div>
+          <div class="metric-card"><span>NODE LÍDER</span><strong id="metric-leader">—</strong><small>Eleição distribuída do firmware</small></div>
+        </section>
+
+        <section id="view-topology" class="view active">
+          <div class="workspace-grid">
+            <article class="panel topology-panel">
+              <div class="panel-header"><div><h2>Mapa da rede</h2><p>Selecione um dispositivo. Arraste sensores sobre Nodes para configurar uma observação de rádio.</p></div><span class="legend"><i class="legend-dot node"></i> CAN <i class="legend-dot sensor"></i> Wireless</span></div>
+              <div class="topology-scroll"><svg id="topology" role="img" aria-label="Topologia virtual CAN e BLE/Wi-Fi" viewBox="0 0 1000 470"></svg></div>
+              <div class="map-footer"><span>▬ Barramento CAN</span><span>┄ Enlace BLE/Wi-Fi modelado</span><span>● Dispositivo online</span></div>
+            </article>
+            <aside class="tool-column">
+              <article class="panel"><div class="panel-header"><h2>Adicionar equipamento</h2></div><form id="form-node" class="compact-form"><label for="new-node">Novo Node CAN · ID</label><div class="inline-form"><input id="new-node" type="number" value="4" min="1" max="31" required/><button class="btn btn-primary" type="submit">Adicionar</button></div></form><div class="rule"></div><form id="form-sensor" class="compact-form"><!-- IOC_WIRELESS_FLOW_HOTFIX_V1 -->
+                <label for="new-uuid">Novo sensor · UUID64</label>
+                <input id="new-uuid" value="0xE6616408432B6F39" required/>
+                <label for="new-profile">Perfil</label>
+                <select id="new-profile"><option value="VIBRATION">Vibração · MPU6050</option><option value="ACOUSTIC">Acústico · INMP441</option></select>
+                <label for="new-sensor-node">Alcance inicial BLE</label>
+                <select id="new-sensor-node"><option value="">Sem enlace (invisível para os Nodes)</option></select>
+                <label for="new-sensor-rssi">RSSI inicial (dBm)</label>
+                <input id="new-sensor-rssi" type="number" value="-55" min="-127" max="0" required/>
+                <small>O sensor precisa estar ao alcance de um Node para ser descoberto. A associação lógica é uma etapa separada.</small>
+                <button type="submit" class="btn btn-primary btn-block">Adicionar sensor e configurar alcance</button>
+              </form></article>
+              <article class="panel inspector"><div class="panel-header"><h2>Inspetor do dispositivo</h2></div><div id="inspector-body" class="empty-state">Selecione um Node ou sensor na topologia para consultar seu estado e modificar parâmetros.</div></article>
+            </aside>
+          </div>
+        </section>
+
+        <section id="view-metrics" class="view">
+          <div class="metrics-grid">
+            <article class="panel"><div class="panel-header"><div><h2>Carga do barramento CAN</h2><p>Ocupação calculada a partir dos bits de quadros confirmados no modelo.</p></div></div><canvas id="chart-load" height="220" aria-label="Histórico de carga CAN"></canvas><div class="chart-key">Percentual estimado por janela de coleta · Não inclui necessariamente retransmissões</div></article>
+            <article class="panel"><div class="panel-header"><div><h2>Quadros por segundo</h2><p>Vazão medida sobre o tempo virtual.</p></div></div><canvas id="chart-frames" height="220" aria-label="Histórico de quadros transmitidos"></canvas><div class="chart-key">Quadros confirmados por segundo</div></article>
+          </div>
+          <article class="panel"><div class="panel-header"><div><h2>Estado dos dispositivos</h2><p>Indicadores obtidos diretamente do comando STATUS do simulador.</p></div></div><div class="table-scroll"><table><thead><tr><th>Node</th><th>Estado</th><th>Energia</th><th>TX</th><th>Budget</th><th>Boots restantes</th></tr></thead><tbody id="node-table"></tbody></table></div></article>
+          <article class="panel"><div class="panel-header"><div><h2>Eventos do protocolo</h2><p>Eventos recentes da Probe 00. A captura requer um arquivo --record.</p></div><button id="refresh-btn" class="btn btn-secondary">Atualizar</button></div><div id="event-list" class="event-list"></div></article>
+        </section>
+
+        <section id="view-experiments" class="view">
+          <div class="experiment-grid">
+            <article class="panel"><div class="panel-header"><div><h2>Projetar experimento</h2><p>Comandos ordenados por <code>at_ms</code>, executados em tempo virtual por uma instância isolada.</p></div></div><label for="template-select">Modelo de ensaio</label><select id="template-select"></select><label for="experiment-spec">Especificação JSON</label><textarea id="experiment-spec" spellcheck="false" rows="19"></textarea><div class="form-footer"><span>Até 10 repetições por execução, 300 s simulados por repetição.</span><button class="btn btn-primary" id="run-experiment">Executar ensaio</button></div></article>
+            <div class="tool-column"><article class="panel"><div class="panel-header"><h2>Execuções recentes</h2></div><div id="jobs-list" class="jobs-list empty-state">Nenhum ensaio em execução.</div></article><article class="panel"><div class="panel-header"><h2>Resultados exportáveis</h2></div><div id="results-list" class="results-list empty-state">Nenhum relatório registrado.</div></article><article class="panel note"><h2>Reprodutibilidade</h2><p>Cada repetição inicia um novo processo, utiliza a mesma semente determinística do motor e registra o SHA-256 do executável. Modificações no firmware ou nos parâmetros podem alterar os resultados.</p><p>Os resultados expressam propriedades do modelo; medições físicas continuam necessárias para calibração e validação.</p></article></div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

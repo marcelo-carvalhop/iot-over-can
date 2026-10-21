@@ -542,3 +542,20 @@ Toast {
 .sup-panel.-critical:focus {
     border: heavy #F4706A;
 }
+
+/* Histórico: linha do tempo superior, inspeção inferior; mantém a paleta industrial. */
+#history-session-section { height: 5; }
+#history-sessions { height: 2; }
+#history-timeline-section { height: auto; min-height: 9; }
+#history-timeline { height: auto; min-height: 7; background: $bg-widget; padding: 0 1; }
+#history-inspection-section { height: 1fr; min-height: 9; }
+#history-inspection-columns { height: 1fr; }
+#history-events { height: 1fr; min-height: 5; }
+#history-details { height: auto; padding: 0 1; color: $text-primary; }
+.bp-wide #history-inspection-columns { layout: horizontal; }
+.bp-wide #history-inspection-columns .column-main { width: 3fr; }
+.bp-wide #history-inspection-columns .column-side { width: 2fr; }
+.bp-narrow #history-inspection-columns,
+.bp-medium #history-inspection-columns { layout: vertical; height: auto; }
+.bp-narrow #history-events, .bp-medium #history-events { height: 9; }
+.bp-short #history-session-section { height: 4; }

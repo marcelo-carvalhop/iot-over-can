@@ -1,0 +1,17 @@
+{
+  "name": "Restrição temporária de processamento",
+  "description": "Reduz o orçamento sintético de ciclos do Node 02 e restaura o valor de referência.",
+  "duration_ms": 30000,
+  "repetitions": 3,
+  "steps": [
+    {
+      "at_ms": 5000,
+      "command": "NODE 2 BUDGET 40"
+    },
+    {
+      "at_ms": 20000,
+      "command": "NODE 2 BUDGET 100"
+    }
+  ],
+  "seed_mode": "increment"
+}
