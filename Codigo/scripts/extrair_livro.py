@@ -24,6 +24,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import quote, unquote
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ROTEIRO = "livro.md"
@@ -201,7 +202,10 @@ def _reescrever_link(destino: str, origem: Path, saida: Path) -> str:
     caminho, separador, ancora = destino.partition("#")
     if not caminho:
         return destino
-    novo = os.path.relpath(os.path.normpath(origem / caminho), saida).replace(os.sep, "/")
+    novo = os.path.relpath(os.path.normpath(origem / unquote(caminho)), saida).replace(os.sep, "/")
+    # Espaços (e parênteses) precisam ser codificados nos destinos Markdown.
+    # A URL continua relativa e independe do caminho absoluto do checkout.
+    novo = quote(novo, safe="/._-~")
     if caminho.endswith("/"):
         novo += "/"
     return novo + separador + ancora

@@ -1,0 +1,7 @@
+{
+  "name": "Linha de base CAN",
+  "description": "Mede carga, quadros e eventos da rede formada, sem intervenção.",
+  "duration_ms": 20000,
+  "repetitions": 2,
+  "steps": []
+}

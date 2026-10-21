@@ -211,7 +211,12 @@ class StateStore:
         wireless_uuid: str = "",
     ) -> SensorNode:
         with self._lock:
-            node = self.ensure_node(parent_node_id, "CAN_NODE")
+            node_type = (
+                "DIRECT_SENSOR_HOST"
+                if self._state.connection_mode == ConnectionMode.SENSOR_DIRECT
+                else "CAN_NODE"
+            )
+            node = self.ensure_node(parent_node_id, node_type)
             sensor = node.sensors.get(child_id)
             if sensor is None:
                 sensor = SensorNode(
@@ -473,7 +478,13 @@ class StateStore:
         wall = time.time()
         with self._lock:
             for node in self._state.nodes.values():
-                if node.last_seen_monotonic:
+                # Na conexao USB direta, este host so agrupa o sensor 01.01.
+                # Ele nao envia heartbeat CAN e nao pode gerar incidentes de liveness.
+                synthetic_host = (
+                    self._state.connection_mode == ConnectionMode.SENSOR_DIRECT
+                    and node.node_type == "DIRECT_SENSOR_HOST"
+                )
+                if not synthetic_host and node.last_seen_monotonic:
                     previous = node.status
                     node.status = _age_status(now - node.last_seen_monotonic, aging_after, stale_after, lost_after)
                     self._record_freshness(node.incidents, previous, node.status, wall, stale_after, lost_after)

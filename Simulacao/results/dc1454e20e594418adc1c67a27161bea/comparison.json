@@ -1,0 +1,32 @@
+{
+  "frames_delta": {
+    "mean": 665.0,
+    "min": 665.0,
+    "max": 665.0,
+    "stddev_sample": 0.0
+  },
+  "bits_confirmed_delta": {
+    "mean": 74158.0,
+    "min": 74158.0,
+    "max": 74158.0,
+    "stddev_sample": 0.0
+  },
+  "utilization_confirmed_pct": {
+    "mean": 0.2119,
+    "min": 0.2119,
+    "max": 0.2119,
+    "stddev_sample": 0.0
+  },
+  "mean_probe_load_pct": {
+    "mean": 0.1871,
+    "min": 0.1871,
+    "max": 0.1871,
+    "stddev_sample": 0.0
+  },
+  "failovers": {
+    "mean": 1.0,
+    "min": 1.0,
+    "max": 1.0,
+    "stddev_sample": 0.0
+  }
+}

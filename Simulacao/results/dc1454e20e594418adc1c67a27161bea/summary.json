@@ -1,0 +1,143 @@
+{
+  "id": "dc1454e20e594418adc1c67a27161bea",
+  "name": "Reassociação após perda de alcance",
+  "created_at": "2026-10-18T21:18:53.571041+00:00",
+  "engine_sha256": "f0607fef87ea69396f25076c96ccf44ff3dc810a0d7615134a4218f88da186c8",
+  "model": "Native host simulator; 500 kbit/s; fixed seed 0x01234567",
+  "time_basis": "virtual time, initial state after formNetwork()",
+  "warning": "Sem calibração física; BUS_STATS da Probe não conta todos os erros ou retransmissões.",
+  "repetitions": [
+    {
+      "index": 1,
+      "seed": 19088743,
+      "initial_t_ms": 8702,
+      "final_t_ms": 78702,
+      "frames_delta": 665,
+      "bits_confirmed_delta": 74158,
+      "utilization_confirmed_pct": 0.2119,
+      "mean_probe_load_pct": 0.1871,
+      "probe_samples": 78,
+      "failovers": 1,
+      "events": 144,
+      "leader_final": 3,
+      "node_count_final": 4,
+      "sensor_count_final": 1,
+      "commands": [
+        {
+          "at_ms": 0,
+          "command": "SENSOR ADD 0xE6616408432B6F39 VIBRATION",
+          "result": "#CTRL OK SENSOR ADD uuid=0xE6616408432B6F39 profile=VIBRATION"
+        },
+        {
+          "at_ms": 0,
+          "command": "SENSOR RSSI 0xE6616408432B6F39 1 -48",
+          "result": "#CTRL OK SENSOR RSSI uuid=0xE6616408432B6F39 node=1 value=-48"
+        },
+        {
+          "at_ms": 0,
+          "command": "SENSOR RSSI 0xE6616408432B6F39 2 -70",
+          "result": "#CTRL OK SENSOR RSSI uuid=0xE6616408432B6F39 node=2 value=-70"
+        },
+        {
+          "at_ms": 5000,
+          "command": "PROBE WIRELESS BIND 1 0xE6616408432B6F39 AUTO",
+          "result": "#CTRL OK PROBE"
+        },
+        {
+          "at_ms": 20000,
+          "command": "SENSOR RSSI 0xE6616408432B6F39 1 OFF",
+          "result": "#CTRL OK SENSOR RSSI uuid=0xE6616408432B6F39 node=1 value=OFF"
+        },
+        {
+          "at_ms": 20000,
+          "command": "SENSOR RSSI 0xE6616408432B6F39 2 -52",
+          "result": "#CTRL OK SENSOR RSSI uuid=0xE6616408432B6F39 node=2 value=-52"
+        }
+      ],
+      "replay": "run-01/trace.log"
+    },
+    {
+      "index": 2,
+      "seed": 19088744,
+      "initial_t_ms": 8702,
+      "final_t_ms": 78702,
+      "frames_delta": 665,
+      "bits_confirmed_delta": 74158,
+      "utilization_confirmed_pct": 0.2119,
+      "mean_probe_load_pct": 0.1871,
+      "probe_samples": 78,
+      "failovers": 1,
+      "events": 144,
+      "leader_final": 3,
+      "node_count_final": 4,
+      "sensor_count_final": 1,
+      "commands": [
+        {
+          "at_ms": 0,
+          "command": "SENSOR ADD 0xE6616408432B6F39 VIBRATION",
+          "result": "#CTRL OK SENSOR ADD uuid=0xE6616408432B6F39 profile=VIBRATION"
+        },
+        {
+          "at_ms": 0,
+          "command": "SENSOR RSSI 0xE6616408432B6F39 1 -48",
+          "result": "#CTRL OK SENSOR RSSI uuid=0xE6616408432B6F39 node=1 value=-48"
+        },
+        {
+          "at_ms": 0,
+          "command": "SENSOR RSSI 0xE6616408432B6F39 2 -70",
+          "result": "#CTRL OK SENSOR RSSI uuid=0xE6616408432B6F39 node=2 value=-70"
+        },
+        {
+          "at_ms": 5000,
+          "command": "PROBE WIRELESS BIND 1 0xE6616408432B6F39 AUTO",
+          "result": "#CTRL OK PROBE"
+        },
+        {
+          "at_ms": 20000,
+          "command": "SENSOR RSSI 0xE6616408432B6F39 1 OFF",
+          "result": "#CTRL OK SENSOR RSSI uuid=0xE6616408432B6F39 node=1 value=OFF"
+        },
+        {
+          "at_ms": 20000,
+          "command": "SENSOR RSSI 0xE6616408432B6F39 2 -52",
+          "result": "#CTRL OK SENSOR RSSI uuid=0xE6616408432B6F39 node=2 value=-52"
+        }
+      ],
+      "replay": "run-02/trace.log"
+    }
+  ],
+  "aggregate": {
+    "frames_delta": {
+      "mean": 665.0,
+      "min": 665.0,
+      "max": 665.0,
+      "stddev_sample": 0.0
+    },
+    "bits_confirmed_delta": {
+      "mean": 74158.0,
+      "min": 74158.0,
+      "max": 74158.0,
+      "stddev_sample": 0.0
+    },
+    "utilization_confirmed_pct": {
+      "mean": 0.2119,
+      "min": 0.2119,
+      "max": 0.2119,
+      "stddev_sample": 0.0
+    },
+    "mean_probe_load_pct": {
+      "mean": 0.1871,
+      "min": 0.1871,
+      "max": 0.1871,
+      "stddev_sample": 0.0
+    },
+    "failovers": {
+      "mean": 1.0,
+      "min": 1.0,
+      "max": 1.0,
+      "stddev_sample": 0.0
+    }
+  },
+  "warning_repetitions": "Sementes incrementais variam sequências futuras do PRNG, mas a formação inicial permanece fixa e os ensaios requerem validação física.",
+  "status": "completed"
+}
