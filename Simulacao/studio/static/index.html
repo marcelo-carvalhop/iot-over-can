@@ -19,7 +19,7 @@
         <button class="nav-item" data-view="experiments">◫ <span>Experimentos</span></button>
       </nav>
       <div class="sidebar-note"><div class="status-dot"></div><div><strong id="connection-label">Conectando</strong><small id="connection-subtitle">Aguardando estado virtual</small></div></div>
-      <div class="sidebar-bottom">Somente rede local (127.0.0.1)<div>Resultados modelados, não medições físicas</div></div>
+      <div class="sidebar-bottom">Acesso restrito a este computador (127.0.0.1)<div>Enlaces simulados; leituras USB podem ser físicas</div></div>
     </aside>
     <div class="content">
       <header class="topbar"><div><div class="eyebrow">AMBIENTE DE EXPERIMENTAÇÃO</div><h1 id="page-title">Topologia interativa</h1></div><div class="header-actions"><div class="clock">TEMPO VIRTUAL<strong id="clock-text">—</strong></div><button id="pause-btn" class="btn btn-secondary">Pausar</button><button id="step-btn" class="btn btn-secondary" title="Executar um segundo de tempo virtual quando pausado">+1 s</button></div></header>
@@ -34,7 +34,7 @@
         <section id="view-topology" class="view active">
           <div class="workspace-grid">
             <article class="panel topology-panel">
-              <div class="panel-header"><div><h2>Mapa da rede</h2><p>Selecione um dispositivo. Arraste sensores sobre Nodes para configurar uma observação de rádio.</p></div><span class="legend"><i class="legend-dot node"></i> CAN <i class="legend-dot sensor"></i> Wireless</span></div>
+              <div class="panel-header"><div><h2>Mapa da rede</h2><p>Selecione um dispositivo. Arraste sensores sobre Nodes para configurar uma observação de rádio.</p></div><span class="legend"><i class="legend-dot node"></i> CAN <i class="legend-dot sensor"></i> Sem fio</span></div>
               <div class="topology-scroll"><svg id="topology" role="img" aria-label="Topologia virtual CAN e BLE/Wi-Fi" viewBox="0 0 1000 470"></svg></div>
               <div class="map-footer"><span>▬ Barramento CAN</span><span>┄ Enlace BLE/Wi-Fi modelado</span><span>● Dispositivo online</span></div>
             </article>
@@ -62,7 +62,7 @@
             <article class="panel"><div class="panel-header"><div><h2>Quadros por segundo</h2><p>Vazão medida sobre o tempo virtual.</p></div></div><canvas id="chart-frames" height="220" aria-label="Histórico de quadros transmitidos"></canvas><div class="chart-key">Quadros confirmados por segundo</div></article>
           </div>
           <article class="panel"><div class="panel-header"><div><h2>Estado dos dispositivos</h2><p>Indicadores obtidos diretamente do comando STATUS do simulador.</p></div></div><div class="table-scroll"><table><thead><tr><th>Node</th><th>Estado</th><th>Energia</th><th>TX</th><th>Budget</th><th>Boots restantes</th></tr></thead><tbody id="node-table"></tbody></table></div></article>
-          <article class="panel"><div class="panel-header"><div><h2>Eventos do protocolo</h2><p>Eventos recentes da Probe 00. A captura requer um arquivo --record.</p></div><button id="refresh-btn" class="btn btn-secondary">Atualizar</button></div><div id="event-list" class="event-list"></div></article>
+          <article class="panel"><div class="panel-header"><div><h2>Eventos do protocolo</h2><p>Eventos recentes da Probe 00. Eventos capturados pela Probe virtual.</p></div><button id="refresh-btn" class="btn btn-secondary">Atualizar</button></div><div id="event-list" class="event-list"></div></article>
         </section>
 
         <section id="view-experiments" class="view">
