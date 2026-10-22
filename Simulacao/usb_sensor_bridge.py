@@ -62,6 +62,10 @@ def convert_tel(line: str, profile: str, rate_hz: float | None = None, window: s
             result['WINDOW_TYPE']=WINDOW_TYPES[window.upper()]
         for key in ('ANOMALY','MIC_FAULT','OVERLOAD','EVENT_ACTIVE','DOSE_LIMIT'):
             result[key]=1 if values.get(key)=='YES' else 0
+        # IOC_USB_ACOUSTIC_FIDELITY: SPECTRUM_VALID do Pico segue como
+        # FFT_VALID (chave aceita tambem por simuladores compilados antes).
+        # Sem ele, a TUI ocultava frequencia dominante, centroide e planura.
+        result['FFT_VALID']=1 if values.get('SPECTRUM_VALID')=='YES' else 0
         result['BASELINE_READY']=1 if values.get('BASELINE')=='READY' else 0
         result['BASELINE_LEARNING']=1 if values.get('BASELINE')=='LEARNING' else 0
         result['EVENT_CLASS']={'IMPACT':1,'CRACK':2,'TONAL':3,'TRANSIENT':4}.get(values.get('EVENT_CLASS',''),0)
@@ -90,13 +94,26 @@ def convert_tel(line: str, profile: str, rate_hz: float | None = None, window: s
                     for key,value in result.items())
 
 
+# IOC_USB_FFT_ECHO_FIX: o console do Pico ecoa o que a ponte digita. O eco
+# "FFT ONCE" tambem comeca com "FFT ", mas nao e resultado. Somente uma
+# linha "FFT VALID=YES|NO" e resposta do firmware; o resto e eco ou ACK.
+FFT_RESULT_RE = re.compile(r'^FFT\s+VALID=(YES|NO)(?=\s|$)')
+FFT_BRIDGE_BUDGET_S = 4.5   # o Node CAN encerra o pedido em 5 s; sobra margem para CAN/Probe
+FFT_MAX_ATTEMPTS = 3
+FFT_DEFAULT_REPORT_S = 1.0  # o DSP acustico fecha um relatorio por segundo
+
+
+def fft_result_state(line: str) -> str | None:
+    """'YES' ou 'NO' para a resposta do firmware; None para eco, ACK ou ruido."""
+    match=FFT_RESULT_RE.match(line)
+    return match.group(1) if match else None
+
+
 # IOC_USB_FFT_STAGE6: espectro completo do Pico, nao dados fabricados.
 def parse_fft(line: str) -> tuple[float, int, list[float]] | None:
-    if not line.startswith('FFT '):
+    if fft_result_state(line)!='YES':
         return None
     payload=fields(line)
-    if payload.get('VALID')!='YES':
-        return None
     try:
         bins=int(payload['BINS'])
         rate=float(payload['RATE_HZ'])
@@ -141,8 +158,13 @@ def get_complete_serial_line(ser, pending: bytearray) -> str:
     return clean_line(raw)
 
 
-def authorize_fft(ser, token_file: Path | None) -> bool:
-    """Solicita AUTH UNLOCK apenas quando ha credencial provisionada."""
+def authorize_fft(ser, token_file: Path | None, pending: bytearray | None = None) -> bool:
+    """Solicita AUTH UNLOCK apenas quando ha credencial provisionada.
+
+    Com ``pending``, le pelo mesmo buffer do streaming: uma linha TEL ou FFT
+    parcialmente recebida nao e cortada nem colada a resposta de AUTH.
+    O eco "AUTH UNLOCK <token>" e descartado e nunca impresso.
+    """
     if token_file is None:
         return False
     secret=read_admin_token(token_file)
@@ -150,7 +172,8 @@ def authorize_fft(ser, token_file: Path | None) -> bool:
     ser.flush()
     deadline=time.monotonic()+3
     while time.monotonic()<deadline:
-        response=clean_line(ser.readline())
+        response=(get_complete_serial_line(ser,pending) if pending is not None
+                  else clean_line(ser.readline()))
         if response.startswith('OK AUTH_UNLOCKED'):
             return True
         if response.startswith('ERR AUTH_'):
@@ -256,6 +279,10 @@ def stream(ser, socket_path:str, uuid:str, profile:str, status:dict[str,str],
     fft_seen=0
     fft_waiting=False
     fft_deadline=0.0
+    fft_started=0.0
+    # "OK FFT_ONCE" confirma que o Pico aceitou o pedido; o espectro so sai
+    # no proximo relatorio do DSP (ate ~1 s depois), nunca junto com o ACK.
+    fft_acked=False
     # O firmware permite uma autorizacao por 300 s. Renova somente se houver
     # pedido de FFT e um token valido. Nao altera a autenticacao fisica.
     fft_auth_at=time.monotonic() if status.get('AUTH')=='UNLOCKED' or configure else 0.0
@@ -263,6 +290,36 @@ def stream(ser, socket_path:str, uuid:str, profile:str, status:dict[str,str],
     # IOC_USB_FFT_NO_SPECTRUM_RETRY: retry bounded; never synthesize a spectrum.
     fft_attempts=0
     last_tel_info={}
+
+    def report_period_s() -> float:
+        # INTERVAL_MS do TEL mede a janela do relatorio; sem TEL, 1 s.
+        interval=numeric(last_tel_info.get('INTERVAL_MS',''))
+        return min(max(interval/1000.0,0.1),5.0) if interval else FFT_DEFAULT_REPORT_S
+
+    def send_fft_once() -> None:
+        nonlocal fft_acked
+        fft_acked=False
+        ser.write(b'FFT ONCE\n')
+        ser.flush()
+
+    def fft_context() -> str:
+        detail=' '.join(f'{key}={last_tel_info[key]}' for key in
+                        ('MODE','CPU_PCT','COVERAGE_PCT','SPECTRUM_VALID','MIC_FAULT','OVERLOAD')
+                        if key in last_tel_info)
+        return f'{detail or "sem indicadores TEL"}; FFT_ONCE_ACK={"YES" if fft_acked else "NO"}'
+
+    def retry_or_give_up(reason: str) -> None:
+        # Nova tentativa so se o proximo relatorio do DSP couber no prazo.
+        nonlocal fft_attempts,fft_waiting
+        if fft_attempts<FFT_MAX_ATTEMPTS and time.monotonic()+report_period_s()+0.25<fft_deadline:
+            fft_attempts+=1
+            send_fft_once()
+            print(f'[usb] {reason}; nova tentativa {fft_attempts}/{FFT_MAX_ATTEMPTS}',file=sys.stderr,flush=True)
+            return
+        fft_waiting=False
+        print(f'[usb] FFT indisponivel apos {fft_attempts} tentativa(s) ({reason}); '
+              f'{fft_context()}. Node recebera timeout real.',file=sys.stderr,flush=True)
+
     print(f'[usb] captura iniciada uuid={uuid} perfil={profile}; aguarde descoberta na TUI (F7)',flush=True)
     while True:
         now=time.monotonic()
@@ -276,28 +333,30 @@ def stream(ser, socket_path:str, uuid:str, profile:str, status:dict[str,str],
                     print('[usb] novo FFT enquanto o anterior esta pendente; atendendo o mais recente',flush=True)
                 fft_retried_auth=False
                 fft_attempts=1
+                fft_started=now
                 if now-fft_auth_at>255 and token_file is not None:
-                    authorize_fft(ser,token_file)
+                    authorize_fft(ser,token_file,pending)
                     fft_auth_at=time.monotonic()
-                ser.write(b'FFT ONCE\n')
-                ser.flush()
+                send_fft_once()
                 fft_waiting=True
-                fft_deadline=time.monotonic()+4.5
+                fft_deadline=fft_started+FFT_BRIDGE_BUDGET_S
                 print('[usb] pedido FFT da Probe encaminhado ao Pico',flush=True)
         if fft_waiting and time.monotonic()>fft_deadline:
             fft_waiting=False
-            print('[usb] FFT fisica nao chegou em 5 s; Node devera rejeitar por timeout',file=sys.stderr,flush=True)
+            print(f'[usb] FFT fisica nao chegou em {FFT_BRIDGE_BUDGET_S:g} s; {fft_context()}. '
+                  'Node devera rejeitar por timeout',file=sys.stderr,flush=True)
         line=get_complete_serial_line(ser,pending)
         if not line:continue
+        if line.startswith('OK FFT_ONCE'):
+            fft_acked=True
+            continue
         if line.startswith('ERR '):
             print('[usb] firmware: '+line,file=sys.stderr,flush=True)
             if fft_waiting and 'AUTH_REQUIRED' in line and not fft_retried_auth and token_file is not None:
                 fft_retried_auth=True
-                authorize_fft(ser,token_file)
+                authorize_fft(ser,token_file,pending)
                 fft_auth_at=time.monotonic()
-                ser.write(b'FFT ONCE\n')
-                ser.flush()
-                fft_deadline=time.monotonic()+4.5
+                send_fft_once()  # o prazo do Node conta desde o pedido; nao e estendido
                 fft_attempts+=1
                 continue
             if fft_waiting and ('AUTH_' in line or 'FFT' in line):
@@ -306,29 +365,33 @@ def stream(ser, socket_path:str, uuid:str, profile:str, status:dict[str,str],
             if 'TELEMETRY' in line:
                 raise RuntimeError('Firmware recusou streaming: '+line)
         if line.startswith('FFT '):
+            state=fft_result_state(line)
+            if state is None:
+                continue  # eco do comando "FFT ONCE" digitado pela ponte
             if not fft_waiting:
                 continue  # nao enviar espectro que nao foi solicitado na rede
-            result=parse_fft(line)
-            if result is not None:
-                fft_waiting=False
+            if state=='NO':
+                # O Pico respondeu de fato VALID=NO: a janela nao tinha
+                # espectro. Pedir o proximo relatorio, sem espectro antigo
+                # ou sintetico.
+                retry_or_give_up('FFT VALID=NO')
+                continue
+            try:
+                result=parse_fft(line)
+            except ValueError as exc:
+                # Linha truncada/corrompida na USB nao derruba a ponte.
+                retry_or_give_up(f'FFT do Pico rejeitada: {exc}')
+                continue
+            if result is None:
+                continue
+            fft_waiting=False
+            try:
                 deliver_fft(socket_path,uuid,result)
-                print(f'[usb] FFT fisica entregue: {len(result[2])} bins, {result[0]:g} Hz',flush=True)
-            elif fft_attempts < 3 and time.monotonic() + 0.5 < fft_deadline:
-                # O Pico respondeu de fato VALID=NO: uma janela pode nao
-                # ter executado FFT por sobrecarga. Solicitar uma nova janela
-                # dentro do prazo, sem usar espectro antigo ou sintetico.
-                fft_attempts+=1
-                ser.write(b'FFT ONCE\n')
-                ser.flush()
-                print(f'[usb] FFT VALID=NO; nova tentativa {fft_attempts}/3',file=sys.stderr,flush=True)
-            else:
-                fft_waiting=False
-                detail=' '.join(f'{key}={last_tel_info[key]}' for key in
-                                ('MODE','CPU_PCT','COVERAGE_PCT','SPECTRUM_VALID','MIC_FAULT','OVERLOAD')
-                                if key in last_tel_info)
-                print(f'[usb] FFT indisponivel apos {fft_attempts} tentativa(s); '
-                      f'{detail or "sem indicadores TEL"}. Node recebera timeout real.',
-                      file=sys.stderr,flush=True)
+            except (TimeoutError,RuntimeError,OSError) as exc:
+                print(f'[usb] simulador recusou o espectro: {exc}',file=sys.stderr,flush=True)
+                continue
+            print(f'[usb] FFT fisica entregue: {len(result[2])} bins, {result[0]:g} Hz '
+                  f'em {time.monotonic()-fft_started:.2f} s',flush=True)
             continue
         if line.startswith('TEL '):
             last_tel_info=fields(line)
