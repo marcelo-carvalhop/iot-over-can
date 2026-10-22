@@ -161,7 +161,7 @@ class StudioState:
                     'probe':self.latest_probe,'rates':last,
                     'connected':self.status_error is None,'error':self.status_error,
                     'log_available':self.record is not None,
-                    'source':'Emulado; não equivale a medições temporais físicas',
+                    'source':'Tráfego CAN modelado; telemetria de sensores USB pode ser física',
                     'record':str(self.record) if self.record else None}
 
     def action(self,payload:dict[str,Any])->str:
