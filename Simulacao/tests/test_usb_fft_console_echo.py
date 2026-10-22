@@ -115,7 +115,11 @@ def run_bridge(console: FakeAcousticConsole, deliver_side_effect=None):
 
     status = {'AUTH': 'UNLOCKED', 'TELEMETRY': 'ON', 'PERIOD_MS': '1000'}
     out, err = io.StringIO(), io.StringIO()
-    with (patch.object(bridge, 'fft_request_count', return_value=1),
+    queries = iter([0])
+    def next_fft_count(*_):
+        return next(queries, 1)
+
+    with (patch.object(bridge, 'fft_request_count', side_effect=next_fft_count),
           patch.object(bridge, 'deliver_fft', side_effect=fake_deliver),
           patch.object(bridge, 'request', return_value='#CTRL OK SENSOR SAMPLE'),
           redirect_stdout(out), redirect_stderr(err)):
@@ -128,6 +132,22 @@ def run_bridge(console: FakeAcousticConsole, deliver_side_effect=None):
 
 
 class ConsoleEchoTests(unittest.TestCase):
+    def test_restarting_bridge_does_not_replay_an_old_fft_request(self):
+        console = FakeAcousticConsole(max_reads=80, stop_after_fft=False)
+        output, errors = io.StringIO(), io.StringIO()
+        with (patch.object(bridge, 'fft_request_count', return_value=7),
+              patch.object(bridge, 'deliver_fft') as delivery,
+              patch.object(bridge, 'request', return_value='#CTRL OK SENSOR SAMPLE'),
+              redirect_stdout(output), redirect_stderr(errors)):
+            with self.assertRaises(KeyboardInterrupt):
+                bridge.stream(console, '/tmp/not-real.sock', '0xE6616408430D5239',
+                              'ACOUSTIC', {'AUTH': 'UNLOCKED', 'TELEMETRY': 'ON',
+                                           'PERIOD_MS': '1000'},
+                              None, passive=True, period_ms=1000, fft_enabled=True)
+        self.assertFalse(any(b'FFT ONCE' in value for value in console.writes))
+        delivery.assert_not_called()
+        self.assertIn('amostras aceitas=', output.getvalue())
+
     def test_echo_line_is_not_an_fft_result(self):
         echo = bridge.clean_line(b'EDGE> FFT ONCE\r\n')
         self.assertEqual(echo, 'FFT ONCE')
