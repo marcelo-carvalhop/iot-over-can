@@ -39,6 +39,7 @@ class HistoryService:
         self.bus_window_start: float | None = None
         self.bus_count = 0
         self.bus_sum_load = 0.0
+        self.bus_total_window_ms = 0
         self.bus_peak = 0.0
         self.bus_frames = 0
         self.bus_errors = (0, 0, 0)
@@ -108,7 +109,9 @@ class HistoryService:
         if self.bus_window_start is None:
             self.bus_window_start = now
         self.bus_count += 1
-        self.bus_sum_load += ev.load_percent
+        window_ms = max(1, ev.window_ms)
+        self.bus_sum_load += ev.load_percent * window_ms
+        self.bus_total_window_ms += window_ms
         self.bus_peak = max(self.bus_peak, ev.peak_percent)
         self.bus_frames += ev.frames
         self.bus_errors = (ev.rx_errors, ev.tx_errors, ev.error_flags)
@@ -135,13 +138,14 @@ class HistoryService:
         rx, tx, flags = self.bus_errors
         self._push("bus", {
             "epoch": now, "samples": self.bus_count,
-            "load_avg_pct": self.bus_sum_load / self.bus_count,
+            "load_avg_pct": self.bus_sum_load / self.bus_total_window_ms,
             "peak_max_pct": self.bus_peak, "frames": self.bus_frames,
             "rx_errors": rx, "tx_errors": tx, "error_flags": flags,
         })
         self.bus_count = 0
         self.bus_window_start = None
         self.bus_sum_load = 0.0
+        self.bus_total_window_ms = 0
         self.bus_peak = 0.0
         self.bus_frames = 0
 
