@@ -5,6 +5,13 @@ from dataclasses import dataclass, field
 
 from pico_tui.protocol.crc import crc32_ieee
 
+# Limites acima do necessário para a FFT atual (até 256 bins), sem aceitar
+# contagens arbitrárias vindas de fluxo serial malformado.
+MAX_ACTIVE_TRANSFERS = 64
+MAX_FRAGMENT_COUNT = 512
+MAX_FRAGMENT_BYTES = 2048
+MAX_TRANSFER_BYTES = 65536
+
 
 @dataclass(slots=True)
 class _Transfer:
@@ -12,6 +19,7 @@ class _Transfer:
     expected_crc32: int | None
     created: float = field(default_factory=time.monotonic)
     fragments: dict[int, bytes] = field(default_factory=dict)
+    received_bytes: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,18 +44,29 @@ class FragmentReassembler:
         expected_crc32: int | None = None,
     ) -> ReassemblyResult:
         self.expire()
-        if fragment_count <= 0:
-            return ReassemblyResult("FAILED", reason="fragment_count inválido")
+        if not 1 <= fragment_count <= MAX_FRAGMENT_COUNT:
+            return ReassemblyResult("FAILED", reason="fragment_count fora dos limites")
         if not 0 <= fragment_index < fragment_count:
             return ReassemblyResult("FAILED", reason="fragment_index inválido")
+        if len(data) > MAX_FRAGMENT_BYTES:
+            self._transfers.pop(key, None)
+            return ReassemblyResult("FAILED", reason="fragmento excedeu tamanho máximo")
 
         transfer = self._transfers.get(key)
         if transfer is None:
+            if len(self._transfers) >= MAX_ACTIVE_TRANSFERS:
+                return ReassemblyResult("FAILED", reason="excesso de transferências simultâneas")
             transfer = _Transfer(fragment_count, expected_crc32)
             self._transfers[key] = transfer
         elif transfer.fragment_count != fragment_count:
             self._transfers.pop(key, None)
             return ReassemblyResult("FAILED", reason="fragment_count conflitante")
+        elif expected_crc32 is not None:
+            if transfer.expected_crc32 is None:
+                transfer.expected_crc32 = expected_crc32
+            elif transfer.expected_crc32 != expected_crc32:
+                self._transfers.pop(key, None)
+                return ReassemblyResult("FAILED", reason="CRC32 conflitante")
 
         if fragment_index in transfer.fragments:
             if transfer.fragments[fragment_index] == data:
@@ -55,7 +74,11 @@ class FragmentReassembler:
             self._transfers.pop(key, None)
             return ReassemblyResult("FAILED", reason="fragmento duplicado divergente")
 
+        if transfer.received_bytes + len(data) > MAX_TRANSFER_BYTES:
+            self._transfers.pop(key, None)
+            return ReassemblyResult("FAILED", reason="transferência excedeu tamanho máximo")
         transfer.fragments[fragment_index] = bytes(data)
+        transfer.received_bytes += len(data)
         if len(transfer.fragments) != transfer.fragment_count:
             return ReassemblyResult("PENDING")
 

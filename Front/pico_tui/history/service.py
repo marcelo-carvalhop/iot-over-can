@@ -39,6 +39,7 @@ class HistoryService:
         self.bus_window_start: float | None = None
         self.bus_count = 0
         self.bus_sum_load = 0.0
+        self.bus_total_window_ms = 0
         self.bus_peak = 0.0
         self.bus_frames = 0
         self.bus_errors = (0, 0, 0)
@@ -49,6 +50,7 @@ class HistoryService:
         self.closed = False
         self.capture_manager = None  # registrado pela camada de capturas (fase 2)
         self._flush_lock = threading.Lock()
+        self._queue_lock = threading.Lock()
         for event_type, handler in (
             (BusStatsReceived, self._on_bus),
             (WirelessLinkReceived, self._on_link),
@@ -68,10 +70,14 @@ class HistoryService:
             bus.subscribe(event_type, handler)
 
     def _push(self, category: str, entry: dict[str, Any]) -> None:
-        if len(self.queue) >= MAX_QUEUE:
-            self.queue.popleft()
-            self.dropped += 1
-        self.queue.append((category, entry))
+        # Os callbacks podem concorrer com flush(), executado num worker.
+        with self._queue_lock:
+            if self.closed:
+                return
+            if len(self.queue) >= MAX_QUEUE:
+                self.queue.popleft()
+                self.dropped += 1
+            self.queue.append((category, entry))
 
     def _event(self, kind: str, category: str, severity: str, title: str,
                *, node_id: int | None = None, sensor_id: str | None = None,
@@ -103,7 +109,9 @@ class HistoryService:
         if self.bus_window_start is None:
             self.bus_window_start = now
         self.bus_count += 1
-        self.bus_sum_load += ev.load_percent
+        window_ms = max(1, ev.window_ms)
+        self.bus_sum_load += ev.load_percent * window_ms
+        self.bus_total_window_ms += window_ms
         self.bus_peak = max(self.bus_peak, ev.peak_percent)
         self.bus_frames += ev.frames
         self.bus_errors = (ev.rx_errors, ev.tx_errors, ev.error_flags)
@@ -130,13 +138,14 @@ class HistoryService:
         rx, tx, flags = self.bus_errors
         self._push("bus", {
             "epoch": now, "samples": self.bus_count,
-            "load_avg_pct": self.bus_sum_load / self.bus_count,
+            "load_avg_pct": self.bus_sum_load / self.bus_total_window_ms,
             "peak_max_pct": self.bus_peak, "frames": self.bus_frames,
             "rx_errors": rx, "tx_errors": tx, "error_flags": flags,
         })
         self.bus_count = 0
         self.bus_window_start = None
         self.bus_sum_load = 0.0
+        self.bus_total_window_ms = 0
         self.bus_peak = 0.0
         self.bus_frames = 0
 
@@ -249,12 +258,15 @@ class HistoryService:
     def flush(self) -> None:
         """O chamador deve executar esta operação fora do loop principal da TUI."""
         with self._flush_lock:
-            if not self.queue and not self.dropped:
-                return
-            batch = list(self.queue)
-            self.queue.clear()
-            lost = self.dropped
-            self.dropped = 0
+            # Desanexar o lote atomicamente: eventos recebidos durante o SQL
+            # permanecem na fila para o flush seguinte.
+            with self._queue_lock:
+                if not self.queue and not self.dropped:
+                    return
+                batch = list(self.queue)
+                self.queue.clear()
+                lost = self.dropped
+                self.dropped = 0
             if lost:
                 batch.append(("event", {
                     "epoch": time.time(), "kind": "HISTORY_QUEUE_OVERFLOW",
@@ -265,13 +277,24 @@ class HistoryService:
             try:
                 self.store.write_batch(self.session_id, batch)
             except Exception:
-                # Evita perda silenciosa e mantém ordem em tentativa futura.
-                self.queue.extendleft(reversed(batch[:len(batch) - (1 if lost else 0)]))
-                self.dropped += lost
+                # Em falha de I/O, devolve o lote à frente dos eventos novos.
+                # A fila continua limitada; descartes são contabilizados.
+                old_batch = batch[:len(batch) - (1 if lost else 0)]
+                with self._queue_lock:
+                    restored = deque(old_batch)
+                    restored.extend(self.queue)
+                    while len(restored) > MAX_QUEUE:
+                        restored.popleft()
+                        self.dropped += 1
+                    self.queue = restored
+                    self.dropped += lost
                 raise
 
     def close(self) -> None:
+        if self.closed:
+            return
         self._flush_bus_window(time.time())
+        with self._queue_lock:
+            self.closed = True
         self.flush()
         self.store.finish_session(self.session_id)
-        self.closed = True

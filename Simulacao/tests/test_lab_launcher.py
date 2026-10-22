@@ -1,5 +1,6 @@
 from __future__ import annotations
 import importlib.util
+import fcntl
 import os
 import pathlib
 import shutil
@@ -35,6 +36,23 @@ class LauncherTests(unittest.TestCase):
         p=subprocess.run([sys.executable,str(SCRIPT),'--dry-run'],capture_output=True,text=True)
         self.assertEqual(p.returncode,0,p.stderr)
         self.assertIn('Porta PTY e socket',p.stdout)
+
+    def test_second_launcher_rejects_existing_startup_lock(self):
+        with tempfile.TemporaryDirectory(prefix='ioc_lock_') as base:
+            directory = pathlib.Path(base) / 'iot-over-can'
+            directory.mkdir(parents=True)
+            lock_path = directory / (lab.SESSION.name + '.lock')
+            env = os.environ.copy()
+            env['XDG_STATE_HOME'] = base
+            env['DISPLAY'] = ':99'
+            with lock_path.open('w') as lock:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                process = subprocess.run(
+                    [sys.executable, str(SCRIPT), '--no-usb', '--no-browser'],
+                    env=env, capture_output=True, text=True, timeout=10,
+                )
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIn('já está sendo iniciada', process.stderr)
 
     def test_complete_orchestration_with_fake_studio_and_usb(self):
         with tempfile.TemporaryDirectory(prefix='ioclauncher_') as temp:
