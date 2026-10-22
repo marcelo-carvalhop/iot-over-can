@@ -27,7 +27,11 @@ class UsbFftRetryTests(unittest.TestCase):
             raise KeyboardInterrupt()
 
         status={'AUTH': 'LOCKED', 'TELEMETRY': 'ON', 'PERIOD_MS': '1000'}
-        with (patch.object(bridge, 'fft_request_count', return_value=1),
+        queries = iter([0])
+        def next_fft_count(*_):
+            return next(queries, 1)
+
+        with (patch.object(bridge, 'fft_request_count', side_effect=next_fft_count),
               patch.object(bridge, 'get_complete_serial_line', side_effect=replay),
               patch.object(bridge, 'deliver_fft') as delivery,
               patch.object(bridge, 'request', return_value='#CTRL OK SENSOR SAMPLE')):

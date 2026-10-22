@@ -27,7 +27,7 @@ void usbTelemetry() {
     a.cmd_type=CMD_ACOUSTIC_STREAM;
     a.seq_num=seq++;
     a.mode=u8("MODE", ACOUSTIC_MODE_LEVEL);
-    a.flags=0; // nenhuma FFT fisica foi transportada na amostra textual
+    a.flags=0;
     a.window_type=u8("WINDOW_TYPE");
     a.fft_size=u16("WIN",1024);
     a.sample_rate_req_hz=static_cast<float>(val("RATE_EFF_HZ",0));
@@ -69,6 +69,11 @@ void usbTelemetry() {
     a.event_age_s=u16("EVENT_AGE_S", ACOUSTIC_AGE_NONE);
     a.sta_lta_cb=centibel("STA_LTA_DB");
     a.background_cb=centibel("BACKGROUND_DB");
+    // IOC_USB_ACOUSTIC_FIDELITY: como o sensor real (audio_app.c copia
+    // r->flags), SPECTRUM_VALID diz se o DSP calculou espectro naquele
+    // segundo, com ou sem vetor anexado. A ponte envia o SPECTRUM_VALID do
+    // TEL fisico como FFT_VALID, chave ja aceita por binarios anteriores.
+    if (u8("FFT_VALID")) a.flags|=ACOUSTIC_FLAG_SPECTRUM_VALID;
     if (u8("ANOMALY")) a.flags|=ACOUSTIC_FLAG_ANOMALY;
     if (u8("MIC_FAULT")) a.flags|=ACOUSTIC_FLAG_MIC_FAULT;
     if (u8("OVERLOAD")) a.flags|=ACOUSTIC_FLAG_OVERLOAD;
@@ -91,7 +96,9 @@ void usbTelemetry() {
       a.flags|=ACOUSTIC_FLAG_SPECTRUM_VALID;
       a.sample_rate_req_hz=usbSpectrumRateHz;
       a.sample_rate_eff_hz=usbSpectrumRateHz;
-      a.fft_size=usbSpectrumFftSize;
+      // fft_size segue WIN (janela do DSP), como no sensor real; o espectro
+      // USB ja vem agrupado (FFT_SIZE = 2 x faixas) e o Node calcula a
+      // resolucao equivalente ao reduzir as faixas.
       std::vector<uint8_t> payload(sizeof(a)+usbSpectrum.size()*sizeof(float));
       memcpy(payload.data(),&a,sizeof(a));
       memcpy(payload.data()+sizeof(a),usbSpectrum.data(),usbSpectrum.size()*sizeof(float));

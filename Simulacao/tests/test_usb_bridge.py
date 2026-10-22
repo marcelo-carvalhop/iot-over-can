@@ -26,6 +26,13 @@ class FormatTest(unittest.TestCase):
         self.assertIn('OCT_2=64.4',sample)
         self.assertIn('DTC=32',sample)
         self.assertNotIn('OCT_1=',sample)
+    def test_acoustic_spectrum_flag_follows_physical_tel(self):
+        # O sensor real marca SPECTRUM_VALID em todo relatorio com FFT; o
+        # simulador recebe o indicador como FFT_VALID (IOC_USB_ACOUSTIC_FIDELITY).
+        base='TEL PROFILE=ACOUSTIC MODE=MACHINE WIN=1024 LAEQ_DB=61.2 PEAK_HZ=1000.0 '
+        self.assertIn('FFT_VALID=1',convert_tel(base+'SPECTRUM_VALID=YES','ACOUSTIC'))
+        self.assertIn('FFT_VALID=0',convert_tel(base+'SPECTRUM_VALID=NO','ACOUSTIC'))
+        self.assertIn('FFT_VALID=0',convert_tel(base,'ACOUSTIC'))
     def test_reject_invalid_and_no_fabricated_sample(self):
         self.assertIsNone(convert_tel('TEL RMS=nan','VIBRATION'))
         self.assertIsNone(convert_tel('TEL PROFILE=ACOUSTIC MODE=LEVEL','ACOUSTIC'))

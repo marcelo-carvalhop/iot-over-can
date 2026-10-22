@@ -8,6 +8,16 @@ permissions:
   contents: read
 
 jobs:
+  usb-hil-regressions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Test USB-HIL and native simulator interfaces
+        run: python3 -m unittest discover -s Simulacao/tests -v
+
   tui-tests:
     runs-on: ubuntu-latest
     steps:

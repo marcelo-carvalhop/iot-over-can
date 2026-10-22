@@ -79,11 +79,11 @@ struct Sensor {
 
   uint8_t profile=1; uint16_t seq=0; unsigned count=0;
   Payload_TelemetryStream last_t{}; Payload_AcousticStream last_a{};
-  uint16_t lastSpectrumBins=0;
+  uint16_t lastSpectrumBins=0; uint8_t lastFlags=0; uint16_t lastFftSize=0;
   void sendData(const void* value,size_t size){
     if (size>=sizeof(last_a)) {
       auto *a=reinterpret_cast<const Payload_AcousticStream*>(value);
-      if(a->cmd_type==CMD_ACOUSTIC_STREAM) lastSpectrumBins=a->spectrum_bins;
+      if(a->cmd_type==CMD_ACOUSTIC_STREAM){lastSpectrumBins=a->spectrum_bins;lastFlags=a->flags;lastFftSize=a->fft_size;}
     }
     ++count;
     if(size==sizeof(last_t))memcpy(&last_t,value,size);
@@ -107,6 +107,19 @@ int main(){
   if(a.lastSpectrumBins!=2 || !a.usbSpectrum.empty()) return 5;
   a.usbTelemetry();
   if(a.lastSpectrumBins!=2) return 6;
+  // IOC_USB_ACOUSTIC_FIDELITY: como no sensor real, SPECTRUM_VALID segue o
+  // TEL e WIN continua sendo a janela do DSP, com ou sem espectro anexado.
+  Sensor f;f.profile=2;f.usbValues={{"LAEQ_DB",60.0},{"WIN",1024},{"FFT_VALID",1}};
+  f.usbTelemetry();
+  if(!(f.lastFlags&ACOUSTIC_FLAG_SPECTRUM_VALID) || f.lastFftSize!=1024) return 7;
+  ++f.usbSampleVersion;
+  f.usbSpectrum={0.1f,0.2f,0.3f,0.4f};f.usbSpectrumRateHz=16000;f.usbSpectrumFftSize=8;
+  f.usbTelemetry();
+  if(f.lastSpectrumBins!=4 || !(f.lastFlags&ACOUSTIC_FLAG_SPECTRUM_VALID) || f.lastFftSize!=1024) return 8;
+  ++f.usbSampleVersion;
+  f.usbValues["FFT_VALID"]=0;
+  f.usbTelemetry();
+  if(f.lastFlags&ACOUSTIC_FLAG_SPECTRUM_VALID) return 9;
   return 0;
 }
 '''
