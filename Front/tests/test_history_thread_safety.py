@@ -4,6 +4,7 @@ from __future__ import annotations
 import threading
 
 from pico_tui.core.event_bus import EventBus
+from pico_tui.core.events import BusStatsReceived
 from pico_tui.history.service import HistoryService
 from pico_tui.history.storage import HistoryStore
 
@@ -92,3 +93,17 @@ def test_closed_history_does_not_requeue_and_close_is_idempotent(tmp_path):
     history.close()
     history._event("SECOND", "SYSTEM", "INFO", "Registro tardio")
     assert [record.kind for record in store.list_events("closed")] == ["FIRST"]
+
+
+def test_can_load_average_is_weighted_by_real_window_duration(tmp_path):
+    store = HistoryStore(tmp_path / "history.sqlite3")
+    history = HistoryService(EventBus(), store, "weighted-can", origin="TEST")
+    # Janelas assimétricas: média simples daria 30 %, a média por tempo é 40 %.
+    history._on_bus(BusStatsReceived(1000, 1000, 10, 120, 10.0, 12.0))
+    history._on_bus(BusStatsReceived(4000, 3000, 30, 360, 50.0, 52.0))
+    history.close()
+    row = store.nearest_bus("weighted-can", __import__("time").time())
+    assert row is not None
+    assert row["load_avg_pct"] == 40.0
+    assert row["frames"] == 40
+    assert row["peak_max_pct"] == 52.0
