@@ -49,6 +49,7 @@ class HistoryService:
         self.closed = False
         self.capture_manager = None  # registrado pela camada de capturas (fase 2)
         self._flush_lock = threading.Lock()
+        self._queue_lock = threading.Lock()
         for event_type, handler in (
             (BusStatsReceived, self._on_bus),
             (WirelessLinkReceived, self._on_link),
@@ -68,10 +69,14 @@ class HistoryService:
             bus.subscribe(event_type, handler)
 
     def _push(self, category: str, entry: dict[str, Any]) -> None:
-        if len(self.queue) >= MAX_QUEUE:
-            self.queue.popleft()
-            self.dropped += 1
-        self.queue.append((category, entry))
+        # Os callbacks podem concorrer com flush(), executado num worker.
+        with self._queue_lock:
+            if self.closed:
+                return
+            if len(self.queue) >= MAX_QUEUE:
+                self.queue.popleft()
+                self.dropped += 1
+            self.queue.append((category, entry))
 
     def _event(self, kind: str, category: str, severity: str, title: str,
                *, node_id: int | None = None, sensor_id: str | None = None,
@@ -249,12 +254,15 @@ class HistoryService:
     def flush(self) -> None:
         """O chamador deve executar esta operação fora do loop principal da TUI."""
         with self._flush_lock:
-            if not self.queue and not self.dropped:
-                return
-            batch = list(self.queue)
-            self.queue.clear()
-            lost = self.dropped
-            self.dropped = 0
+            # Desanexar o lote atomicamente: eventos recebidos durante o SQL
+            # permanecem na fila para o flush seguinte.
+            with self._queue_lock:
+                if not self.queue and not self.dropped:
+                    return
+                batch = list(self.queue)
+                self.queue.clear()
+                lost = self.dropped
+                self.dropped = 0
             if lost:
                 batch.append(("event", {
                     "epoch": time.time(), "kind": "HISTORY_QUEUE_OVERFLOW",
@@ -265,13 +273,24 @@ class HistoryService:
             try:
                 self.store.write_batch(self.session_id, batch)
             except Exception:
-                # Evita perda silenciosa e mantém ordem em tentativa futura.
-                self.queue.extendleft(reversed(batch[:len(batch) - (1 if lost else 0)]))
-                self.dropped += lost
+                # Em falha de I/O, devolve o lote à frente dos eventos novos.
+                # A fila continua limitada; descartes são contabilizados.
+                old_batch = batch[:len(batch) - (1 if lost else 0)]
+                with self._queue_lock:
+                    restored = deque(old_batch)
+                    restored.extend(self.queue)
+                    while len(restored) > MAX_QUEUE:
+                        restored.popleft()
+                        self.dropped += 1
+                    self.queue = restored
+                    self.dropped += lost
                 raise
 
     def close(self) -> None:
+        if self.closed:
+            return
         self._flush_bus_window(time.time())
+        with self._queue_lock:
+            self.closed = True
         self.flush()
         self.store.finish_session(self.session_id)
-        self.closed = True
