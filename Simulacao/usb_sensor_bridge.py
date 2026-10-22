@@ -276,7 +276,8 @@ def stream(ser, socket_path:str, uuid:str, profile:str, status:dict[str,str],
     delivered=0
     pending=bytearray()
     fft_poll_at=0.0
-    fft_seen=0
+    # Consolidação: não reproduzir pedidos pendentes de uma execução anterior.
+    fft_seen=fft_request_count(socket_path,uuid) if fft_enabled else 0
     fft_waiting=False
     fft_deadline=0.0
     fft_started=0.0
@@ -287,6 +288,11 @@ def stream(ser, socket_path:str, uuid:str, profile:str, status:dict[str,str],
     # pedido de FFT e um token valido. Nao altera a autenticacao fisica.
     fft_auth_at=time.monotonic() if status.get('AUTH')=='UNLOCKED' or configure else 0.0
     fft_retried_auth=False
+    # Autenticar antes do pedido da Probe, sem consumir os 5 s de timeout CAN.
+    if fft_enabled and token_file is not None and not configure and status.get('AUTH')!='UNLOCKED':
+        authorize_fft(ser,token_file,pending)
+        fft_auth_at=time.monotonic()
+        print('[usb] autenticacao FFT USB pronta',flush=True)
     # IOC_USB_FFT_NO_SPECTRUM_RETRY: retry bounded; never synthesize a spectrum.
     fft_attempts=0
     last_tel_info={}
@@ -299,7 +305,11 @@ def stream(ser, socket_path:str, uuid:str, profile:str, status:dict[str,str],
     def send_fft_once() -> None:
         nonlocal fft_acked
         fft_acked=False
+        # Espelha a sequência da TUI direta, já validada com o Pico físico.
         ser.write(b'FFT ONCE\n')
+        ser.flush()
+        time.sleep(0.04)
+        ser.write(b'TELEMETRY ONCE\n')
         ser.flush()
 
     def fft_context() -> str:
