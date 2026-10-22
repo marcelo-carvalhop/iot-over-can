@@ -111,8 +111,11 @@ static AcousticFftPolicy policy_for_backlog(uint32_t backlog) {
 static void publish_report(void) {
     const uint64_t now = time_us_64();
     const uint64_t window = now - g_window_start_us;
-    g_msg.cpu_pct = (uint8_t)(window > 0 ? (g_busy_us * 100u + window / 2u) / window : 0u);
-    if (g_msg.cpu_pct > 100u) g_msg.cpu_pct = 100u;
+    // Limitar antes de estreitar para uint8_t: valores anômalos acima de
+    // 255 % não podem sofrer wrap e aparentar baixa ocupação de CPU.
+    const uint64_t busy_us = g_busy_us > window ? window : g_busy_us;
+    const uint64_t cpu_pct = window > 0 ? (busy_us * 100u + window / 2u) / window : 0u;
+    g_msg.cpu_pct = (uint8_t)(cpu_pct > 100u ? 100u : cpu_pct);
     g_window_start_us = now;
     g_busy_us = 0;
     g_msg.channel = g_channel;
