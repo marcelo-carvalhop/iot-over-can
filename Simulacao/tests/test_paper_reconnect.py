@@ -88,11 +88,13 @@ class PaperColorNativeTests(unittest.TestCase):
                                check=True, capture_output=True, text=True)
                 objects.append(str(obj))
             exe = workdir / "panel-reconnect"
-            subprocess.run(["c++", "-std=c++17", "-O0", *includes,
-                            str(fixture), str(app / "panel_app.cpp"),
-                            *objects, "-lm", "-o", str(exe)],
-                           check=True, capture_output=True, text=True)
-            subprocess.run([str(exe)], check=True, timeout=12, capture_output=True, text=True)
+            build = subprocess.run(["c++", "-std=c++17", "-O0", *includes,
+                                    str(fixture), str(app / "panel_app.cpp"),
+                                    *objects, "-lm", "-o", str(exe)],
+                                   capture_output=True, text=True)
+            self.assertEqual(build.returncode, 0, build.stdout + "\n" + build.stderr)
+            result = subprocess.run([str(exe)], timeout=12, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + "\n" + result.stderr)
 
 
 if __name__ == "__main__":
