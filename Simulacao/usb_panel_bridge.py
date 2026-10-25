@@ -74,6 +74,9 @@ class PanelBridge:
         """Põe o painel no modo USB e cria (ou reaproveita) o painel na bancada."""
         deadline = time.monotonic() + timeout
         next_bridge = 0.0
+        # O firmware pode escrever JOIN antes de READY no mesmo lote USB.
+        # Nenhuma mensagem inicial de enlace pode ser perdida durante attach.
+        boot_lines: list[str] = []
         while self.uuid is None:
             if time.monotonic() > deadline:
                 raise RuntimeError("o painel não respondeu: confira a porta e se o firmware é o do PaperColor")
@@ -84,6 +87,8 @@ class PanelBridge:
                 match = UUID_RE.search(line)
                 if line.startswith("#IOC READY") and match:
                     self.uuid = "0x" + match.group(1)[2:].upper()
+                elif line.startswith(("#IOC JOIN ", "#IOC LEAVE", "#IOC UP ")):
+                    boot_lines.append(line)
         uuid = self.uuid
         snapshot = parse_status(self.ask("STATUS"))
         known = next((s for s in snapshot["sensors"] if s["uuid"].upper() == uuid.upper()), None)
@@ -97,6 +102,8 @@ class PanelBridge:
         for node, rssi in [(self.node, self.rssi), *self.extra]:
             self.ask(f"SENSOR RSSI {uuid} {node} {rssi}")
         self.write(f"#IOC TIME {int(time.time())}")
+        for line in boot_lines:
+            self.handle_panel_line(line)
         self.log(f"[painel] {uuid} na bancada, alcance do Node {self.node} ({self.rssi} dBm)")
         return uuid
 
