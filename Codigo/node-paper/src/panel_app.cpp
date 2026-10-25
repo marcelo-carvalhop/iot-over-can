@@ -76,6 +76,14 @@ bool isSensor(const ioc_view_sensor& s) { return s.used && s.profile != IOC_PANE
 void PanelApp::begin(PanelHal* hal, const PanelConfig& cfg) {
   hal_ = hal;
   cfg_ = cfg;
+  // begin() também é usado na transição Wi-Fi -> USB. Uma sessão
+  // autenticada do transporte anterior não pode sobreviver à troca.
+  mode_ = Mode::Idle;
+  parent_ = 0;
+  child_ = 0;
+  tx_ = rxLast_ = 0;
+  lastValidMs_ = 0;
+  memset(sessionKey_, 0, sizeof(sessionKey_));
   const uint32_t now = hal_->millis();
   bootMs_ = now;
   lastActivityMs_ = now;
@@ -141,13 +149,42 @@ void PanelApp::saveRefresh(uint32_t now) {
 
 void PanelApp::startDiscovery(uint8_t node) {
   const uint32_t now = hal_->millis();
-  if (node != parent_ || mode_ == Mode::Idle) hal_->joinNode(node);
+  // Reassociar inclusive ao MESMO Node: após perda de Wi-Fi/USB a camada de
+  // transporte precisa reabrir o socket e publicar JOIN para a ponte.
+  hal_->joinNode(node);
   parent_ = node;
+  child_ = 0;
   mode_ = Mode::Discovery;
   discoverySinceMs_ = now;
   nextHelloMs_ = now;
+  tx_ = rxLast_ = 0;
+  lastValidMs_ = 0;
   memset(sessionKey_, 0, sizeof(sessionKey_));
+  // Um nonce por tentativa de handshake, NÃO um nonce por retransmissão.
+  // O Node conserva o desafio para esse HELLO até ele expirar.
+  for (int i = 0; i < IOC_LINK_NONCE_LEN; ++i) {
+    rng_ ^= rng_ << 13; rng_ ^= rng_ >> 17; rng_ ^= rng_ << 5;
+    nonce_[i] = static_cast<uint8_t>(rng_ >> 24);
+  }
   hal_->storeU32("node", node);
+}
+
+void PanelApp::restartLink() {
+  // A USB foi reaberta pela ponte, ou o transporte foi reiniciado.
+  // Preservar a preferência do Node, mas nunca reutilizar chave, contadores
+  // ou estado Bound da conexão anterior.
+  const uint32_t saved = hal_->loadU32("node", 0);
+  const uint8_t node = parent_ > 0 && parent_ < 32
+                           ? parent_
+                           : (saved > 0 && saved < 32 ? static_cast<uint8_t>(saved) : 0);
+  mode_ = Mode::Idle;
+  parent_ = 0;
+  child_ = 0;
+  tx_ = rxLast_ = 0;
+  lastValidMs_ = 0;
+  memset(sessionKey_, 0, sizeof(sessionKey_));
+  if (node) startDiscovery(node);
+  else hal_->leaveNode();
 }
 
 void PanelApp::onOffer(const uint8_t* mfg, size_t len) {
@@ -173,10 +210,7 @@ void PanelApp::sendData(const uint8_t* inner, size_t len) {
 }
 
 void PanelApp::sendHello() {
-  for (int i = 0; i < IOC_LINK_NONCE_LEN; ++i) {
-    rng_ ^= rng_ << 13; rng_ ^= rng_ >> 17; rng_ ^= rng_ << 5;
-    nonce_[i] = static_cast<uint8_t>(rng_ >> 24);
-  }
+  // Retransmissões do mesmo handshake repetem o nonce original.
   ioc_hello_t hello;
   hello.uuid = cfg_.uuid;
   hello.profile = IOC_PANEL_PROFILE;
