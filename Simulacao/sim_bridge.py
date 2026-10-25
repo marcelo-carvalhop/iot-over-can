@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import tty
 from pathlib import Path
 
@@ -48,6 +49,36 @@ class SimBridge:
             self.proc.stdin.write(line.rstrip("\r\n") + "\n")
             self.proc.stdin.flush()
 
+    def _write_pty_line(self, message: bytes, *, timeout: float = 0.75) -> bool:
+        """Entrega uma linha inteira, inclusive quando os.write() é parcial.
+
+        A PTY é não bloqueante para não travar a simulação se a TUI parar
+        de consumir. Só abandona a mensagem depois do prazo informado.
+        """
+        assert self.master is not None
+        deadline = time.monotonic() + timeout
+        offset = 0
+        while offset < len(message) and not self.stop.is_set():
+            try:
+                written = os.write(self.master, message[offset:])
+                if written > 0:
+                    offset += written
+                    continue
+            except (BlockingIOError, InterruptedError):
+                pass
+            except OSError:
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                _, writable, _ = select.select([], [self.master], [], remaining)
+            except (OSError, ValueError):
+                break
+            if not writable:
+                break
+        return offset == len(message)
+
     def _sim_output(self) -> None:
         assert self.proc is not None and self.proc.stdout is not None
         fp = self.record.open("w", encoding="utf-8", buffering=1) if self.record else None
@@ -60,11 +91,9 @@ class SimBridge:
                         fp.write(raw + "\n")
                     message = (m.group(2) + "\r\n").encode("utf-8")
                     assert self.master is not None
-                    try:
-                        os.write(self.master, message)
-                    except (BlockingIOError, OSError):
-                        # Telemetria nao entregue a PTY nao afeta o estado do simulador.
-                        # Guardamos contagem para avisar o operador no encerramento.
+                    if not self._write_pty_line(message):
+                        # A PTY estava indisponível por mais que o prazo. O log
+                        # permanece completo, e o descarte é contabilizado.
                         self.dropped_lines += 1
                 elif raw.startswith("#CTRL"):
                     if raw not in ("#CTRL OK READY mode=INTERACTIVE protocol=1",) and not raw.startswith("#CTRL INFO"):

@@ -144,9 +144,13 @@ def fft_request_count(socket_path:str,uuid:str)->int:
 
 def get_complete_serial_line(ser, pending: bytearray) -> str:
     """Preserva linhas FFT longas mesmo se USB CDC retornar leituras parciais."""
-    chunk=ser.readline()
-    if chunk:
-        pending.extend(chunk)
+    # Um buffer já pode conter múltiplas linhas (por exemplo após AUTH).
+    # Não realizar nova leitura bloqueante antes de entregar as linhas prontas:
+    # sob carga isso atrasava os ACKs e podia consumir o prazo de 5 s da FFT.
+    if b'\n' not in pending:
+        chunk=ser.readline()
+        if chunk:
+            pending.extend(chunk)
     if len(pending)>16384:
         pending.clear()
         raise ValueError('Linha USB excedeu 16 KiB')

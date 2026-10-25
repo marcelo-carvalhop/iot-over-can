@@ -11,6 +11,7 @@ Não altera firmware, dados da rede ou credenciais. Uso:
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -297,6 +298,21 @@ def launch(config: dict, args: argparse.Namespace) -> None:
     print(f"[laboratorio] Para encerrar: {shlex.quote(str(SELF))} stop")
 
 
+def launch_single_instance(config: dict, args: argparse.Namespace) -> None:
+    """Serializa partidas; uma segunda chamada nunca observa a sessão vazia."""
+    SESSION.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = SESSION.parent / (SESSION.name + ".lock")
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError("Esta bancada já está sendo iniciada em outro processo.") from exc
+        launch(config, args)
+    finally:
+        os.close(fd)
+
+
 def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Inicia Studio, TUI e Pico USB em 1 comando (Linux Mint)")
     ap.add_argument("action", nargs="?", default="start", choices=("start", "stop", "status", "__run"))
@@ -349,7 +365,10 @@ def main(argv: list[str] | None = None) -> int:
             "period_ms": args.period_ms,
             "security_mode": args.security_mode,
         }
-        launch(config, args)
+        if args.dry_run:
+            launch(config, args)
+        else:
+            launch_single_instance(config, args)
         return 0
     except (RuntimeError, OSError, subprocess.CalledProcessError) as exc:
         print(f"ERRO: {exc}", file=sys.stderr)

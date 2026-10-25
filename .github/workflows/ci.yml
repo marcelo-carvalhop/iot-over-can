@@ -15,6 +15,12 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+      - name: Validate Python syntax across the repository
+        run: python3 -m compileall -q Simulacao Front/pico_tui Codigo/scripts
+      - name: Validate Bash scripts
+        run: find Codigo/scripts Simulacao -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+      - name: Validate Studio JavaScript
+        run: node --check Simulacao/studio/static/app.js
       - name: Test USB-HIL and native simulator interfaces
         run: python3 -m unittest discover -s Simulacao/tests -v
 
