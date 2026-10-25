@@ -120,6 +120,11 @@ void PanelApp::restoreRefresh(uint32_t now) {
   refresh_.count = static_cast<uint16_t>(hal_->loadU32("rcount", 0));
   refresh_.last_ms = msFromEpoch(hal_->loadU32("rlast", 0), now);
   refresh_.valid_until_ms = msFromEpoch(valid, now);
+  const uint32_t pending = hal_->loadU32("rpend", 0);
+  if (pending) {
+    refresh_.pending_since_ms = msFromEpoch(pending, now);
+    refresh_.pending_hash = hal_->loadU32("rphash", 0);
+  }
   forceRefresh_ = false;  // a página no papel continua válida
 }
 
@@ -129,6 +134,7 @@ void PanelApp::saveRefresh(uint32_t now) {
   hal_->storeU32("rcount", refresh_.count);
   hal_->storeU32("rlast", epochFromMs(refresh_.last_ms, now));
   hal_->storeU32("rvalid", epochFromMs(refresh_.valid_until_ms, now));
+  hal_->storeU32("rpend", 0);
 }
 
 /* ------------------------------------------------------------------ enlace */
@@ -635,8 +641,8 @@ void PanelApp::composeRoutine(const ioc_page_ctx& ctx) {
     y += 32;
   }
   if (stepResult_[0]) y += ioc_dl_wrap(&dl_, 8, y, 384, 16, IOC_INK_BLACK, 0, stepResult_, 3) + 6;
-  ioc_dl_wrap(&dl_, 8, 520, 384, 16, IOC_INK_BLACK, 0,
-              "Enter ou A: marca o passo e mede. Setas: outro roteiro. Os resultados vão para o histórico da TUI.", 2);
+  ioc_dl_wrap(&dl_, 8, 506, 384, 16, IOC_INK_BLACK, 0,
+              "Enter ou A: marca o passo e mede. Setas: outro roteiro. Os resultados vão para o histórico da TUI.", 3);
   ioc_page_footer(&dl_, &ctx);
 }
 
@@ -759,8 +765,12 @@ void PanelApp::compose(uint32_t now) {
 }
 
 void PanelApp::maybeRender(uint32_t now) {
-  const bool waitingSnapshot = mode_ == Mode::Bound && !view_.snapshot_done && now - sessionStartMs_ < 5000;
-  if (waitingSnapshot) return;  // o retrato chega em seguida: não desenhar um estado incompleto
+  // Sem o retrato, a página da rede seria um estado incompleto: espera-o (ou o
+  // prazo da página "sem dados"), salvo quando o operador pede outra página.
+  const bool networkPage = !composing_ && (page_ == PAGE_SITUATION || page_ == PAGE_NETWORK);
+  const bool waitingSnapshot = !view_.snapshot_done && (mode_ == Mode::Bound ? now - sessionStartMs_ < 5000
+                                                                              : now - bootMs_ < BOOT_NO_DATA_MS);
+  if (waitingSnapshot && networkPage && !pageChanged_) return;
   compose(now);
   // Canal rápido: o agravamento acende o LED e soa já, sem esperar o papel.
   if (view_.snapshot_done && level_ >= IOC_LEVEL_ATTENTION && level_ > drawnLevel_) hal_->beep(1);
@@ -780,7 +790,15 @@ void PanelApp::maybeRender(uint32_t now) {
     draftDrawnMs_ = now;
   }
   uint32_t next = 0;
-  if (!ioc_refresh_decide(&refresh_, now, hash, level_, forced ? 1 : 0, &next)) return;
+  const uint32_t pendingBefore = refresh_.pending_since_ms;
+  if (!ioc_refresh_decide(&refresh_, now, hash, level_, forced ? 1 : 0, &next)) {
+    // A espera por uma melhora sobrevive ao sono: o painel acorda em outro boot.
+    if (refresh_.pending_since_ms != pendingBefore) {
+      hal_->storeU32("rpend", refresh_.pending_since_ms ? epochFromMs(refresh_.pending_since_ms, now) : 0);
+      hal_->storeU32("rphash", refresh_.pending_hash);
+    }
+    return;
+  }
   hal_->render(dl_);
   memcpy(&drawn_, &dl_, sizeof(drawn_));
   lastRenderMs_ = now;

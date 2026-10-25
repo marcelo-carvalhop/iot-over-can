@@ -26,6 +26,7 @@ class DecoderRouter:
         "[NODE ",
         "[STATUS",
         "[DESCOBERTA]",
+        "PANEL ",
     )
     SENSOR_PREFIXES = (
         "EDGE DSP",

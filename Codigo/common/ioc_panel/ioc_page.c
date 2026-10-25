@@ -297,6 +297,24 @@ int ioc_page_assess(const ioc_view *v, const ioc_page_ctx *ctx, ioc_page_item *i
         }
         const int recent_failover = v->failover_ms && age(v, v->failover_ms) < 60000 &&
                                     (s->uuid_parts != 3 || s->uuid == v->failover_uuid);
+        /* O Node responsável saiu do ar: o vínculo fica parado no último estado
+         * que ele publicou. Com a política automática o líder procura outro. */
+        if (s->node < IOC_VIEW_NODES && v->nodes[s->node].absent) {
+            const uint8_t level = (s->auto_failover || recent_failover) ? IOC_LEVEL_HANDLING : IOC_LEVEL_YOU;
+            if (!asleep_panel && (it = add(items, &n, max, level, IOC_ITEM_ORPHAN, s->node, s->child,
+                                           v->nodes[s->node].absent_since_ms))) {
+                snprintf(it->title, sizeof(it->title), "%s %02u.%02u sem o Node responsável",
+                         s->profile == IOC_PANEL_PROFILE ? "Painel" : "Sensor", s->node, s->child);
+                if (level == IOC_LEVEL_HANDLING) {
+                    snprintf(it->detail, sizeof(it->detail),
+                             "O Node %u está fora; reassociação automática autorizada, o líder procura outro Node.", s->node);
+                } else {
+                    snprintf(it->detail, sizeof(it->detail),
+                             "O Node %u está fora e a política é manual: associe a outro Node pela TUI (F7).", s->node);
+                }
+            }
+            continue;
+        }
         if (s->assoc == IOC_ASSOC_LOST || s->assoc == IOC_ASSOC_STALE) {
             const int lost = s->assoc == IOC_ASSOC_LOST;
             if (recent_failover) {

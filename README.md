@@ -40,6 +40,29 @@ A versão 0.19 acrescenta o **sensor acústico** (INMP441 em I2S, Pico W ou Pico
 
 Detalhes em [`Documentacao/arquitetura/metricas-e-ensaios.md`](Documentacao/arquitetura/metricas-e-ensaios.md). O que está preparado para CAN FD, e a recomendação de não migrar por ora, estão em [`Documentacao/arquitetura/predisposicao-can-fd.md`](Documentacao/arquitetura/predisposicao-can-fd.md).
 
+## Painel em papel eletrônico (M5Stack PaperColor)
+
+Desde a versão 0.20 o projeto tem um terceiro tipo de filho wireless: o **painel** (perfil `0x04`, `Codigo/node-paper`), um M5Stack PaperColor (ESP32-S3, E Ink Spectra 6 de 400×600) com o teclado CardKB na porta HY2.0. Ele se associa a um Node como qualquer sensor (F7) e recebe desse Node, pela sessão autenticada, os quadros CAN que o Node observa: o retrato do estado ao conectar, a caixa postal do que aconteceu enquanto dormia e o tráfego ao vivo. Não depende do computador.
+
+- **Página por exceção**: requer você, a rede está tratando e normal; o papel só é redesenhado quando o significado muda (leituras e rodapé não contam), cada página diz até quando vale, LED e som avisam na hora.
+- **Marcas do operador**: botão A (intervenção física), notas digitadas no CardKB e passos de roteiro de bancada chegam à TUI (`PANEL ... TYPE=MARK`) e ao histórico, na faixa `OPERATOR`.
+- **Energia**: um toque no botão liga; ligado, um toque atualiza e dois desligam (página "Painel desligado" e aviso ao Node). Na bateria, o painel declara o sono, o Node mantém o vínculo (`SLEEPING`) e guarda a caixa postal.
+- **Páginas** (B, Tab ou setas): Situação, Rede, Roteiro, Rádio (varredura de canais e anúncios BLE) e Ajuda. Comandos no teclado: `/hora HH:MM`, `/data AAAA-MM-DD`, `/sono N`.
+
+```bash
+./Codigo/scripts/build_paper.sh                           # chave de bancada (.env.local), UUID pelo MAC
+./Codigo/scripts/build_paper.sh --upload /dev/ttyACM0     # compila e grava
+```
+
+Com o Simulation Studio, a USB faz o papel do Wi-Fi: o PaperColor físico executa o próprio firmware e troca com o Node virtual os mesmos datagramas autenticados. No Studio, o inspetor do painel mostra a página e envia botões e notas.
+
+```bash
+python3 Simulacao/studio/server.py --binary /tmp/ioc_sim_network --browser
+Front/.venv/bin/python Simulacao/usb_panel_bridge.py --port /dev/ttyACM0 --node 2 --rssi -52 --also 3:-65
+```
+
+Sem o aparelho, `SENSOR ADD <uuid> PANEL` (ou o formulário do Studio) cria um painel virtual com o mesmo PanelApp do firmware; o cenário `panel_papercolor` da bancada virtual o exercita.
+
 ## TUI
 
 A interface é uma aplicação Textual em tela cheia organizada por assunto, sem a antiga concentração de topologia, telemetria, comandos e logs na mesma visão. A navegação principal é:
@@ -209,6 +232,6 @@ O índice oficial está em [`Documentacao/README.md`](Documentacao/README.md). O
 - comissionamento de sensores sem compilação: firmware único, código de instalação na etiqueta e chave entregue pela rede após a aprovação do operador (proposta em [`Documentacao/arquitetura/comissionamento-de-sensores.md`](Documentacao/arquitetura/comissionamento-de-sensores.md));
 - verificação FIDO2/OTP real da chave física do operador;
 - validação em bancada do sensor acústico (calibração, ocupação do DSP nas duas placas, níveis e doses contra um medidor de referência, tacômetro e eventos);
-- painel de estado em papel eletrônico (M5Stack PaperColor) via Wi-Fi;
+- validação em bancada do painel PaperColor (tempo e corrente do redesenho, BLE do ESP32-S3 com a M5Stack, sono pelo RTC, CardKB);
 - experimento comparativo em CAN FD com MCP2518FD, com as métricas e os ensaios atuais como linha de base;
 - *(prioridade muito baixa)* ferramentas de simulação complementares à bancada virtual: ponte com SocketCAN (`vcan`) para rodar os mesmos testes no barramento virtual e no físico, GNU Octave para análise e varreduras de parâmetros, OMNeT++/FiCo4OMNeT para estudos de escala (recomendação em [`Documentacao/arquitetura/metricas-e-ensaios.md`](Documentacao/arquitetura/metricas-e-ensaios.md), seção 8.1).

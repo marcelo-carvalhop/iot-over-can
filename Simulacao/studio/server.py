@@ -19,17 +19,17 @@ from datetime import datetime,timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from typing import Any
 
 ROOT=Path(__file__).resolve().parent
 SIM_DIR=ROOT.parent
 sys.path.insert(0,str(SIM_DIR))
 try:
-    from .protocol import request, parse_status, parse_fields, build_command
+    from .protocol import request, parse_status, parse_fields, build_command, parse_panel_page
     from .experiments import run_experiment,validate_spec
 except ImportError:
-    from protocol import request, parse_status, parse_fields, build_command
+    from protocol import request, parse_status, parse_fields, build_command, parse_panel_page
     from experiments import run_experiment,validate_spec
 from sim_bridge import SimBridge
 from sim_ctl import discover_socket
@@ -204,6 +204,13 @@ class StudioState:
         with self.command_lock:
             return request(self.socket,command,timeout=20)
 
+    def panel_page(self,uuid:str)->dict[str,Any]:
+        """Página do painel: a que está no papel (virtual) ou o espelho do PaperColor USB."""
+        command=build_command({'type':'panel.page','uuid':uuid})
+        assert self.socket
+        with self.command_lock:
+            return parse_panel_page(request(self.socket,command,timeout=8))
+
     def templates(self)->list[dict[str,Any]]:
         output=[]
         for path in sorted(TEMPLATES.glob('*.json')):
@@ -326,6 +333,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 if path=='/api/state':result=self.state.get_state()
+                elif path=='/api/panel':
+                    uuid=parse_qs(urlparse(self.path).query).get('uuid',[''])[0]
+                    result=self.state.panel_page(uuid)
                 elif path=='/api/experiments/templates':result=self.state.templates()
                 elif path=='/api/experiments/jobs':result=self.state.get_jobs()
                 elif path=='/api/experiments/results':result=self.state.list_results()

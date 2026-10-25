@@ -12,6 +12,7 @@ from pico_tui.core.events import (
     GatewayDetected,
     GatewayStatusReceived,
     LogEvent,
+    PanelReported,
     PhysicalNodeReceived,
     SensorStatusReceived,
     TelemetryReceived,
@@ -64,6 +65,8 @@ class GatewayTextDecoder:
             parent = parse_int(first(payload, "NODE", "PARENT", "PARENT_NODE"), 0) or 0
             child = parse_int(first(payload, "CHILD", "CHILD_ID"), 0) or 0
             await self.bus.publish(SensorStatusReceived(parent, child, payload))
+        elif token == "PANEL":
+            await self._panel(payload)
         elif token == "TEL":
             await self._telemetry(payload)
         elif token in {"DTC", "DTC_EVENT"}:
@@ -102,6 +105,22 @@ class GatewayTextDecoder:
             await self.bus.publish(LogEvent("ERROR", f"CRC_ERROR {payload}", "PROBE"))
         else:
             await self.bus.publish(LogEvent("DEBUG", f"GW_UNPARSED: {line}", "PROBE"))
+
+    async def _panel(self, payload: dict[str, str]) -> None:
+        parent = parse_int(first(payload, "NODE", "PARENT"), 0) or 0
+        child = parse_int(first(payload, "CHILD", "CHILD_ID"), 0) or 0
+        kind = payload.get("TYPE", "").upper()
+        text = ""
+        raw = payload.get("TEXT_HEX", "")
+        if raw:
+            try:
+                text = bytes.fromhex(raw).decode("utf-8", errors="replace")
+            except ValueError:
+                text = ""
+        # Só texto imprimível: a nota vem de um teclado em campo.
+        text = "".join(ch for ch in text if ch.isprintable())[:120]
+        age = parse_int(payload.get("AGE_MS"), 0) or 0
+        await self.bus.publish(PanelReported(parent, child, kind, payload, text=text, age_ms=max(0, age)))
 
     async def _telemetry(self, payload: dict[str, str]) -> None:
         parent = parse_int(first(payload, "NODE", "PARENT", "PARENT_NODE"), 0) or 0

@@ -123,6 +123,22 @@ class WirelessLinkReceived(Event):
 
 
 @dataclass(slots=True)
+class PanelReported(Event):
+    """Relato do painel em papel eletrônico (perfil PANEL) encaminhado pelo Node.
+
+    ``kind`` é ``STATUS`` (bateria, ambiente, página, sono) ou ``MARK`` (marca
+    do operador: botão, nota digitada, passo ou resultado de roteiro).
+    """
+
+    parent_node_id: int
+    child_id: int
+    kind: str
+    payload: dict[str, str]
+    text: str = ""
+    age_ms: int = 0
+
+
+@dataclass(slots=True)
 class WirelessConfigReceived(Event):
     """Configuração do sensor informada pelo Node (CURRENT, APPLIED ou REJECTED)."""
 

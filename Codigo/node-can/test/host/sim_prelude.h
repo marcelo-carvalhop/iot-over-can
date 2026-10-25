@@ -35,6 +35,10 @@
 #include "ioc_link.h"
 #include "ioc_sha256.h"
 #include "ioc_wdata.h"
+#include "ioc_panel_proto.h"
+#include "ioc_panel_cache.h"
+#include "ioc_view.h"
+#include "ioc_page.h"
 
 extern "C" {
 #include "../../../node-wifi/edge_protocol_definitions.h"

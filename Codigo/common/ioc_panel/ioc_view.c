@@ -91,6 +91,10 @@ static uint64_t uuid_lo(const uint8_t *p) {
     return ((uint64_t)p[0] << 24) | ((uint64_t)p[1] << 16) | ((uint64_t)p[2] << 8) | (uint64_t)p[3];
 }
 
+/* Mesmo empacotamento de ioc_assoc_pack (ioc_failover.c): estado em 6 bits,
+ * AUTO no bit 7, sessão no bit 6; REJECTED (0x7F) não leva sinalizadores. */
+static uint8_t assoc_state(uint8_t raw) { return raw == IOC_ASSOC_REJECTED ? raw : (uint8_t)(raw & 0x3Fu); }
+
 static void on_assoc(ioc_view *v, uint16_t id, const uint8_t *d, uint8_t len, uint32_t at) {
     if (len < 8) return;
     const uint8_t node = (uint8_t)((id - IOC_ID_ASSOC_STATUS_BASE) / 2u);
@@ -98,10 +102,12 @@ static void on_assoc(ioc_view *v, uint16_t id, const uint8_t *d, uint8_t len, ui
     const uint8_t child = d[1];
     touch_node(v, node, at);
     if (child == 0) return;
-    if (part_a && (d[2] == IOC_ASSOC_UNBOUND || d[2] == IOC_ASSOC_REJECTED)) {
+    const uint8_t raw = d[2];
+    const uint8_t state_a = assoc_state(raw);
+    if (part_a && (state_a == IOC_ASSOC_UNBOUND || state_a == IOC_ASSOC_REJECTED)) {
         ioc_view_sensor *gone = sensor_at(v, node, child, 0);
         if (gone) {
-            event(v, at, IOC_VEV_ASSOC, node, child, d[2]);
+            event(v, at, IOC_VEV_ASSOC, node, child, state_a);
             gone->used = 0;
         }
         return;
@@ -110,7 +116,9 @@ static void on_assoc(ioc_view *v, uint16_t id, const uint8_t *d, uint8_t len, ui
     if (!s) return;
     if (since(at, s->last_ms) > 0 || s->last_ms == 0) s->last_ms = at;
     if (part_a) {
-        const uint8_t state = d[2];
+        const uint8_t state = state_a;
+        s->auto_failover = raw != IOC_ASSOC_REJECTED && (raw & 0x80u) ? 1 : 0;
+        s->secure_flag = raw != IOC_ASSOC_REJECTED && (raw & 0x40u) ? 1 : 0;
         if (state != s->assoc) {
             const uint8_t before = s->assoc;
             s->assoc = state;

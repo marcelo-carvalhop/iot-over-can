@@ -4,6 +4,14 @@
  * Contrato: linhas #CTRL sao controle; linhas @<ms> sao saida da Probe 00.
  */
 
+// Painel em papel eletronico (perfil 0x04): implementado em sim_network.cpp,
+// depois deste arquivo. Os testes do controle compilam versoes vazias.
+const char* simProfileName(const Sensor& s);
+void simPanelAdded(Sensor& s);
+bool simPanelSource(Sensor& s, bool usb);
+bool simPanelPower(Sensor& s, bool on);
+void simPanelControl(std::istringstream& in);
+
 // Fabrica gerada pelo script de build: os Node IDs disponiveis sao definidos
 // na compilacao, enquanto os Nodes ativos podem ser adicionados em runtime.
 #include "sim_factory_registry.inc"
@@ -71,7 +79,7 @@ void simPrintStatus(bool running) {
     // IOC_USB_HYBRID_STAGE5
     printf("#CTRL SENSOR uuid=0x%016llX profile=%s powered=%u parent=%u child=%u mode=%u links=%zu source=%s usb_age_ms=%u\n",
            static_cast<unsigned long long>(s.uuid),
-           s.profile == PROFILE_ACOUSTIC_MEMS ? "ACOUSTIC" : "VIBRATION",
+           simProfileName(s),
            s.poweredOn ? 1 : 0, s.parent, s.child,
            static_cast<unsigned>(s.mode), s.rssi.size(), s.usbSource ? "USB" : "SYNTH",
            s.usbLastRxMs ? nowMs()-s.usbLastRxMs : 0u);
@@ -94,7 +102,11 @@ void simPrintHelp() {
   puts("#CTRL HELP NODE <id> POWER ON|OFF|RESTART");
   puts("#CTRL HELP NODE <id> TX ON|OFF");
   puts("#CTRL HELP NODE <id> BUDGET <1..100>  (percentual de passos do loop)");
-  puts("#CTRL HELP SENSOR ADD <uuid> VIBRATION|ACOUSTIC");
+  puts("#CTRL HELP SENSOR ADD <uuid> VIBRATION|ACOUSTIC|PANEL");
+  puts("#CTRL HELP PANEL PAGE <uuid>  (pagina no papel ou espelho do painel USB)");
+  puts("#CTRL HELP PANEL KEY <uuid> <codigo> | PANEL BUTTON <uuid> A|B|C|P|PP | PANEL NOTE <uuid> <texto>");
+  puts("#CTRL HELP PANEL BATTERY <uuid> ON|OFF  (painel virtual dorme entre verificacoes)");
+  puts("#CTRL HELP PANEL POLL|JOIN|LEAVE|UP <uuid> ...  (ponte USB do PaperColor)");
   puts("#CTRL HELP SENSOR REMOVE <uuid>");
   puts("#CTRL HELP SENSOR SOURCE <uuid> USB|SYNTH");
   puts("#CTRL HELP SENSOR SAMPLE <uuid> KEY=NUMERIC ...  (somente fonte USB)");
@@ -240,6 +252,10 @@ void simControl(const std::string& line, bool& running, bool& quit,
       printf("#CTRL OK NODE id=%u kind=%s state=%s\n", n.id, kind.c_str(), state.c_str());
       return;
     }
+    if (action == "PANEL") {
+      simPanelControl(in);
+      return;
+    }
     if (action == "SENSOR") {
       std::string op, uuidToken;
       if (!(in >> op >> uuidToken)) throw std::runtime_error("uso: SENSOR <acao> <uuid> ...");
@@ -248,10 +264,10 @@ void simControl(const std::string& line, bool& running, bool& quit,
       Sensor* s = simFindSensor(uuid);
       if (op == "ADD") {
         std::string profile, extra;
-        if (!(in >> profile) || (in >> extra)) throw std::runtime_error("uso: SENSOR ADD <uuid> VIBRATION|ACOUSTIC");
+        if (!(in >> profile) || (in >> extra)) throw std::runtime_error("uso: SENSOR ADD <uuid> VIBRATION|ACOUSTIC|PANEL");
         profile = simUpper(profile);
         if (s) throw std::runtime_error("UUID ja existente");
-        if (profile != "VIBRATION" && profile != "ACOUSTIC")
+        if (profile != "VIBRATION" && profile != "ACOUSTIC" && profile != "PANEL")
           throw std::runtime_error("perfil desconhecido");
         if (uuid == 0 || g_sensors.size() >= 200)
           throw std::runtime_error("UUID zero ou capacidade de sensores excedida");
@@ -270,6 +286,7 @@ void simControl(const std::string& line, bool& running, bool& quit,
           added.profile = PROFILE_ACOUSTIC_MEMS;
           added.telemetryPeriodMs = 1000;
         }
+        if (profile == "PANEL") simPanelAdded(added);
         printf("#CTRL OK SENSOR ADD uuid=0x%016llX profile=%s\n",
                static_cast<unsigned long long>(uuid), profile.c_str());
         return;
@@ -334,6 +351,10 @@ void simControl(const std::string& line, bool& running, bool& quit,
         if (!s) throw std::runtime_error("sensor inexistente");
         value=simUpper(value);
         if (value!="USB" && value!="SYNTH") throw std::runtime_error("SOURCE deve ser USB ou SYNTH");
+        if (simPanelSource(*s, value=="USB")) {
+          printf("#CTRL OK SENSOR SOURCE uuid=0x%016llX source=%s\n",static_cast<unsigned long long>(uuid),value.c_str());
+          return;
+        }
         s->usbSource=value=="USB";
         s->usbValues.clear();
         s->usbSampleVersion=s->usbForwardedVersion=0;
@@ -402,6 +423,10 @@ void simControl(const std::string& line, bool& running, bool& quit,
         std::string state, extra;
         if (!(in >> state) || (in >> extra)) throw std::runtime_error("uso: SENSOR POWER <uuid> ON|OFF");
         state = simUpper(state);
+        if ((state == "ON" || state == "OFF") && simPanelPower(*s, state == "ON")) {
+          printf("#CTRL OK SENSOR POWER uuid=0x%016llX state=%s\n", static_cast<unsigned long long>(uuid), state.c_str());
+          return;
+        }
         if (state == "OFF") s->poweredOn = false;
         else if (state == "ON") {
           if (!s->poweredOn) {

@@ -145,7 +145,7 @@ void ioc_pcache_on_frame(ioc_pcache *cache, uint16_t id, const uint8_t *data, ui
         /* Mudança do estado de um vínculo também é evento: a caixa postal
          * guarda a transição, o retrato só o último valor. */
         const int assoc = id >= IOC_ID_ASSOC_STATUS_BASE && id <= IOC_ID_ASSOC_STATUS_LAST && ((id - IOC_ID_ASSOC_STATUS_BASE) % 2u) == 0;
-        if (assoc && len >= 3 && (!e->used || e->id != id || e->key != key || e->data[2] != data[2])) {
+        if (assoc && len >= 3 && (!e->used || e->id != id || e->key != key || (e->data[2] & 0x3Fu) != (data[2] & 0x3Fu))) {
             mailbox_push(cache, id, data, len, own, now_ms);
         }
         e->used = 1;

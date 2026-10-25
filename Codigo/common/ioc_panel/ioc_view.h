@@ -65,7 +65,9 @@ typedef struct {
     uint8_t  uuid_parts;      /* 1 = parte A, 2 = parte B */
     uint64_t uuid;
     uint8_t  profile;
-    uint8_t  assoc;
+    uint8_t  assoc;           /* estado do vínculo, sem os sinalizadores */
+    uint8_t  auto_failover;   /* reassociação automática autorizada pelo operador */
+    uint8_t  secure_flag;     /* o Node informa sessão (ou painel dormindo) */
     int8_t   rssi;
     uint32_t assoc_since_ms;
     uint32_t last_ms;

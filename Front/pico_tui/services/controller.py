@@ -23,6 +23,7 @@ from pico_tui.core.events import (
     LegacyHeartbeatReceived,
     LocalNodeTelemetryReceived,
     LogEvent,
+    PanelReported,
     PhysicalNodeReceived,
     SensorStatusReceived,
     SpectrumReceived,
@@ -102,8 +103,28 @@ class DomainController:
             (LegacyHeartbeatReceived, self._legacy_heartbeat),
             (LocalNodeTelemetryReceived, self._local_node_telemetry),
             (FragmentReceived, self._fragment),
+            (PanelReported, self._panel),
         ):
             self.bus.subscribe(event_type, handler)
+
+    async def _panel(self, event: PanelReported) -> None:
+        """Marcas do operador e estado do painel em papel eletrônico."""
+        ident = f"{event.parent_node_id:02d}.{event.child_id:02d}"
+        if event.kind == "MARK":
+            kind = event.payload.get("KIND", "")
+            if kind == "BUTTON":
+                text = "intervenção física marcada no painel"
+            elif kind == "STEP":
+                text = f"roteiro: {event.text}"
+            elif kind == "RESULT":
+                text = f"resultado medido pelo painel: {event.text}"
+            else:
+                text = f"nota do operador: {event.text}"
+            self.state.add_sensor_incident(event.parent_node_id, event.child_id, Severity.INFO, "OPERADOR", text,
+                                           key=f"mark:{event.payload.get('SEQ', '')}")
+            await self.bus.publish(LogEvent("INFO", f"Painel {ident}: {text}", "PAINEL"))
+        elif event.kind == "STATUS" and event.payload.get("STATE", "").upper() == "OFF":
+            await self.bus.publish(LogEvent("INFO", f"Painel {ident} desligado pelo operador", "PAINEL"))
 
     async def _connection_opened(self, event: ConnectionOpened) -> None:
         self.sequence.reset()
@@ -321,7 +342,12 @@ class DomainController:
             telemetry_period_ms=event.stream_period_ms,
         )
         ident = f"{event.parent_node_id:02d}.{event.child_id:02d}"
-        if state != previous_state:
+        # O painel na bateria dorme entre verificações: SECURE <-> SLEEPING é
+        # o ciclo normal e não vira intercorrência nem aviso.
+        sleep_cycle = state == "SLEEPING" or (previous_state == "SLEEPING" and state == "SECURE")
+        if state != previous_state and sleep_cycle:
+            await self.bus.publish(LogEvent("DEBUG", f"{ident}: painel {'dormindo' if state == 'SLEEPING' else 'acordado'}", "LINK"))
+        elif state != previous_state:
             if state == "SECURE":
                 level, text = "INFO", "sessão autenticada estabelecida com o módulo"
             elif state == "NO_KEY":

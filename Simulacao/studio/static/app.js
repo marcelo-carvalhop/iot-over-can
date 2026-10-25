@@ -138,7 +138,7 @@
         'aria-label':`Sensor ${sensor.uuid} ${sensor.profile}`});
       putSVG(group,'rect',{x:x-12,y:y-7,width:145,height:65,rx:9,fill:sensor.powered?'#283f55':'#363942',stroke:sensor.powered?'#6fa9d5':'#7d8188','stroke-width':1.5});
       putSVG(group,'circle',{cx:x+7,cy:y+12,r:4,fill:sensor.powered?'#6fa9d5':'#ec8e90'});
-      putSVG(group,'text',{x:x+62,y:y+17,'text-anchor':'middle',class:'map-label'},sensor.profile==='ACOUSTIC'?'SENSOR ACÚSTICO':'SENSOR VIBRAÇÃO');
+      putSVG(group,'text',{x:x+62,y:y+17,'text-anchor':'middle',class:'map-label'},sensor.profile==='ACOUSTIC'?'SENSOR ACÚSTICO':sensor.profile==='PANEL'?'PAINEL PAPERCOLOR':'SENSOR VIBRAÇÃO');
       putSVG(group,'text',{x:x+62,y:y+35,'text-anchor':'middle',class:'map-sub'},sensor.uuid.slice(-8));
       putSVG(group,'text',{x:x+62,y:y+48,'text-anchor':'middle',class:'map-sub'},sensor.parent?`Pai lógico: Node ${sensor.parent}`:'Não associado');
       group.addEventListener('click',()=>select({kind:'sensor',uuid:sensor.uuid}));
@@ -216,7 +216,8 @@
     }
     const s=model.sensors.find(v=>v.uuid===selected.uuid);
     if(!s){root.textContent='Sensor removido da bancada.';return;}
-    root.append(elt('div',{class:'inspector-title'},s.profile==='ACOUSTIC'?'Sensor acústico':'Sensor de vibração'));
+    root.append(elt('div',{class:'inspector-title'},s.profile==='ACOUSTIC'?'Sensor acústico':s.profile==='PANEL'?'Painel em papel eletrônico':'Sensor de vibração'));
+    if(s.profile==='PANEL')renderPanelSection(root,s);
     row(root,'UUID',s.uuid);row(root,'Energia',s.powered?'Ligado':'Desligado');
     row(root,'Responsável lógico',s.parent?`Node ${s.parent}`:'Sem associação');
     // IOC_USB_HYBRID_STAGE5
@@ -273,6 +274,72 @@
     unbind.addEventListener('click',()=>command({type:'probe.unbind',uuid:s.uuid,node:parent.value}));acts.append(unbind);
     const pol=elt('button',{type:'button',class:'btn btn-small btn-secondary'},'Alterar política');
     pol.addEventListener('click',()=>command({type:'probe.policy',uuid:s.uuid,node:parent.value,policy:policy.value}));acts.append(pol);
+  }
+
+
+  // Painel em papel eletrônico: a página que está no papel (painel virtual) ou o
+  // espelho do PaperColor ligado pela USB, desenhada a partir da lista de desenho.
+  const PAPER_INK=['#1c1c1c','#f4f1ea','#e8c33a','#b8312f','#4a3fd0','#3f7d3f'];
+  const panelCache=new Map();
+  async function fetchPanel(uuid){
+    const cached=panelCache.get(uuid);
+    if(cached&&Date.now()-cached.at<1800)return cached.data;
+    try{const data=await api('/api/panel?uuid='+encodeURIComponent(uuid));panelCache.set(uuid,{at:Date.now(),data});return data;}
+    catch(error){return cached?cached.data:null;}
+  }
+  function drawPaper(canvas,page){
+    const ctx=canvas.getContext('2d'),scale=canvas.width/400;
+    ctx.setTransform(scale,0,0,scale,0,0);
+    ctx.fillStyle=PAPER_INK[1];ctx.fillRect(0,0,400,600);
+    if(!page||!page.items.length){ctx.fillStyle='#888';ctx.font='16px sans-serif';ctx.fillText('Sem página desenhada',110,300);return;}
+    for(const it of page.items){
+      const ink=PAPER_INK[it.ink]||PAPER_INK[0];ctx.fillStyle=ink;ctx.strokeStyle=ink;ctx.lineWidth=1;
+      if(it.op===1)ctx.fillRect(it.x,it.y,it.w,it.h);
+      else if(it.op===2)ctx.strokeRect(it.x+0.5,it.y+0.5,it.w-1,it.h-1);
+      else if(it.op===4){ctx.beginPath();ctx.moveTo(it.x,it.y+0.5);ctx.lineTo(it.x+it.w,it.y+it.h+0.5);ctx.stroke();}
+      else if(it.op===5){
+        const z=it.size,x=it.x,y=it.y;ctx.lineWidth=3;ctx.beginPath();
+        if(it.w===0){ctx.arc(x+z/2,y+z/2,z/2-1,0,Math.PI*2);ctx.fill();}
+        else if(it.w===1){ctx.moveTo(x+z/2,y);ctx.lineTo(x,y+z);ctx.lineTo(x+z,y+z);ctx.closePath();ctx.fill();}
+        else if(it.w===2){ctx.moveTo(x+2,y+2);ctx.lineTo(x+z-2,y+z-2);ctx.moveTo(x+z-2,y+2);ctx.lineTo(x+2,y+z-2);ctx.stroke();}
+        else if(it.w===3){ctx.moveTo(x+1,y+z/2);ctx.lineTo(x+z/3,y+z-3);ctx.lineTo(x+z-2,y+2);ctx.stroke();}
+        else{ctx.moveTo(x+z/2,y);ctx.lineTo(x,y+z*0.75);ctx.lineTo(x+z,y+z*0.75);ctx.closePath();ctx.fill();
+             ctx.beginPath();ctx.moveTo(x+z/2,y+z);ctx.lineTo(x,y+z*0.25);ctx.lineTo(x+z,y+z*0.25);ctx.closePath();ctx.fill();}
+      } else if(it.op===3){
+        // Avanço fixo de meia altura, como a fonte efont do firmware.
+        ctx.font=`${it.size}px monospace`;ctx.textBaseline='top';
+        const chars=[...it.text].length||1,natural=ctx.measureText(it.text).width||1,target=chars*it.size/2;
+        ctx.save();ctx.translate(it.x,it.y+1);ctx.scale(target/natural,1);ctx.fillText(it.text,0,0);ctx.restore();
+      }
+    }
+  }
+  function renderPanelSection(root,s){
+    const section=elt('section',{class:'editor-section'});root.append(section);
+    heading(section,'Página no papel');
+    const info=elt('p',{class:'wireless-hint'},'Carregando a página…');section.append(info);
+    const canvas=elt('canvas',{width:300,height:450,style:'width:100%;max-width:300px;border-radius:6px;border:1px solid #445'});
+    section.append(canvas);
+    const cached=panelCache.get(s.uuid);
+    if(cached)drawPaper(canvas,cached.data);
+    fetchPanel(s.uuid).then(page=>{
+      drawPaper(canvas,page);
+      if(!page){info.textContent='Página indisponível.';return;}
+      const levels=['rede normal','a rede está tratando','atenção','requer você'];
+      info.textContent=(page.source==='MIRROR'?'Espelho do PaperColor físico (USB). ':page.source==='VIRTUAL'?'Painel virtual (firmware na bancada). ':'Painel desligado. ')+
+        `Nível: ${levels[page.level]||'?'} · sessão ${page.session?'ativa com o Node '+page.node:'inativa'} · ${page.renders} desenhos · ${page.beeps} alertas sonoros.`;
+    });
+    const acts=actionsBox(section);
+    for(const [label,btn] of [['A: marca','A'],['B: página','B'],['C: atualiza','C'],['⏻ 1×','P'],['⏻ 2× (desliga)','PP']])
+      button(acts,label,{type:'panel.button',uuid:s.uuid,button:btn},btn==='PP'?'btn-danger':'btn-secondary');
+    const grid=elt('div',{class:'inline-fields'});section.append(grid);
+    const note=field(grid,'Nota (CardKB)','text','');note.maxLength=96;
+    const send=elt('button',{class:'btn btn-secondary grid-button',type:'button'},'Enviar nota');
+    send.addEventListener('click',()=>{if(note.value.trim())command({type:'panel.note',uuid:s.uuid,text:note.value.trim()});});grid.append(send);
+    if(s.source!=='USB'){
+      const bat=actionsBox(section);
+      button(bat,'Bateria (dorme)',{type:'panel.battery',uuid:s.uuid,state:'ON'});
+      button(bat,'USB (acordado)',{type:'panel.battery',uuid:s.uuid,state:'OFF'});
+    }
   }
 
   function drawChart(canvas,values,maxValue,titleColor){

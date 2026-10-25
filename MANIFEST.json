@@ -89,7 +89,6 @@
     "entrega da chave do sensor pela estação, sem chave mestra nos Nodes",
     "verificação FIDO2/OTP real da chave física",
     "validação em bancada do sensor acústico: calibrador de 94 dB, ocupação do núcleo 1 nas duas placas, comparação com medidor de nível sonoro e tacômetro óptico",
-    "painel em papel eletrônico",
     "experimento comparativo em CAN FD"
   ],
   "validation": {

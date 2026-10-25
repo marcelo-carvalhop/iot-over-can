@@ -67,6 +67,7 @@ LINK_STATES = {
     "OFFERING": "aguardando o sensor",
     "DOWN": "sem canal de dados",
     "NO_KEY": "módulo sem chave de enlace",
+    "SLEEPING": "painel dormindo",
     "NONE": "sem relato do módulo",
 }
 

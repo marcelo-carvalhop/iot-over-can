@@ -20,7 +20,7 @@ from pico_tui.history.storage import HistoryEvent, Session
 from pico_tui.screens import BaseScreen, section
 from pico_tui.widgets import StableOptionList
 
-LANES = ("NETWORK", "CAN", "WIRELESS", "SENSOR", "SYSTEM", "CAPTURA")
+LANES = ("NETWORK", "CAN", "WIRELESS", "SENSOR", "OPERATOR", "SYSTEM", "CAPTURA")
 COLORS = {"INFO": palette.STATE_INFO, "WARNING": palette.STATE_WARNING,
           "CRITICAL": palette.STATE_CRITICAL}
 ZOOMS = (60, 300, 900, 1800, 7200, 21600, 86400, 604800)
