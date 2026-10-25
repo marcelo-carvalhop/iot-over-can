@@ -83,6 +83,8 @@ struct PanelMark {
 class PanelApp {
  public:
   void begin(PanelHal* hal, const PanelConfig& cfg);
+  // Ponte USB reconectada ou transporte substituído: exige novo handshake.
+  void restartLink();
   void loop();
 
   void onOffer(const uint8_t* mfg, size_t len);
