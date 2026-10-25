@@ -281,9 +281,10 @@ void stopRadios() {
     NimBLEDevice::getScan()->stop();
     NimBLEDevice::getAdvertising()->stop();
   }
+  udp.stop();
+  udpStarted = false;
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
-  udpStarted = false;
 }
 
 /* --------------------------------------------------------- utilidades USB */
@@ -346,19 +347,28 @@ class DeviceHal : public PanelHal {
     char ssid[IOC_LINK_SSID_LEN], psk[IOC_LINK_PSK_LEN];
     ioc_link_wifi_ssid(node, ssid);
     ioc_link_wifi_psk(networkKey, node, psk);
-    WiFi.disconnect();
+    // WiFiUDP não deve reutilizar o socket de uma associação anterior.
+    udp.stop();
     udpStarted = false;
+    WiFi.disconnect();
     WiFi.begin(ssid, psk, ioc_link_wifi_channel(node));
   }
   void leaveNode() override {
     joinedNode = 0;
     if (transport == Transport::Usb) { Serial.println("#IOC LEAVE"); return; }
-    WiFi.disconnect();
+    udp.stop();
     udpStarted = false;
+    WiFi.disconnect();
   }
   bool linkUp() override {
     if (transport == Transport::Usb) return usbLink;
-    if (WiFi.status() != WL_CONNECTED) return false;
+    if (WiFi.status() != WL_CONNECTED) {
+      if (udpStarted) {
+        udp.stop();
+        udpStarted = false;
+      }
+      return false;
+    }
     if (!udpStarted) udpStarted = udp.begin(IOC_LINK_UDP_PORT) == 1;
     return udpStarted;
   }
@@ -494,7 +504,14 @@ void handleHostLine(char* line) {
   char* cmd = line + 5;
   static uint8_t buf[IOC_PANEL_DATAGRAM_MAX + IOC_ENV_OVERHEAD];
   if (strncmp(cmd, "BRIDGE", 6) == 0) {
-    enterUsbMode();
+    if (transport == Transport::Usb) {
+      // A ponte pode ter sido encerrada com o aparelho ainda ligado.
+      // READY deve iniciar uma sessão nova, não reaproveitar Bound.
+      usbLink = false;
+      app.restartLink();
+    } else {
+      enterUsbMode();
+    }
     Serial.printf("#IOC READY uuid=0x%016llX profile=PANEL fw=%s\n", static_cast<unsigned long long>(panelUuid),
                   PANEL_FW_VERSION);
   } else if (strncmp(cmd, "TIME ", 5) == 0) {
