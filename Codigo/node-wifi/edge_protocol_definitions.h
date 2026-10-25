@@ -85,7 +85,8 @@
 typedef enum {
     PROFILE_ACCELEROMETER   = 0x01, // Nó Pico 2W #1: MPU-6050 (Vibração & Sismografia)
     PROFILE_ACOUSTIC_MEMS   = 0x02, // Nó Pico 2W #2: Microfone I2S
-    PROFILE_THERMAL_ARRAY   = 0x03  // Nó Pico 2W #3: Sensores PT100/DS18B20
+    PROFILE_THERMAL_ARRAY   = 0x03, // Nó Pico 2W #3: Sensores PT100/DS18B20
+    PROFILE_PANEL_EPAPER    = 0x04  // M5Stack PaperColor: painel em papel eletrônico (Codigo/node-paper)
 } NodeProfileID;
 
 typedef enum {

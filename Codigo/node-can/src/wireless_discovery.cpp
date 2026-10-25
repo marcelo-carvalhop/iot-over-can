@@ -134,6 +134,7 @@ const char* profileName(uint8_t profile) {
     case 0x01: return "VIBRATION";
     case 0x02: return "ACOUSTIC";
     case 0x03: return "THERMAL";
+    case 0x04: return "PANEL";
     default: return "UNKNOWN";
   }
 }
@@ -259,7 +260,7 @@ void sendAssociationStatus(const Binding& binding, uint8_t stateOverride = 0) {
   const uint8_t seq = ++assocStatusSeq;
   const uint8_t state = stateOverride ? stateOverride : binding.assocState;
   const bool active = state != WIRELESS_ASSOC_UNBOUND && state != WIRELESS_ASSOC_REJECTED;
-  const bool secure = active && wirelessLinkIsSecure(binding.uuid);
+  const bool secure = active && wirelessLinkIsPresent(binding.uuid);
 
   // O próprio Node não recebe o que transmite: a tabela é alimentada aqui.
   ioc_fo_on_status(&failoverTable, millis(), NODE_ID, binding.childId, binding.uuid, state,
@@ -287,8 +288,8 @@ void sendAssociationStatus(const Binding& binding, uint8_t stateOverride = 0) {
     b.data[4 + i] = static_cast<uint8_t>((binding.uuid >> (24 - 8 * i)) & 0xFFu);
   }
 
-  can.tryToSend(a);
-  can.tryToSend(b);
+  canSend(a);
+  canSend(b);
 
   Serial.printf("[NODE %u] [WIRELESS ASSOC] child=%u uuid=0x%016llX state=%s rssi=%d failover=%s session=%s\n",
                 NODE_ID,
@@ -489,7 +490,7 @@ void resolveBindingConflict(uint8_t otherNode, uint64_t uuid, uint8_t otherState
   portEXIT_CRITICAL(&candidateMux);
   if (bindingIndex < 0) return;
 
-  const bool ownSecure = wirelessLinkIsSecure(uuid);
+  const bool ownSecure = wirelessLinkIsPresent(uuid);
   // Um vínculo retomado da NVS ainda sem sessão é o mais antigo da disputa:
   // conta como fora de alcance e cede a quem o líder escolheu depois.
   if (restored && !ownSecure) ownState = WIRELESS_ASSOC_STALE;
@@ -579,8 +580,8 @@ void sendCandidateReport(const Candidate& c) {
   b.data[6] = 0x00;
   b.data[7] = 0x00;
 
-  can.tryToSend(a);
-  can.tryToSend(b);
+  canSend(a);
+  canSend(b);
   ioc_fo_on_observation(&failoverTable, millis(), NODE_ID, c.uuid, c.rssi);
 
   Serial.printf("[NODE %u] [BLE] candidate uuid=0x%016llX profile=%s rssi=%d protocol=%u\n",
@@ -679,8 +680,8 @@ uint8_t transmitAssociationCommand(uint8_t target, uint8_t action, uint64_t uuid
   b.data[6] = info.fromNode;
   b.data[7] = static_cast<uint8_t>(info.rssi);
 
-  if (can.tryToSend(a)) netMetricsOnTransmit(a);
-  if (can.tryToSend(b)) netMetricsOnTransmit(b);
+  if (canSend(a)) netMetricsOnTransmit(a);
+  if (canSend(b)) netMetricsOnTransmit(b);
   return seq;
 }
 
@@ -758,7 +759,8 @@ void pollBindings() {
 
     // Uma sessão de dados ativa prova a presença do sensor mesmo que o rádio
     // BLE, dividido com o ponto de acesso, deixe de ouvir os anúncios dele.
-    const bool secure = wirelessLinkIsSecure(binding.uuid);
+    // O painel que declarou dormir conta como presente até o prazo informado.
+    const bool secure = wirelessLinkIsPresent(binding.uuid);
     if (secure) binding.lastSeenMs = now;
     if (secure) binding.restored = false;  // vínculo retomado da NVS confirmado pela sessão
     const uint32_t age = elapsedSince(now, binding.lastSeenMs);

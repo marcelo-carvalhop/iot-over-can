@@ -37,6 +37,23 @@ bool wirelessLinkHasKey();
 bool wirelessLinkIsSecure(uint64_t uuid);
 
 /*
+ * true quando há sessão ou quando o filho é um painel que declarou dormir e
+ * ainda está dentro do prazo: a presença do vínculo não depende dos anúncios
+ * BLE que o painel deixa de emitir enquanto dorme.
+ */
+bool wirelessLinkIsPresent(uint64_t uuid);
+
+/*
+ * Painel em papel eletrônico: todo quadro observado pelo Node passa por aqui
+ * (recebidos em handleReceivedCanMessage, transmitidos em canSend), para o
+ * retrato, a caixa postal e o encaminhamento ao vivo.
+ */
+void wirelessLinkTap(const CANMessage& msg, bool own);
+
+/* Ponto único de transmissão no CAN: can.tryToSend + registro para o painel. */
+bool canSend(const CANMessage& msg);
+
+/*
  * Ganchos dos ensaios de injeção de falhas (fault_injection.cpp).
  *   DropSessions  descarta as sessões; os sensores precisam se reautenticar.
  *   ApOutage      desliga o ponto de acesso por durationMs (0 = religa agora).

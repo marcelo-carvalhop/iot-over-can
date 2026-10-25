@@ -566,7 +566,7 @@ void sendControlFrame(uint8_t subcmd, uint8_t targetId, uint8_t action) {
   msg.data[2] = targetId;
   msg.data[3] = action;
 
-  if (can.tryToSend(msg)) netMetricsOnTransmit(msg);
+  if (canSend(msg)) netMetricsOnTransmit(msg);
 }
 
 void sendStatusFrame(uint8_t subcmd, uint8_t targetId, uint8_t value) {
@@ -580,7 +580,7 @@ void sendStatusFrame(uint8_t subcmd, uint8_t targetId, uint8_t value) {
   msg.data[2] = targetId;
   msg.data[3] = value;
 
-  if (can.tryToSend(msg)) netMetricsOnTransmit(msg);
+  if (canSend(msg)) netMetricsOnTransmit(msg);
 }
 
 void publishStateUpdate(uint8_t nodeId, uint8_t status) {
@@ -680,7 +680,7 @@ void sendElectionAnnouncement() {
   msg.len = 1;
   msg.data[0] = NODE_ID;
 
-  can.tryToSend(msg);
+  canSend(msg);
 
   if (DEBUG_LOCAL) {
     Serial.print("[NODE ");
@@ -698,7 +698,7 @@ void sendLeaderAnnouncement() {
   msg.len = 1;
   msg.data[0] = NODE_ID;
 
-  can.tryToSend(msg);
+  canSend(msg);
 
   if (DEBUG_LOCAL) {
     Serial.print("[NODE ");
@@ -998,7 +998,7 @@ void sendHeartbeat() {
   msg.data[3] = getActiveSensorCount();
   msg.data[4] = heartbeatRateMode;
 
-  can.tryToSend(msg);
+  canSend(msg);
 
   pulseHeartbeatLed();
 
@@ -1280,7 +1280,7 @@ void sendSensorData(uint8_t tick) {
   msg.data[3] = sensorEnabled ? 1 : 0;
   msg.data[4] = 0x00;
 
-  can.tryToSend(msg);
+  canSend(msg);
 
   updateNetworkSensorValue(NODE_ID, value, tick);
 
@@ -1648,6 +1648,7 @@ void handleControlCanMessage(const CANMessage& rx) {
 
 void handleReceivedCanMessage(const CANMessage& rx) {
   netMetricsOnReceive(rx);
+  wirelessLinkTap(rx, false);   // painel: retrato, caixa postal e encaminhamento ao vivo
 
   if (faultInjectionHandleCanMessage(rx)) {
     return;

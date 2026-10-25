@@ -6,6 +6,7 @@
 #include "protocolo.h"
 #include "comandos.h"
 #include "net_metrics.h"
+#include "wireless_link.h"
 
 /* =========================================================
  * VARIAVEIS DEFINIDAS NO ARQUIVO PRINCIPAL .ino
@@ -92,7 +93,7 @@ static void sendFaultDisableCommand(uint8_t targetId) {
   msg.data[2] = targetId;
   msg.data[3] = CTRL_ACTION_DISABLE_FAULT;
 
-  can.tryToSend(msg);
+  canSend(msg);
 
   Serial.print("[NODE ");
   Serial.print(NODE_ID);
@@ -222,7 +223,7 @@ void sendStatusResponse() {
   msg.data[2] = NODE_ID;
   msg.data[3] = getLocalStatusCode();
 
-  if (can.tryToSend(msg)) netMetricsOnTransmit(msg);
+  if (canSend(msg)) netMetricsOnTransmit(msg);
 
   updateNetworkStatusLocal(NODE_ID, msg.data[3]);
 
