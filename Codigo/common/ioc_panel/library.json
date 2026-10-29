@@ -1,0 +1,11 @@
+{
+  "name": "ioc_panel",
+  "version": "0.20.0",
+  "description": "iot-over-can: painel em papel eletrônico (protocolo, retrato do Node, visão da rede e composição da página)",
+  "frameworks": "*",
+  "platforms": "*",
+  "build": {
+    "srcDir": ".",
+    "includeDir": "."
+  }
+}

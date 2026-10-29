@@ -28,6 +28,9 @@
 #include "ioc_link.h"
 #include "ioc_sha256.h"
 #include "ioc_wdata.h"
+#include "ioc_canbits.h"
+#include "ioc_panel_cache.h"
+#include "ioc_panel_proto.h"
 
 // Estruturas do protocolo do sensor. O arquivo pertence ao firmware do Pico W
 // e é a única definição do formato dos payloads internos. A inclusão é por
@@ -77,6 +80,10 @@ constexpr uint16_t ACK_DETAIL_CONFIG_UNKNOWN = 0xFFFE;
 constexpr uint16_t ACK_DETAIL_PROFILE_MISMATCH = 0xFFFD; // comando de outro tipo de sensor
 constexpr uint8_t  MAX_RX_DATAGRAMS_PER_POLL = 4;
 constexpr uint8_t  PROBE_PENDING_LEN = 12;
+// Painel em papel eletrônico (perfil 0x04).
+constexpr uint32_t TAP_FLUSH_MS = 200;            // lote ao vivo de quadros CAN para o painel
+constexpr uint32_t PANEL_SLEEP_MARGIN_MS = 30000; // folga sobre o sono declarado
+constexpr uint32_t PANEL_OFF_LEASE_MS = 12UL * 3600UL * 1000UL; // desligado pelo operador
 
 /* ===================================================================== */
 /* Node funcional                                                        */
@@ -179,6 +186,18 @@ struct Link {
   uint8_t acousticSeq = 0;
   uint32_t acousticCounter = 0;
   uint32_t acousticSentMs = 0;
+
+  // Painel: tap ao vivo, retrato pedido pelo HELLO do painel e sono declarado.
+  bool panelSubscribed = false;   // HELLO do painel recebido nesta sessão
+  bool panelEverSubscribed = false;
+  bool panelAsleep = false;       // dorme por intervalo declarado: presente sem sessão
+  uint32_t panelPresentUntilMs = 0;
+  uint16_t panelSleepS = 0;
+  uint16_t tapSeq = 0;
+  size_t tapUsed = 0;
+  uint32_t tapStartMs = 0;
+  uint32_t tapSkippedBits = 0;
+  uint8_t tapBuf[IOC_PANEL_DATAGRAM_MAX] = {0};
 };
 
 struct TxTransfer {
@@ -209,7 +228,8 @@ uint8_t offerCursor = 0;
 uint32_t lastOfferRotateMs = 0;
 WiFiUDP udp;
 uint8_t rxDatagram[MAX_DATAGRAM];
-uint8_t txDatagram[160];
+uint8_t txDatagram[IOC_PANEL_DATAGRAM_MAX + IOC_ENV_OVERHEAD];
+ioc_pcache panelCache;
 float fftScratch[MAX_FFT_BINS];
 uint16_t fftReduced[MAX_FFT_BINS];
 
@@ -256,6 +276,7 @@ uint8_t linkState(const Link& link) {
   if (!haveKey) return IOC_WD_LINK_NO_KEY;
   if (link.secure) return IOC_WD_LINK_SECURE;
   if (link.pending.active) return IOC_WD_LINK_HANDSHAKE;
+  if (link.profile == IOC_PANEL_PROFILE && link.panelAsleep) return IOC_WD_LINK_SLEEPING;
   return IOC_WD_LINK_OFFERING;
 }
 
@@ -310,7 +331,7 @@ void drainTxQueue() {
         slot.next = segments; // nunca deveria ocorrer; descarta a transferência
         break;
       }
-      if (!can.tryToSend(msg)) return;
+      if (!canSend(msg)) return;
       ++slot.next;
     }
     if (slot.kind == IOC_WD_KIND_SPECTRUM) txNextTransferAtMs = now + SPECTRUM_GAP_MS;
@@ -686,6 +707,7 @@ const char* profileTag(uint8_t profile) {
   switch (profile) {
     case PROFILE_ACCELEROMETER: return "VIBRATION";
     case PROFILE_ACOUSTIC_MEMS: return "ACOUSTIC";
+    case IOC_PANEL_PROFILE: return "PANEL";
     default: return "UNKNOWN";
   }
 }
@@ -938,11 +960,175 @@ void handleUrgentDtc(Link& link, const uint8_t* inner, size_t len) {
   queueTransfer(link.childId, IOC_WD_KIND_DTC, raw, sizeof(raw));
 }
 
+/* ------------------------------------------------ painel em papel eletrônico */
+
+// O contrato entre Node e painel é o próprio barramento: o Node encaminha os
+// quadros que observa (os recebidos e os que ele mesmo transmite, que o
+// MCP2515 não devolve), o retrato do estado e a caixa postal acumulada
+// enquanto o painel dormia. Não interpreta nada além do necessário para
+// escolher o que guardar (ioc_panel_cache).
+
+bool isPanel(const Link& link) { return link.profile == IOC_PANEL_PROFILE; }
+
+void updatePanelMailbox() {
+  bool open = false;
+  for (uint8_t i = 0; i < MAX_LINKS; ++i) {
+    const Link& link = links[i];
+    if (link.used && isPanel(link) && link.panelEverSubscribed && !(link.secure && link.panelSubscribed)) open = true;
+  }
+  ioc_pcache_mailbox_open(&panelCache, open);
+}
+
+void tapReset(Link& link, uint8_t flags) {
+  ioc_panel_frames_hdr hdr = {flags, link.tapSeq++, 0, 0, 0};
+  link.tapUsed = ioc_panel_frames_begin(link.tapBuf, sizeof(link.tapBuf), &hdr);
+  link.tapSkippedBits = 0;
+  link.tapStartMs = millis();
+}
+
+void tapFlush(Link& link, bool force) {
+  if (!link.secure || !link.panelSubscribed || link.tapUsed < IOC_PANEL_FRAMES_HEADER) return;
+  const uint32_t now = millis();
+  if (!force && now - link.tapStartMs < TAP_FLUSH_MS) return;
+  const uint32_t span = now - link.tapStartMs;
+  link.tapBuf[6] = static_cast<uint8_t>(span > 0xFFFFu ? 0xFFFFu : span);
+  link.tapBuf[7] = static_cast<uint8_t>((span > 0xFFFFu ? 0xFFFFu : span) >> 8);
+  for (uint8_t i = 0; i < 4; ++i) link.tapBuf[8 + i] = static_cast<uint8_t>(link.tapSkippedBits >> (8 * i));
+  sendToSensor(link, link.tapBuf, link.tapUsed);
+  tapReset(link, IOC_PANEL_FR_LIVE);
+}
+
+struct SnapshotSink {
+  Link* link;
+  uint8_t flags;
+  size_t used;
+  uint8_t buf[IOC_PANEL_DATAGRAM_MAX];
+};
+
+void snapshotBegin(SnapshotSink& sink) {
+  ioc_panel_frames_hdr hdr = {sink.flags, sink.link->tapSeq++, 0, 0, 0};
+  sink.used = ioc_panel_frames_begin(sink.buf, sizeof(sink.buf), &hdr);
+}
+
+void snapshotEmit(void* ctx, const ioc_panel_frame* frame) {
+  SnapshotSink& sink = *static_cast<SnapshotSink*>(ctx);
+  size_t next = ioc_panel_frames_add(sink.buf, sizeof(sink.buf), sink.used, frame);
+  if (next == 0) {
+    sendToSensor(*sink.link, sink.buf, sink.used);
+    snapshotBegin(sink);
+    next = ioc_panel_frames_add(sink.buf, sizeof(sink.buf), sink.used, frame);
+  }
+  if (next) sink.used = next;
+}
+
+void panelSendSnapshot(Link& link) {
+  static SnapshotSink sink;
+  sink.link = &link;
+  sink.flags = IOC_PANEL_FR_SNAPSHOT;
+  snapshotBegin(sink);
+  ioc_pcache_snapshot(&panelCache, millis(), snapshotEmit, &sink);
+  if (ioc_panel_frames_count(sink.buf) > 0) {
+    sendToSensor(link, sink.buf, sink.used);
+    sink.flags = IOC_PANEL_FR_MAILBOX;
+    snapshotBegin(sink);
+  } else {
+    sink.flags = IOC_PANEL_FR_MAILBOX;
+    ioc_panel_frames_set_flags(sink.buf, sink.flags);
+  }
+  ioc_pcache_mailbox_drain(&panelCache, millis(), snapshotEmit, &sink);
+  ioc_panel_frames_set_flags(sink.buf, static_cast<uint8_t>(sink.flags | IOC_PANEL_FR_END));
+  sendToSensor(link, sink.buf, sink.used);
+}
+
+void panelToCan(const Link& link, uint8_t type, const uint8_t* body, size_t len) {
+  uint8_t raw[IOC_WD_MAX_PAYLOAD];
+  if (len + 1 > sizeof(raw)) return;
+  raw[0] = type;
+  memcpy(raw + 1, body, len);
+  queueTransfer(link.childId, IOC_WD_KIND_PANEL, raw, len + 1);
+}
+
+void handlePanelPayload(Link& link, uint8_t cmd, const uint8_t* body, size_t len, const uint8_t* inner, size_t innerLen) {
+  const uint32_t now = millis();
+  if (!isPanel(link)) return;
+  if (cmd == IOC_PANEL_CMD_HELLO) {
+    ioc_panel_hello hello;
+    if (!ioc_panel_hello_decode(inner, innerLen, &hello)) return;
+    link.panelSleepS = hello.sleep_s;
+    link.panelAsleep = false;
+    tapReset(link, IOC_PANEL_FR_LIVE);
+    if (hello.flags & IOC_PANEL_HELLO_SNAPSHOT) panelSendSnapshot(link);
+    link.panelSubscribed = true;
+    link.panelEverSubscribed = true;
+    tapReset(link, IOC_PANEL_FR_LIVE);
+    updatePanelMailbox();
+    Serial.printf("[NODE %u] [PANEL] child=%u retrato enviado sleep_s=%u\n", NODE_ID,
+                  static_cast<unsigned>(link.childId), static_cast<unsigned>(hello.sleep_s));
+    return;
+  }
+  if (cmd == IOC_PANEL_CMD_STATUS) {
+    ioc_panel_status st;
+    if (!ioc_panel_status_decode_body(body, len, &st)) return;
+    if (st.flags & (IOC_PANEL_ST_SLEEP | IOC_PANEL_ST_POWER_OFF)) {
+      link.panelAsleep = true;
+      link.panelSleepS = st.sleep_s;
+      link.panelPresentUntilMs = now + ((st.flags & IOC_PANEL_ST_POWER_OFF) ? PANEL_OFF_LEASE_MS
+                                                                           : st.sleep_s * 1000UL + PANEL_SLEEP_MARGIN_MS);
+      link.panelSubscribed = false;  // o tap para; a caixa postal abre
+      updatePanelMailbox();
+    }
+    panelToCan(link, IOC_PANEL_CMD_STATUS, body, IOC_PANEL_STATUS_BODY);
+    return;
+  }
+  if (cmd == IOC_PANEL_CMD_MARK) {
+    ioc_panel_mark mark;
+    if (!ioc_panel_mark_decode_body(body, len, &mark)) return;
+    panelToCan(link, IOC_PANEL_CMD_MARK, body, IOC_PANEL_MARK_FIXED + mark.text_len);
+    uint8_t ack[3 + IOC_PANEL_MARK_ACK_BODY];
+    const uint8_t seq[IOC_PANEL_MARK_ACK_BODY] = {static_cast<uint8_t>(mark.seq), static_cast<uint8_t>(mark.seq >> 8)};
+    const size_t n = ioc_panel_msg(IOC_PANEL_CMD_MARK_ACK, seq, sizeof(seq), ack, sizeof(ack));
+    sendToSensor(link, ack, n);
+  }
+}
+
+void tapFrame(const CANMessage& msg, bool own) {
+  ioc_pcache_on_frame(&panelCache, static_cast<uint16_t>(msg.id), msg.data, msg.len, own ? 1 : 0, millis());
+  const bool live = ioc_pcache_forward_live(static_cast<uint16_t>(msg.id), msg.data, msg.len) != 0;
+  for (uint8_t i = 0; i < MAX_LINKS; ++i) {
+    Link& link = links[i];
+    if (!link.used || !link.secure || !link.panelSubscribed) continue;
+    if (!live) {
+      link.tapSkippedBits += ioc_can_frame_bits(static_cast<uint16_t>(msg.id), msg.len, msg.data);
+      continue;
+    }
+    ioc_panel_frame frame;
+    frame.age_ms = 0;
+    frame.id = static_cast<uint16_t>(msg.id);
+    frame.own = own ? 1 : 0;
+    frame.len = msg.len > 8 ? 8 : msg.len;
+    memcpy(frame.data, msg.data, frame.len);
+    size_t next = ioc_panel_frames_add(link.tapBuf, sizeof(link.tapBuf), link.tapUsed, &frame);
+    if (next == 0) {
+      tapFlush(link, true);
+      next = ioc_panel_frames_add(link.tapBuf, sizeof(link.tapBuf), link.tapUsed, &frame);
+    }
+    if (next) link.tapUsed = next;
+  }
+}
+
 void handleSensorPayload(Link& link, const uint8_t* inner, size_t len) {
   if (len < 3) return;
   uint16_t magic;
   memcpy(&magic, inner, 2);
   if (magic != NET_MAGIC_HEADER) return;
+
+  const uint8_t* panelBody = nullptr;
+  size_t panelLen = 0;
+  const uint8_t panelCmd = ioc_panel_msg_parse(inner, len, &panelBody, &panelLen);
+  if (panelCmd) {
+    handlePanelPayload(link, panelCmd, panelBody, panelLen, inner, len);
+    return;
+  }
 
   switch (inner[2]) {
     case CMD_TELEMETRY_STREAM:
@@ -1081,7 +1267,9 @@ void promotePending(Link& link, const IPAddress& ip, uint16_t port, uint32_t cou
   link.stagedMismatch = false;
   // O sensor envia o menu de configuração após o CONFIRM, mas um datagrama
   // UDP pode se perder; o pedido explícito cobre esse caso.
-  sendSimpleCommand(link, CMD_GET_CONFIG_MENU);
+  link.panelSubscribed = false;
+  link.panelAsleep = false;
+  if (!isPanel(link)) sendSimpleCommand(link, CMD_GET_CONFIG_MENU);
   Serial.printf("[NODE %u] [WLINK] child=%u uuid=0x%016llX SECURE\n", NODE_ID,
                 static_cast<unsigned>(link.childId), static_cast<unsigned long long>(link.uuid));
   publishLink(link, true);
@@ -1184,11 +1372,16 @@ void maintainLinks() {
       link.pending.active = false;
     }
 
+    if (link.panelAsleep && !link.secure && static_cast<int32_t>(now - link.panelPresentUntilMs) > 0) {
+      link.panelAsleep = false;  // não voltou no prazo declarado: segue a presença normal
+      publishLink(link, true);
+    }
     if (link.secure) {
       if (now - link.lastRxMs > SESSION_TIMEOUT_MS) {
-        Serial.printf("[NODE %u] [WLINK] child=%u sessao expirada\n", NODE_ID,
-                      static_cast<unsigned>(link.childId));
+        Serial.printf("[NODE %u] [WLINK] child=%u sessao %s\n", NODE_ID,
+                      static_cast<unsigned>(link.childId), link.panelAsleep ? "encerrada (painel dormindo)" : "expirada");
         dropSession(link);
+        updatePanelMailbox();
         publishLink(link, true);
       } else if (now - link.lastPingMs >= PING_INTERVAL_MS) {
         sendPing(link);
@@ -1291,6 +1484,10 @@ void handleDataCommand(const ioc_wd_command& cmd) {
     return;
   }
 
+  if (isPanel(*link)) {
+    publishAck(link->childId, cmd.seq, cmd.opcode, IOC_WD_ACK_REJECTED, ACK_DETAIL_PROFILE_MISMATCH);
+    return;
+  }
   if (!link->secure) {
     publishAck(link->childId, cmd.seq, cmd.opcode, IOC_WD_ACK_NO_LINK, 0);
     return;
@@ -1445,6 +1642,7 @@ const char* linkStateName(uint8_t state) {
     case IOC_WD_LINK_HANDSHAKE: return "HANDSHAKE";
     case IOC_WD_LINK_SECURE: return "SECURE";
     case IOC_WD_LINK_NO_KEY: return "NO_KEY";
+    case IOC_WD_LINK_SLEEPING: return "SLEEPING";
     default: return "UNKNOWN";
   }
 }
@@ -1655,9 +1853,41 @@ void probePrintAck(uint8_t node, uint8_t child, const ioc_wd_ack& ack) {
   }
 }
 
+void probePrintPanel(uint8_t node, uint8_t child, const uint8_t* data, size_t len) {
+  if (len < 1) return;
+  static char line[420];
+  LineBuilder out{line, sizeof(line), 0};
+  if (data[0] == IOC_PANEL_CMD_STATUS) {
+    ioc_panel_status st;
+    if (!ioc_panel_status_decode_body(data + 1, len - 1, &st)) return;
+    const char* state = (st.flags & IOC_PANEL_ST_POWER_OFF) ? "OFF" : (st.flags & IOC_PANEL_ST_SLEEP) ? "SLEEP" : "AWAKE";
+    out.add("PANEL NODE=%u CHILD=%u TYPE=STATUS STATE=%s SUPPLY=%s SLEEP_S=%u LEVEL=%u PAGE=0x%08lX PAGE_SEQ=%u "
+            "REFRESHES=%u UPTIME_S=%lu CLOCK=%s KEYBOARD=%s",
+            node, child, state, (st.flags & IOC_PANEL_ST_USB) ? "USB" : "BATTERY", st.sleep_s, st.severity,
+            static_cast<unsigned long>(st.page_hash), st.page_seq, st.refreshes, static_cast<unsigned long>(st.uptime_s),
+            yesNo(st.flags & IOC_PANEL_ST_CLOCK), yesNo(st.flags & IOC_PANEL_ST_KEYBOARD));
+    if (st.flags & IOC_PANEL_ST_ALERT) out.add(" ALERT=UNACKED");
+    if (st.battery_pct != 255) out.add(" BAT_PCT=%u BAT_MV=%u", st.battery_pct, st.battery_mv);
+    if (st.temp_c10 != IOC_PANEL_NA_I16) out.add(" TEMP_C=%.1f", static_cast<double>(st.temp_c10) / 10.0);
+    if (st.rh_10 != IOC_PANEL_NA_U16) out.add(" RH_PCT=%.1f", static_cast<double>(st.rh_10) / 10.0);
+  } else if (data[0] == IOC_PANEL_CMD_MARK) {
+    ioc_panel_mark mark;
+    if (!ioc_panel_mark_decode_body(data + 1, len - 1, &mark)) return;
+    out.add("PANEL NODE=%u CHILD=%u TYPE=MARK SEQ=%u KIND=%s STEP=%u AGE_MS=%lu TEXT_HEX=", node, child, mark.seq,
+            ioc_panel_mark_kind_name(mark.kind), mark.step, static_cast<unsigned long>(mark.age_ms));
+    for (uint8_t i = 0; i < mark.text_len; ++i) out.add("%02X", static_cast<unsigned>(static_cast<uint8_t>(mark.text[i])));
+  } else {
+    return;
+  }
+  Serial.println(line);
+}
+
 void probeHandleTransfer(uint8_t node, const ioc_wd_rx_slot& slot) {
   const uint8_t child = slot.child;
   switch (slot.kind) {
+    case IOC_WD_KIND_PANEL:
+      probePrintPanel(node, child, slot.data, slot.total_len);
+      break;
     case IOC_WD_KIND_TELEMETRY: {
       ioc_wd_telemetry t;
       if (ioc_wd_telemetry_decode(slot.data, slot.total_len, &t)) probePrintTelemetry(node, child, t);
@@ -1764,7 +1994,7 @@ uint8_t probeSendCommand(uint8_t node, uint8_t child, uint8_t opcode, const uint
   msg.id = CAN_ID_WIRELESS_DATA_CMD;
   msg.len = IOC_WD_FRAME_LEN;
   ioc_wd_command_encode(&cmd, msg.data);
-  if (can.tryToSend(msg)) netMetricsOnTransmit(msg);
+  if (canSend(msg)) netMetricsOnTransmit(msg);
   return cmd.seq;
 }
 
@@ -1949,6 +2179,7 @@ void wirelessLinkInit() {
     return;
   }
 
+  ioc_pcache_init(&panelCache);
   haveKey = ioc_link_hex_to_key(IOT_LINK_MASTER_KEY_HEX, masterKey) && !ioc_link_key_is_zero(masterKey);
   if (haveKey) {
     ioc_link_derive_network_key(masterKey, networkKey);
@@ -1997,6 +2228,7 @@ void wirelessLinkOnUnbound(uint64_t uuid, uint8_t childId) {
   ioc_secure_zero(link->devKey, sizeof(link->devKey));
   ioc_secure_zero(link->sessionKey, sizeof(link->sessionKey));
   *link = Link{};
+  updatePanelMailbox();
 
   ioc_wd_link report;
   memset(&report, 0, sizeof(report));
@@ -2014,6 +2246,25 @@ void wirelessLinkOnUnbound(uint64_t uuid, uint8_t childId) {
     apStopPending = true;
     apStopAtMs = millis() + AP_STOP_DELAY_MS;
   }
+}
+
+bool wirelessLinkIsPresent(uint64_t uuid) {
+  if (NODE_ID == 0) return false;
+  const Link* link = findLinkByUuid(uuid);
+  if (!link) return false;
+  if (link->secure) return true;
+  return isPanel(*link) && link->panelAsleep && static_cast<int32_t>(millis() - link->panelPresentUntilMs) <= 0;
+}
+
+void wirelessLinkTap(const CANMessage& msg, bool own) {
+  if (NODE_ID == 0) return;
+  tapFrame(msg, own);
+}
+
+bool canSend(const CANMessage& msg) {
+  if (!can.tryToSend(msg)) return false;
+  wirelessLinkTap(msg, true);
+  return true;
 }
 
 bool wirelessLinkIsSecure(uint64_t uuid) {
@@ -2082,6 +2333,9 @@ void wirelessLinkPoll() {
   printStationEvents();
   receiveDatagrams();
   maintainLinks();
+  for (uint8_t i = 0; i < MAX_LINKS; ++i) {
+    if (links[i].used) tapFlush(links[i], false);
+  }
   updateOfferAdvertising();
   drainTxQueue();
   if (apStopPending && static_cast<int32_t>(millis() - apStopAtMs) >= 0) {

@@ -108,7 +108,7 @@ def build_command(payload: dict[str, Any]) -> str:
         verb=op[7:]
         uuid=check_uuid(payload.get('uuid'))
         if verb=='add':
-            return f'SENSOR ADD {uuid} {enum(payload.get("profile"),{"VIBRATION","ACOUSTIC"},"Perfil")}'
+            return f'SENSOR ADD {uuid} {enum(payload.get("profile"),{"VIBRATION","ACOUSTIC","PANEL"},"Perfil")}'
         if verb=='remove':
             return f'SENSOR REMOVE {uuid}'
         if verb=='power':
@@ -123,6 +123,22 @@ def build_command(payload: dict[str, Any]) -> str:
             return f'SENSOR LINK {uuid} {node} LOSS {num(payload.get("pct"),0,100,"Perda")}'
         if verb=='machine':
             return f'SENSOR FAULT {uuid} MACHINE {enum(payload.get("state"),{"ON","OFF"},"Falha")}'
+    if isinstance(op,str) and op.startswith('panel.'):
+        verb=op[6:]
+        uuid=check_uuid(payload.get('uuid'))
+        if verb=='page':
+            return f'PANEL PAGE {uuid}'
+        if verb=='key':
+            return f'PANEL KEY {uuid} {num(payload.get("code"),1,255,"Tecla")}'
+        if verb=='button':
+            return f'PANEL BUTTON {uuid} {enum(payload.get("button"),{"A","B","C","P","PP","H"},"Botão")}'
+        if verb=='battery':
+            return f'PANEL BATTERY {uuid} {enum(payload.get("state"),{"ON","OFF"},"Bateria")}'
+        if verb=='note':
+            text=str(payload.get('text','')).strip()
+            if not text or len(text)>96 or any(ord(c)<32 or ord(c)>126 or c==';' for c in text):
+                raise ValueError('Nota: 1 a 96 caracteres ASCII imprimíveis, sem ";" (o CardKB só tem ASCII)')
+            return f'PANEL NOTE {uuid} {text}'
     if op in ('probe.bind','probe.unbind','probe.policy'):
         uuid=check_uuid(payload.get('uuid'))
         node=num(payload.get('node'),1,31,'Node ID')
@@ -133,6 +149,31 @@ def build_command(payload: dict[str, Any]) -> str:
             return f'PROBE WIRELESS UNBIND {node} {uuid}'
         return f'PROBE WIRELESS POLICY {node} {uuid} '+enum(payload.get('policy'),{'AUTO','MANUAL'},'Política')
     raise ValueError('Operação não permitida nesta versão do Studio')
+
+
+def parse_panel_page(output: str) -> dict[str, Any]:
+    """Resposta de PANEL PAGE: estado do painel e a lista de desenho decodificada."""
+    line=next((item for item in output.splitlines() if item.startswith('#CTRL OK PANEL PAGE ')),None)
+    if line is None:
+        raise RuntimeError('Resposta PANEL PAGE ausente')
+    head,_,dl=line.partition(' dl=')
+    f=parse_fields(head)
+    items=[]
+    for raw in filter(None,dl.split('|')):
+        parts=raw.split(',',8)
+        if len(parts)!=9:
+            continue
+        op,ink,size,flags,x,y,w,h=(int(v) for v in parts[:8])
+        text=bytes.fromhex(parts[8]).decode('utf-8',errors='replace') if parts[8] else ''
+        items.append({'op':op,'ink':ink,'size':size,'flags':flags,'x':x,'y':y,'w':w,'h':h,'text':text})
+    return {'uuid':f.get('uuid','').upper().replace('0X','0x'),'source':f.get('source','OFF'),
+            'powered':f.get('powered')=='1','hash':f.get('hash',''),'level':int(f.get('level','0')),
+            'renders':int(f.get('renders','0')),'beeps':int(f.get('beeps','0')),'session':f.get('session')=='1',
+            'node':int(f.get('node','0')),'child':int(f.get('child','0')),'battery':f.get('battery')=='1',
+            'leds':[led if re.fullmatch(r'[0-9A-Fa-f]{6}',led) else '000000'
+                    for led in (f.get('leds','000000,000000').split(',')+['000000','000000'])[:2]],
+            'unacked':f.get('unacked')=='1','alerts':int(f.get('alerts','0')),'acks':int(f.get('acks','0')),
+            'off':f.get('off')=='1','items':items}
 
 
 def validate_native_command(command: str) -> str:
@@ -166,6 +207,11 @@ def validate_native_command(command: str) -> str:
             return build_command({'type':'sensor.loss','uuid':p[2],'node':p[3],'pct':p[5]})
         if len(p)==5 and upper[1]=='FAULT' and upper[3]=='MACHINE':
             return build_command({'type':'sensor.machine','uuid':p[2],'state':p[4]})
+    if len(p)>=4 and upper[0]=='PANEL' and upper[1] in ('KEY','BUTTON','BATTERY','NOTE'):
+        field={'KEY':'code','BUTTON':'button','BATTERY':'state','NOTE':'text'}[upper[1]]
+        value=' '.join(p[3:]) if upper[1]=='NOTE' else (p[3] if len(p)==4 else None)
+        if value is None: raise ValueError('Comando PANEL com argumentos demais')
+        return build_command({'type':'panel.'+upper[1].lower(),'uuid':p[2],field:value})
     if len(p) in (5,6) and upper[:3]==['PROBE','WIRELESS','BIND']:
         if len(p)==6 and upper[5]!='AUTO': raise ValueError('Política inválida')
         return build_command({'type':'probe.bind','node':p[3],'uuid':p[4],

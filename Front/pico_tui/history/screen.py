@@ -20,7 +20,7 @@ from pico_tui.history.storage import HistoryEvent, Session
 from pico_tui.screens import BaseScreen, section
 from pico_tui.widgets import StableOptionList
 
-LANES = ("NETWORK", "CAN", "WIRELESS", "SENSOR", "SYSTEM", "CAPTURA")
+LANES = ("NETWORK", "CAN", "WIRELESS", "SENSOR", "OPERATOR", "SYSTEM", "CAPTURA")
 COLORS = {"INFO": palette.STATE_INFO, "WARNING": palette.STATE_WARNING,
           "CRITICAL": palette.STATE_CRITICAL}
 ZOOMS = (60, 300, 900, 1800, 7200, 21600, 86400, 604800)
@@ -43,6 +43,8 @@ class HistoryScreen(BaseScreen):
         Binding("u", "reload", "Atualizar sessões", show=False),
         Binding("comma", "previous_evidence", "Arquivos anteriores", show=False),
         Binding("period", "next_evidence", "Mais arquivos", show=False),
+        Binding("m", "next_mark", "Próxima marca do operador", show=False),
+        Binding("M", "previous_mark", "Marca anterior do operador", show=False),
     ]
 
     def __init__(self) -> None:
@@ -63,7 +65,7 @@ class HistoryScreen(BaseScreen):
     def key_hints(self):
         return [("Esc", "Voltar", "screen.back"),
                 ("←/→", "Evento", None), ("PgUp/PgDn", "Intervalo", None),
-                ("+/-", "Zoom", None), (",/.", "Arquivos", None),
+                ("+/-", "Zoom", None), (",/.", "Arquivos", None), ("m/M", "Marcas", None),
                 ("u", "Atualizar", "screen.reload")]
 
     def compose_body(self) -> ComposeResult:
@@ -178,7 +180,7 @@ class HistoryScreen(BaseScreen):
                     continue
                 ix = max(0, min(cols-1, int((ev.epoch - self._start) / delta * (cols-1))))
                 selected = ev.id == self._selected
-                cells[ix] = "◆" if selected else "●"
+                cells[ix] = "◆" if selected else ("⚑" if category == "OPERATOR" else "●")
                 styles[ix] = palette.ACCENT_FOCUS if selected else COLORS.get(ev.severity, palette.STATE_INFO)
             graph.append(f"{category:<9} ", style=palette.TEXT_MUTED)
             for char, style in zip(cells, styles):
@@ -203,6 +205,9 @@ class HistoryScreen(BaseScreen):
             detail.append(f"Node: {event.node_id:02d}\n")
         if event.sensor_id:
             detail.append(f"Sensor lógico: {event.sensor_id}\n")
+        if event.details.get("tags"):
+            detail.append("Etiquetas: " + " ".join("#" + t for t in event.details["tags"]) + "\n",
+                          style=palette.ACCENT_ACTION)
         snapshot = event.details.get("bus_at_observation")
         if snapshot:
             detail.append("\nRede na observação\n", style=f"bold {palette.TEXT_PRIMARY}")
@@ -322,6 +327,37 @@ class HistoryScreen(BaseScreen):
         self.query_one("#history-events", StableOptionList).highlighted = min(len(ids) - 1, pos + 1)
         self._draw_timeline()
         self._show_details()
+
+    def _jump_mark(self, forward: bool) -> None:
+        """Vai à marca do operador seguinte/anterior na sessão inteira, centrando a janela nela."""
+        if self._session is None or self.tui.history is None:
+            return
+        current = next((e for e in self._events if e.id == self._selected), None)
+        if current is not None:
+            epoch, ident = current.epoch, current.id
+        else:
+            epoch, ident = (self._start, -1) if forward else (self._end, 1 << 62)
+        target = self.tui.history.store.adjacent_event(self._session.id, epoch, ident,
+                                                       category="OPERATOR", forward=forward)
+        if target is None:
+            self.notify("Não há mais marcas do operador nesta direção.", timeout=3)
+            return
+        duration = ZOOMS[self._zoom]
+        max_end = self._session.ended_epoch or time.time()
+        self._end = min(max_end, max(self._session.started_epoch + 1, target.epoch + duration / 2))
+        self._start = max(self._session.started_epoch, self._end - duration)
+        self._selected = target.id
+        self._file_page = 0
+        self._load_events()
+        ids = [e.id for e in self._events]
+        if target.id in ids:
+            self.query_one("#history-events", StableOptionList).highlighted = ids.index(target.id)
+
+    def action_next_mark(self) -> None:
+        self._jump_mark(True)
+
+    def action_previous_mark(self) -> None:
+        self._jump_mark(False)
 
     def _pan(self, direction: int) -> None:
         if self._session is None:

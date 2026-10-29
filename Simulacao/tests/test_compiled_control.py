@@ -108,6 +108,11 @@ Sensor& addSensor(uint64_t uuid,uint16_t port,uint8_t ip) {
 }
 int g_failures=0;
 #include "sim_interactive.inc"
+const char* simProfileName(const Sensor& s) { return s.profile==PROFILE_ACOUSTIC_MEMS?"ACOUSTIC":"VIBRATION"; }
+void simPanelAdded(Sensor&) {}
+bool simPanelSource(Sensor&, bool) { return false; }
+bool simPanelPower(Sensor&, bool) { return false; }
+void simPanelControl(std::istringstream&) { throw std::runtime_error("painel indisponivel neste teste"); }
 }
 int main() {
     g_nodes.push_back(Node{});

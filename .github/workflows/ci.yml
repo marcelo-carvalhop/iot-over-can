@@ -74,3 +74,20 @@ jobs:
         run: ./Codigo/scripts/build_esp32_can_node.sh 1
       - name: Build Probe 00
         run: ./Codigo/scripts/build_esp32_can_node.sh 0
+
+  paper-firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install PlatformIO
+        run: python -m pip install platformio
+      - name: Build PaperColor panel (sem chave, somente USB com a bancada virtual)
+        run: ./Codigo/scripts/build_paper.sh
+      - name: Build PaperColor panel (chave de bancada fictícia, Wi-Fi e BLE)
+        working-directory: Codigo/node-paper
+        env:
+          IOT_PANEL_MASTER_KEY: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+        run: pio run

@@ -44,7 +44,8 @@ typedef enum {
     IOC_WD_KIND_DTC       = 4,
     IOC_WD_KIND_LINK      = 5,
     IOC_WD_KIND_CONFIG    = 6,
-    IOC_WD_KIND_ACOUSTIC  = 7   /* relatório do sensor acústico (v0.19) */
+    IOC_WD_KIND_ACOUSTIC  = 7,  /* relatório do sensor acústico (v0.19) */
+    IOC_WD_KIND_PANEL     = 8   /* STATUS e MARK do painel em papel eletrônico (v0.20) */
 } ioc_wd_kind;
 
 uint8_t ioc_wd_crc8(const uint8_t *data, size_t len);
@@ -261,7 +262,8 @@ typedef enum {
     IOC_WD_LINK_OFFERING  = 1, /* Node anunciando a oferta BLE */
     IOC_WD_LINK_HANDSHAKE = 2, /* sensor entrou no AP; autenticação em curso */
     IOC_WD_LINK_SECURE    = 3, /* sessão autenticada ativa */
-    IOC_WD_LINK_NO_KEY    = 4  /* Node sem chave de enlace provisionada */
+    IOC_WD_LINK_NO_KEY    = 4, /* Node sem chave de enlace provisionada */
+    IOC_WD_LINK_SLEEPING  = 5  /* painel dormindo por intervalo declarado (sem sessão, presente) */
 } ioc_wd_link_state;
 
 typedef struct {

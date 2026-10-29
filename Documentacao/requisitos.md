@@ -40,7 +40,7 @@
 | Modos acústicos LEVEL (nível e exposição), MACHINE (tacômetro e anomalia) e EVENTS (eventos sonoros) | Implementado; verificado com sinais sintéticos no computador |
 | Telemetria, espectro, configuração e comandos acústicos através do Node CAN | Implementado; verificado na simulação e na bancada virtual |
 | Análises acústicas na TUI (NR-15, NHO-01, curva NC, conversa, tacômetro, eventos, calibração) | Implementado |
-| Painel em papel eletrônico | Pendente |
+| Painel em papel eletrônico (M5Stack PaperColor, perfil 0x04) | Implementado; firmware compilado na integração contínua, verificado na bancada virtual e pela ponte USB; validação em bancada física pendente |
 
 ## Requisitos da interface
 

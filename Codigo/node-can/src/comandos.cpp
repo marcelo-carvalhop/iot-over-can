@@ -55,7 +55,7 @@ static void sendControlFrame(uint8_t subcmd,
   msg.data[2] = targetId;
   msg.data[3] = action;
 
-  if (can.tryToSend(msg)) netMetricsOnTransmit(msg);
+  if (canSend(msg)) netMetricsOnTransmit(msg);
 }
 
 static void sendCommandAck(uint8_t originalSubcmd, uint8_t action, uint8_t result) {
@@ -68,7 +68,7 @@ static void sendCommandAck(uint8_t originalSubcmd, uint8_t action, uint8_t resul
   ack.data[3] = originalSubcmd;
   ack.data[4] = action;
   ack.data[5] = result;
-  if (can.tryToSend(ack)) netMetricsOnTransmit(ack);
+  if (canSend(ack)) netMetricsOnTransmit(ack);
 }
 
 static void printHexByte(uint8_t value) {

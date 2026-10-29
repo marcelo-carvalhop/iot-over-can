@@ -117,6 +117,7 @@ DATA_LINK_LABELS = {
     "HANDSHAKE": "autenticação em andamento",
     "SECURE": "sessão autenticada ativa",
     "NO_KEY": "módulo sem chave de enlace",
+    "SLEEPING": "painel dormindo até a próxima verificação",
 }
 
 
@@ -356,6 +357,7 @@ _ROLE_LABELS = {"LEADER": "Líder", "FOLLOWER": "Seguidor", "GATEWAY": "Gateway"
 _PROFILE_LABELS = {
     "VIBRATION": "Vibração",
     "ACOUSTIC": "Acústico",
+    "PANEL": "Painel em papel eletrônico",
     "DEMO_BYTE": "Byte de demonstração",
     "NONE": "Nenhum",
     "": "Perfil não informado",

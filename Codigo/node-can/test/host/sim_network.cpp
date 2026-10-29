@@ -35,6 +35,8 @@
 #include <utility>
 
 #include "sim_prelude.h"
+#include "panel_app.h"
+#include <memory>
 
 #ifndef IOT_LINK_MASTER_KEY_HEX
 #error "IOT_LINK_MASTER_KEY_HEX precisa ser definido (chave de teste)"
@@ -305,8 +307,42 @@ bool simRadioDrop(uint64_t uuid,uint8_t id) {
   return it!=g_radio_loss_pct.end() && it->second>0 && sim_random32()%100u<it->second;
 }
 
+class SimPanelHal;
+struct Sensor;
+void panelStep(Sensor& s);
+void panelDatagram(Sensor& s, const ::SimDatagram& d);
+
+// Painel em papel eletrônico (perfil 0x04). Virtual: o PanelApp do firmware
+// roda aqui, com um PanelHal simulado. USB: o PaperColor físico está do outro
+// lado da ponte (Simulacao/usb_panel_bridge.py); a bancada só leva ofertas e
+// datagramas, e mantém um espelho da página para o Studio.
+struct PanelState {
+  std::shared_ptr<PanelApp> app;
+  std::shared_ptr<SimPanelHal> hal;
+  std::map<std::string, std::string> store;
+  bool usb = false;
+  bool battery = false;          // dorme entre verificações (somente virtual)
+  uint64_t wakeAtUs = 0;
+  bool sleepRequested = false;
+  uint64_t nextLoopUs = 0;
+  uint64_t renderBusyUntilUs = 0;
+  uint32_t renders = 0;
+  uint32_t beeps = 0;               // bipes de alerta (1, 2 ou 3 por anúncio)
+  uint32_t tones = 0;               // todas as notas
+  uint32_t leds[2] = {0, 0};
+  std::shared_ptr<ioc_dl> paper;    // o que está no papel, mesmo desligado
+  int64_t clockOffset = 0;
+  std::vector<std::string> outbox;  // linhas para a ponte USB
+  std::map<uint8_t, std::string> lastOffer;
+  int lastLink = -1;
+  std::shared_ptr<ioc_view> mirror;
+  uint8_t mirrorNode = 0;
+  uint8_t mirrorChild = 0;
+};
+
 struct Sensor {
   enum class Mode { Idle, Discovery, Bound };
+  PanelState panel;
 
   uint64_t uuid = 0;
   uint8_t profile = PROFILE_ACCELEROMETER;
@@ -691,6 +727,7 @@ struct Sensor {
   }
 
   void onDatagram(const ::SimDatagram& d) {
+    if (profile == IOC_PANEL_PROFILE) { panelDatagram(*this, d); return; }
     ioc_env_view view;
     if (!ioc_env_parse(d.data.data(), d.data.size(), &view)) return;
 
@@ -767,6 +804,7 @@ struct Sensor {
   }
 
   void step() {
+    if (profile == IOC_PANEL_PROFILE) { panelStep(*this); return; }
     if (!poweredOn) return;
 
     // Anúncio de presença, ouvido pelos Nodes ao alcance.
@@ -855,6 +893,279 @@ void routeWifi() {
       }
     }
   }
+}
+
+
+/* ------------------------------------------------------- painel (perfil 0x04) */
+
+constexpr int64_t SIM_EPOCH = 1793000000;  // 2026-10-26, relógio fictício da bancada
+
+Sensor* panelSensor(uint64_t uuid) {
+  for (Sensor& s : g_sensors) if (s.uuid == uuid) return &s;
+  return nullptr;
+}
+
+std::string toHex(const uint8_t* data, size_t len) {
+  static const char hex[] = "0123456789abcdef";
+  std::string out;
+  out.reserve(len * 2);
+  for (size_t i = 0; i < len; ++i) { out += hex[data[i] >> 4]; out += hex[data[i] & 15]; }
+  return out;
+}
+
+class SimPanelHal : public PanelHal {
+ public:
+  explicit SimPanelHal(uint64_t uuid) : uuid_(uuid) {}
+  Sensor& s() { return *panelSensor(uuid_); }
+  uint32_t millis() override { return nowMs(); }
+  int64_t epochNow() override { return SIM_EPOCH + s().panel.clockOffset + static_cast<int64_t>(nowMs() / 1000u); }
+  bool clockValid() override { return true; }
+  void setClock(int64_t epoch) override { s().panel.clockOffset = epoch - SIM_EPOCH - static_cast<int64_t>(nowMs() / 1000u); }
+  void joinNode(uint8_t node) override {
+    Sensor& x = s();
+    x.parent = node;
+    x.wifiReadyUs = g_now_us + static_cast<uint64_t>(WIFI_JOIN_MS) * 1000u;
+    x.mode = Sensor::Mode::Discovery;
+  }
+  void leaveNode() override { s().parent = 0; s().mode = Sensor::Mode::Idle; }
+  bool linkUp() override { return s().linkUp(); }
+  bool sendDatagram(const uint8_t* data, size_t len) override {
+    Sensor& x = s();
+    if (!x.linkUp()) return false;
+    ::SimDatagram d;
+    d.data.assign(data, data + len);
+    memcpy(d.ip, x.ip, 4);
+    d.port = x.port;
+    if (!simRadioDrop(x.uuid, x.parent)) node(x.parent).inst->udpDeliver(d);
+    return true;
+  }
+  // O papel leva cerca de 20 s; o enlace precisa continuar respondendo.
+  void render(const ioc_dl& dl) override {
+    PanelState& p = s().panel;
+    p.renderBusyUntilUs = g_now_us + 20000000u;
+    p.renders++;
+    if (!p.paper) p.paper = std::make_shared<ioc_dl>();
+    memcpy(p.paper.get(), &dl, sizeof(dl));
+    // Depuração: IOC_DUMP_PAPER=<dir> grava cada página desenhada (lista serializada).
+    if (const char* dir = getenv("IOC_DUMP_PAPER")) {
+      static char text[24000];
+      ioc_dl_serialize(&dl, text, sizeof(text));
+      const std::string path = std::string(dir) + "/page_" + std::to_string(p.renders) + ".dl";
+      if (FILE* f = fopen(path.c_str(), "w")) { fputs(text, f); fclose(f); }
+    }
+  }
+  bool renderBusy() override { return g_now_us < s().panel.renderBusyUntilUs; }
+  void leds(uint32_t a, uint32_t b) override { s().panel.leds[0] = a; s().panel.leds[1] = b; }
+  void tone(uint16_t hz, uint16_t) override {
+    PanelState& p = s().panel;
+    p.tones++;
+    if (hz == TONE_ATTENTION_HZ || hz == TONE_YOU_HZ || hz == TONE_HANDLING_HZ) p.beeps++;
+  }
+  void readSensors(uint8_t& pct, uint16_t& mv, int16_t& t, uint16_t& rh, bool& usb) override {
+    pct = 80; mv = 3950; t = 235; rh = 480; usb = !s().panel.battery;
+  }
+  bool keyboardPresent() override { return true; }
+  void sleepFor(uint32_t seconds) override {
+    Sensor& x = s();
+    x.panel.sleepRequested = true;
+    x.panel.wakeAtUs = g_now_us + static_cast<uint64_t>(seconds) * 1000000u;
+    x.panel.leds[0] = x.panel.leds[1] = 0;
+  }
+  void powerOff() override {
+    PanelState& p = s().panel;
+    p.sleepRequested = true;
+    p.wakeAtUs = 0;
+    p.leds[0] = p.leds[1] = 0;
+  }
+  void storeU32(const char* key, uint32_t value) override { s().panel.store[key] = std::to_string(value); }
+  uint32_t loadU32(const char* key, uint32_t fallback) override {
+    auto& st = s().panel.store;
+    auto it = st.find(key);
+    return it == st.end() ? fallback : static_cast<uint32_t>(std::stoul(it->second));
+  }
+  void storeStr(const char* key, const char* value) override { s().panel.store[key] = value; }
+  bool loadStr(const char* key, char* out, size_t cap) override {
+    auto& st = s().panel.store;
+    auto it = st.find(key);
+    if (it == st.end() || cap == 0) return false;
+    snprintf(out, cap, "%s", it->second.c_str());
+    return true;
+  }
+  bool radioSurvey(char* out, size_t cap) override {
+    size_t n = static_cast<size_t>(snprintf(out, cap, "Pontos de acesso (modelo da bancada):\n"));
+    for (const auto& entry : s().rssi) {
+      if (n >= cap) break;
+      n += static_cast<size_t>(snprintf(out + n, cap - n, "  IOC-%02u canal %u %d dBm\n", entry.first,
+                                        ioc_link_wifi_channel(entry.first), entry.second));
+    }
+    return true;
+  }
+  void log(const char* line) override {
+    note("painel=0x%016llX %s", static_cast<unsigned long long>(uuid_), line);
+  }
+
+ private:
+  uint64_t uuid_;
+};
+
+void panelBoot(Sensor& s, bool userBoot = true) {
+  PanelState& p = s.panel;
+  p.app.reset();
+  p.sleepRequested = false;
+  p.renderBusyUntilUs = 0;
+  if (p.usb) {
+    p.mirror = std::make_shared<ioc_view>();
+    ioc_view_init(p.mirror.get(), nowMs());
+    return;
+  }
+  if (!p.hal) p.hal = std::make_shared<SimPanelHal>(s.uuid);
+  PanelConfig cfg;
+  cfg.uuid = s.uuid;
+  memcpy(cfg.devKey, s.devKey, sizeof(cfg.devKey));
+  cfg.canSleep = p.battery;
+  cfg.sleepNormalS = 60;
+  cfg.sleepAttentionS = 30;
+  cfg.userBoot = userBoot;
+  s.parent = 0;
+  s.mode = Sensor::Mode::Idle;
+  p.app = std::make_shared<PanelApp>();
+  p.app->begin(p.hal.get(), cfg);
+}
+
+void panelStep(Sensor& s) {
+  PanelState& p = s.panel;
+  if (p.sleepRequested) {  // o PanelApp pediu sono ou desligamento dentro do próprio loop
+    p.sleepRequested = false;
+    p.app.reset();
+    s.poweredOn = false;
+    s.parent = 0;
+    s.mode = Sensor::Mode::Idle;
+  }
+  if (!s.poweredOn) {
+    if (p.wakeAtUs == 0 || g_now_us < p.wakeAtUs) return;
+    p.wakeAtUs = 0;
+    s.poweredOn = true;
+    panelBoot(s, false);  // acordou pelo RTC: sem melodia de partida
+  }
+  if (!p.usb && !p.app) panelBoot(s);
+
+  if (g_now_us >= s.nextBeaconUs) {
+    s.nextBeaconUs = g_now_us + static_cast<uint64_t>(BEACON_PERIOD_MS + sim_random32() % 40u) * 1000u;
+    std::string mfg(15, '\0');
+    mfg[0] = static_cast<char>(0xFF);
+    mfg[1] = static_cast<char>(0xFF);
+    mfg[2] = 'I';
+    mfg[3] = 'C';
+    mfg[4] = 0x01;
+    mfg[5] = static_cast<char>(IOC_PANEL_PROFILE);
+    mfg[6] = static_cast<char>(NET_PROTOCOL_VERSION);
+    for (int i = 0; i < 8; ++i) mfg[7 + i] = static_cast<char>((s.uuid >> (56 - 8 * i)) & 0xFFu);
+    for (const auto& entry : s.rssi) {
+      Node* n = simTryNode(entry.first);
+      if (n && n->powered && n->inst && !simRadioDrop(s.uuid, entry.first)) n->inst->bleDeliver(mfg, entry.second);
+    }
+  }
+  if (g_now_us >= s.nextOfferScanUs) {
+    s.nextOfferScanUs = g_now_us + static_cast<uint64_t>(OFFER_SCAN_MS) * 1000u;
+    for (const auto& entry : s.rssi) {
+      Node* n = simTryNode(entry.first);
+      if (!n || !n->powered || !n->inst) continue;
+      std::string mfg;
+      if (!n->inst->bleOffer(mfg) || simRadioDrop(s.uuid, entry.first)) continue;
+      if (p.usb) {
+        // O painel físico confere a oferta com a própria chave.
+        if (p.lastOffer[entry.first] != mfg) {
+          p.lastOffer[entry.first] = mfg;
+          p.outbox.push_back("OFFER " + toHex(reinterpret_cast<const uint8_t*>(mfg.data()), mfg.size()));
+        }
+      } else if (p.app) {
+        p.app->onOffer(reinterpret_cast<const uint8_t*>(mfg.data()), mfg.size());
+      }
+    }
+  }
+  if (p.usb) {
+    const int link = s.linkUp() ? 1 : 0;
+    if (link != p.lastLink) {
+      p.lastLink = link;
+      p.outbox.push_back(std::string("LINK ") + (link ? "1" : "0"));
+    }
+    if (p.outbox.size() > 2000) p.outbox.erase(p.outbox.begin(), p.outbox.begin() + 1000);
+    return;
+  }
+  if (p.app && g_now_us >= p.nextLoopUs) {
+    p.nextLoopUs = g_now_us + 10000u;
+    p.app->loop();
+  }
+}
+
+void panelDatagram(Sensor& s, const ::SimDatagram& d) {
+  PanelState& p = s.panel;
+  if (!s.poweredOn) return;
+  if (!p.usb) {
+    if (p.app) p.app->onDatagram(d.data.data(), d.data.size());
+    return;
+  }
+  p.outbox.push_back("DOWN " + toHex(d.data.data(), d.data.size()));
+  // Espelho para o Studio: autenticado, não cifrado; a bancada lê sem a chave.
+  ioc_env_view env;
+  if (!p.mirror || !ioc_env_parse(d.data.data(), d.data.size(), &env)) return;
+  if (env.type == IOC_MSG_CHALLENGE) {
+    ioc_challenge_t ch;
+    if (ioc_challenge_decode(env.payload, env.payload_len, &ch)) {
+      p.mirrorNode = ch.node_id;
+      p.mirrorChild = ch.child_id;
+      ioc_view_set_self(p.mirror.get(), ch.node_id, ch.child_id);
+    }
+  } else if (env.type == IOC_MSG_DATA_DOWN &&
+             ioc_panel_msg_parse(env.payload, env.payload_len, nullptr, nullptr) == IOC_PANEL_CMD_FRAMES) {
+    ioc_view_batch(p.mirror.get(), env.payload, env.payload_len, nowMs());
+  }
+}
+
+/* Página que está no papel (virtual) ou a que o painel físico deveria mostrar (espelho). */
+std::string panelPage(Sensor& s, std::string& source, uint32_t& hash, uint8_t& level) {
+  static ioc_dl dl;
+  static char text[24000];
+  PanelState& p = s.panel;
+  if (!p.usb && p.paper) {
+    // O papel guarda a última página, inclusive a tela "Painel desligado".
+    source = p.app ? "VIRTUAL" : "PAPER";
+    memcpy(&dl, p.paper.get(), sizeof(dl));
+    hash = p.app ? p.app->pageHash() : ioc_dl_hash(&dl);
+    level = p.app ? p.app->level() : 0;
+  } else if (p.app) {
+    source = "VIRTUAL";
+    memcpy(&dl, &p.app->lastDrawn(), sizeof(dl));
+    hash = p.app->pageHash();
+    level = p.app->level();
+  } else if (p.mirror) {
+    source = "MIRROR";
+    ioc_view_tick(p.mirror.get(), nowMs());
+    ioc_page_ctx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.now_ms = nowMs();
+    ctx.epoch_now = SIM_EPOCH + static_cast<int64_t>(nowMs() / 1000u);
+    ctx.tz_min = -180;
+    ctx.battery_pct = 255;
+    ctx.usb_power = 1;
+    ctx.temp_c10 = IOC_PANEL_NA_I16;
+    ctx.rh_10 = IOC_PANEL_NA_U16;
+    ctx.valid_for_s = 3600;
+    ctx.serving_node = p.mirrorNode;
+    ctx.self_child = p.mirrorChild;
+    ioc_page_item items[IOC_PAGE_MAX_ITEMS];
+    const int n = ioc_page_assess(p.mirror.get(), &ctx, items, IOC_PAGE_MAX_ITEMS);
+    ioc_page_situation(&dl, p.mirror.get(), &ctx, items, n);
+    hash = ioc_dl_hash(&dl);
+    level = ioc_page_level(items, n);
+  } else {
+    source = "OFF";
+    ioc_dl_clear(&dl);
+    hash = 0;
+    level = 0;
+  }
+  ioc_dl_serialize(&dl, text, sizeof(text));
+  return text;
 }
 
 /* ------------------------------------------------------------- execução */
@@ -1517,6 +1828,191 @@ int scenarioAcousticSensor() {
   return 0;
 }
 
+
+// Painel em papel eletrônico (perfil 0x04): o PanelApp do firmware do PaperColor
+// associado ao Node 2, com o retrato, o tap ao vivo, uma nota digitada que chega
+// à Probe, o agravamento quando o Node 1 cai (com poucos redesenhos e sem perder
+// a sessão durante os 20 s de cada desenho) e o sono declarado na bateria, com a
+// caixa postal entregue ao acordar.
+const uint64_t PANEL_UUID = 0x50430000AABBCC01ull;
+bool simPanelPower(Sensor& s, bool on);
+
+int scenarioPanel() {
+  // setupBench() ja foi chamado por main().
+  formNetwork();
+  bindSensorA(true);
+  Sensor& added = addSensor(PANEL_UUID, 4250, 20);
+  added.profile = IOC_PANEL_PROFILE;
+  added.rssi[2] = -52;
+  added.rssi[3] = -61;
+  panelBoot(added);
+  Sensor* panel = panelSensor(PANEL_UUID);
+  CHECK(runUntilTrue([] { return logHas(probe(), "WIRELESS_CANDIDATE reporter=2 uuid=0x50430000AABBCC01 profile=PANEL"); }, 8000));
+  probeCommand("WIRELESS BIND 2 0x50430000AABBCC01 AUTO");
+  auto app = [&] { return panel->panel.app.get(); };
+  CHECK(runUntilTrue([&] { return app() && app()->sessionUp() && app()->snapshotReceived(); }, 20000));
+  note("painel: sessao e retrato em %u ms", nowMs());
+
+  // O painel vê a rede como o Node 2 a vê: líder, Nodes e o sensor do Node 1.
+  const ioc_view& v = app()->view();
+  CHECK(v.leader == 3);
+  uint8_t absent = 9;
+  CHECK(ioc_view_node_count(&v, &absent) == 3 && absent == 0);
+  CHECK(runUntilTrue([&] {
+    for (const ioc_view_sensor& s : app()->view().sensors) {
+      if (s.used && s.node == 1 && s.child == 1 && s.uuid == SENSOR_A && s.have_value &&
+          s.link_state == IOC_WD_LINK_SECURE) return true;
+    }
+    return false;
+  }, 5000));
+  CHECK(runUntilTrue([] { return logHas(probe(), "PANEL NODE=2 CHILD=1 TYPE=STATUS STATE=AWAKE SUPPLY=USB"); }, 3000));
+  CHECK(logHas(probe(), "[GW] WIRELESS_LINK node=2 child=1 state=SECURE"));
+  CHECK(runUntilTrue([&] { return panel->panel.renders >= 1; }, 10000));
+  CHECK(app()->level() == IOC_LEVEL_NORMAL);
+  CHECK(runUntilTrue([&] { return app()->view().load_pct > 0.0f; }, 3000));
+  // Ligado pelo operador: melodia de partida; com a rede normal na USB, LED da rede verde.
+  CHECK(panel->panel.tones >= 3 && panel->panel.beeps == 0);
+  CHECK(runUntilTrue([&] { return panel->panel.leds[0] == ledRgb(0, 24, 0); }, 3000));
+  CHECK(!app()->unacked());
+
+  // Nota no CardKB: a primeira tecla abre a marca naquele instante (LED da
+  // direita ciano); o texto termina depois, e a marca chega à Probe com a
+  // idade contada desde a primeira tecla, confirmada pelo Node.
+  app()->onKey('t');
+  CHECK(app()->composing());
+  runFor(150);  // depois do lampejo branco da tecla, ciano enquanto a nota está aberta
+  CHECK(panel->panel.leds[1] == ledRgb(0, 48, 48));
+  runFor(3000);
+  for (char c : std::string("roquei o cabo")) app()->onKey(static_cast<uint8_t>(c));
+  app()->onKey(KEY_ENTER);
+  CHECK(runUntilTrue([] { return logHas(probe(), "PANEL NODE=2 CHILD=1 TYPE=MARK SEQ=1 KIND=NOTE STEP=0"); }, 3000));
+  CHECK(logHas(probe(), "TEXT_HEX=74726F71756569206F206361626F"));
+  {
+    unsigned long age = 0;
+    for (const auto& entry : probe().log) {
+      const size_t at = entry.second.find("TYPE=MARK SEQ=1 KIND=NOTE STEP=0 AGE_MS=");
+      if (at != std::string::npos) age = strtoul(entry.second.c_str() + at + 40, nullptr, 10);
+    }
+    CHECK(age >= 3000 && age < 4000);
+    note("painel: nota com idade de %lu ms (desde a primeira tecla)", age);
+  }
+  CHECK(runUntilTrue([&] { return app()->marksPending() == 0 && app()->marksAcked() == 1; }, 5000));
+  // Botão A: intervenção física, sem texto.
+  app()->onButton('A');
+  CHECK(runUntilTrue([] { return logHas(probe(), "PANEL NODE=2 CHILD=1 TYPE=MARK SEQ=2 KIND=BUTTON"); }, 3000));
+  // Enter sem texto: só o instante; e uma nota com etiquetas.
+  app()->onKey(KEY_ENTER);
+  CHECK(runUntilTrue([] { return logHas(probe(), "PANEL NODE=2 CHILD=1 TYPE=MARK SEQ=3 KIND=FLAG"); }, 3000));
+  for (char c : std::string("#ensaio3 #cabo inicio")) app()->onKey(static_cast<uint8_t>(c));
+  app()->onKey(KEY_ENTER);
+  CHECK(runUntilTrue([] { return logHas(probe(), "PANEL NODE=2 CHILD=1 TYPE=MARK SEQ=4 KIND=NOTE"); }, 3000));
+  // Esc descarta a nota.
+  app()->onKey('x');
+  app()->onKey(KEY_ESC);
+  CHECK(!app()->composing());
+
+  // O Node 1 sai do ar: atenção imediata (LED e som), reassociação pelo líder,
+  // poucos redesenhos e a sessão preservada durante os desenhos.
+  runFor(30000);
+  const uint32_t rendersBefore = panel->panel.renders;
+  const uint32_t beepsBefore = panel->panel.beeps;
+  const uint32_t t0 = nowMs();
+  powerOff(node(1), false);
+  CHECK(runUntilTrue([&] { return app()->level() >= IOC_LEVEL_ATTENTION; }, 15000));
+  note("painel: atencao %u ms depois da queda do Node 1", nowMs() - t0);
+  // Canal rápido: 2 bipes (atenção) ou 3 (requer você), LED sem ciência.
+  CHECK(runUntilTrue([&] { return panel->panel.beeps - beepsBefore >= 2; }, 2000));
+  CHECK(app()->unacked());
+  const uint8_t alertLevel = app()->level();
+  note("painel: nivel %u, %u bipes, LEDs %06X/%06X", alertLevel, panel->panel.beeps - beepsBefore,
+       panel->panel.leds[0], panel->panel.leds[1]);
+  CHECK(runUntilTrue([] { return logHas(probe(), "TEL NODE=2 CHILD=") || logHas(probe(), "TEL NODE=3 CHILD="); }, 60000));
+  runFor(60000);
+  CHECK(app()->sessionUp());
+  CHECK(logCount(probe(), "[GW] WIRELESS_LINK node=2 child=1 state=OFFERING", t0) == 0);
+  CHECK(logHas(probe(), "TYPE=STATUS STATE=AWAKE SUPPLY=USB", t0) && logHas(probe(), "ALERT=UNACKED", t0));
+  // Sem ciência, o alerta volta (1 min em "requer você", 5 min em "atenção").
+  if (app()->level() >= IOC_LEVEL_YOU) CHECK(app()->alertsAnnounced() >= 2);
+  // Ciência: o primeiro botão cala o alerta e vira marca ACK com o tempo de reação.
+  const uint32_t ackAt = nowMs();
+  app()->onButton('B');
+  CHECK(!app()->unacked());
+  CHECK(runUntilTrue([&] { return logHas(probe(), "PANEL NODE=2 CHILD=1 TYPE=MARK SEQ=5 KIND=ACK", ackAt); }, 3000));
+  CHECK(app()->page() == PAGE_SITUATION);  // o botão B só deu ciência, não trocou de página
+  {
+    const uint32_t beepsAck = panel->panel.beeps;
+    runFor(70000);
+    CHECK(panel->panel.beeps == beepsAck);  // calado depois da ciência
+  }
+  CHECK(panel->panel.renders - rendersBefore >= 1 && panel->panel.renders - rendersBefore <= 4);
+  note("painel: %u redesenhos em %u s", panel->panel.renders - rendersBefore, (nowMs() - t0) / 1000u);
+
+  // Na bateria: verifica, declara o sono, o Node mantém o vínculo e guarda a
+  // caixa postal; o Node 1 volta enquanto o painel dorme.
+  panel->panel.battery = true;
+  panelBoot(*panel);
+  CHECK(runUntilTrue([&] { return app() && app()->sessionUp() && app()->snapshotReceived(); }, 15000));
+  const uint32_t sleepAt = nowMs();
+  CHECK(runUntilTrue([] { return logHas(probe(), "PANEL NODE=2 CHILD=1 TYPE=STATUS STATE=SLEEP SUPPLY=BATTERY SLEEP_S=30"); }, 40000));
+  CHECK(runUntilTrue([&] { return !panel->poweredOn; }, 3000));
+  CHECK(runUntilTrue([] { return logHas(probe(), "[GW] WIRELESS_LINK node=2 child=1 state=SLEEPING"); }, 15000));
+  powerOn(node(1));
+  CHECK(runUntilTrue([&] { return panel->poweredOn && app() && app()->snapshotReceived(); }, 40000));
+  CHECK(logCount(probe(), "uuid=0x50430000AABBCC01 profile=PANEL state=STALE", sleepAt) == 0);
+  CHECK(logCount(probe(), "uuid=0x50430000AABBCC01 profile=PANEL state=LOST", sleepAt) == 0);
+  bool joined = false;
+  for (uint8_t i = 0; i < app()->view().ev_count; ++i) {
+    const ioc_view_event* e = ioc_view_event_at(&app()->view(), i);
+    if (e && e->kind == IOC_VEV_JOIN && e->node == 1) joined = true;
+  }
+  CHECK(joined);  // a entrada do Node 1 veio na caixa postal
+  CHECK(runUntilTrue([] { return logCount(probe(), "PANEL NODE=2 CHILD=1 TYPE=STATUS STATE=SLEEP") >= 2; }, 60000));
+
+  // Desligar segurando o botão de energia: aviso ao Node, LEDs vermelhos
+  // durante o desenho, tela "Painel desligado" com a marca e tudo apagado.
+  panel->panel.battery = false;
+  CHECK(runUntilTrue([&] { return panel->poweredOn && app() && app()->sessionUp(); }, 90000));
+  panelBoot(*panel, false);
+  CHECK(runUntilTrue([&] { return app() && app()->sessionUp() && app()->snapshotReceived(); }, 15000));
+  runFor(2000);
+  const uint32_t offAt = nowMs();
+  app()->onPowerPressed(false);
+  app()->onPowerPressed(true);
+  runFor(800);
+  CHECK(!app()->poweringOff() && (panel->panel.leds[0] >> 16) > 0);  // vermelho crescendo
+  runFor(1000);
+  CHECK(app() && app()->poweringOff());
+  CHECK(runUntilTrue([] { return logHas(probe(), "PANEL NODE=2 CHILD=1 TYPE=STATUS STATE=OFF"); }, 3000));
+  runFor(5000);
+  CHECK(panel->poweredOn && panel->panel.leds[0] != 0 && panel->panel.leds[0] == panel->panel.leds[1]);
+  CHECK(runUntilTrue([&] { return !panel->poweredOn; }, 40000));
+  {
+    char text[8192];
+    ioc_dl_serialize(panel->panel.paper.get(), text, sizeof(text));
+    const std::string page(text);
+    auto hexOf = [](const char* t) { return toHex(reinterpret_cast<const uint8_t*>(t), strlen(t)); };
+    CHECK(page.find(hexOf("Painel desligado")) != std::string::npos);
+    CHECK(page.find(hexOf("IoT-over-")) != std::string::npos);
+    CHECK(page.find(hexOf("Para ligar: aperte o")) != std::string::npos);
+  }
+  CHECK(panel->panel.leds[0] == 0 && panel->panel.leds[1] == 0);
+  note("painel: desligado %u ms depois de segurar o botao", nowMs() - offAt);
+  runFor(10000);
+  CHECK(!panel->poweredOn);  // continua desligado
+
+  // Um toque liga: melodia, troca imediata da tela final pela de partida, e a rede depois.
+  simPanelPower(*panel, true);
+  CHECK(runUntilTrue([&] { return panel->panel.renders > 0 && app() && !app()->poweringOff(); }, 1000));
+  CHECK(runUntilTrue([&] {
+    char text[8192];
+    ioc_dl_serialize(panel->panel.paper.get(), text, sizeof(text));
+    return std::string(text).find(toHex(reinterpret_cast<const uint8_t*>("Painel ligado"), 13)) != std::string::npos;
+  }, 2000));
+  CHECK(runUntilTrue([&] { return app()->sessionUp() && app()->snapshotReceived(); }, 30000));
+  CHECK(runUntilTrue([&] { return app()->lastDrawn().count > 0 && app()->refreshes() >= 1; }, 40000));
+  return g_failures ? 1 : 0;
+}
+
 struct Scenario {
   const char* name;
   int (*run)();
@@ -1541,9 +2037,154 @@ const Scenario SCENARIOS[] = {
   {"silence_leader_with_sensor", scenarioSilenceLeaderWithSensor, "lider retoma de uma parada longa sem reassociar"},
   {"acoustic_sensor", scenarioAcousticSensor, "sensor acustico INMP441: niveis, maquina, eventos e espectro"},
   {"restart_keeps_binding", scenarioRestartKeepsBinding, "Node reinicia e retoma o vinculo gravado na NVS"},
+  {"panel_papercolor", scenarioPanel, "painel em papel eletronico: retrato, nota, queda de Node e sono na bateria"},
 };
 
 #include "sim_interactive.inc"
+
+/* ------------------------------------------- painel: controle interativo */
+
+const char* simProfileName(const Sensor& s) {
+  if (s.profile == PROFILE_ACOUSTIC_MEMS) return "ACOUSTIC";
+  if (s.profile == IOC_PANEL_PROFILE) return "PANEL";
+  return "VIBRATION";
+}
+
+void simPanelAdded(Sensor& s) {
+  s.profile = IOC_PANEL_PROFILE;
+  panelBoot(s);
+}
+
+// Painel USB: o PaperColor físico faz o enlace; a bancada só leva os datagramas.
+bool simPanelSource(Sensor& s, bool usb) {
+  if (s.profile != IOC_PANEL_PROFILE) return false;
+  s.panel.usb = usb;
+  s.panel.outbox.clear();
+  s.panel.lastOffer.clear();
+  s.panel.lastLink = -1;
+  s.parent = 0;
+  s.mode = Sensor::Mode::Idle;
+  panelBoot(s);
+  return true;
+}
+
+bool simPanelPower(Sensor& s, bool on) {
+  if (s.profile != IOC_PANEL_PROFILE) return false;
+  s.panel.app.reset();
+  s.panel.wakeAtUs = 0;
+  s.parent = 0;
+  s.mode = Sensor::Mode::Idle;
+  s.poweredOn = on;
+  if (on) panelBoot(s);
+  return true;
+}
+
+void simPanelControl(std::istringstream& in) {
+  std::string op, uuidToken;
+  if (!(in >> op >> uuidToken)) throw std::runtime_error("uso: PANEL <acao> <uuid> ...");
+  op = simUpper(op);
+  const uint64_t uuid = static_cast<uint64_t>(simParseUnsigned(uuidToken, UINT64_MAX));
+  Sensor* s = simFindSensor(uuid);
+  if (!s || s->profile != IOC_PANEL_PROFILE) throw std::runtime_error("painel inexistente");
+  PanelState& p = s->panel;
+  auto hexBytes = [](const std::string& text) {
+    std::vector<uint8_t> out;
+    if (text.size() % 2 || text.size() > 4096) throw std::runtime_error("hexadecimal invalido");
+    for (size_t i = 0; i < text.size(); i += 2) out.push_back(static_cast<uint8_t>(std::stoul(text.substr(i, 2), nullptr, 16)));
+    return out;
+  };
+  if (op == "PAGE") {
+    std::string source;
+    uint32_t hash = 0;
+    uint8_t level = 0;
+    const std::string dl = panelPage(*s, source, hash, level);
+    const bool session = p.app ? p.app->sessionUp() : (p.mirrorNode != 0 && s->linkUp());
+    const bool on = s->poweredOn && (p.usb || p.app);
+    printf("#CTRL OK PANEL PAGE uuid=0x%016llX source=%s powered=%u hash=%08X level=%u renders=%u beeps=%u session=%u node=%u child=%u battery=%u "
+           "leds=%06X,%06X unacked=%u alerts=%u acks=%u off=%u dl=%s\n",
+           static_cast<unsigned long long>(uuid), source.c_str(), s->poweredOn ? 1u : 0u, hash, level, p.renders,
+           p.beeps, session ? 1u : 0u, p.app ? p.app->parentNode() : p.mirrorNode, p.app ? p.app->childId() : p.mirrorChild,
+           p.battery ? 1u : 0u, on ? p.leds[0] : 0u, on ? p.leds[1] : 0u, p.app && p.app->unacked() ? 1u : 0u,
+           p.app ? p.app->alertsAnnounced() : 0u, p.app ? p.app->acks() : 0u, p.app && p.app->poweringOff() ? 1u : 0u,
+           dl.c_str());
+    return;
+  }
+  if (op == "BATTERY") {
+    std::string state;
+    if (!(in >> state)) throw std::runtime_error("uso: PANEL BATTERY <uuid> ON|OFF");
+    p.battery = simUpper(state) == "ON";
+    if (!p.usb) panelBoot(*s);
+    printf("#CTRL OK PANEL BATTERY uuid=0x%016llX state=%s\n", static_cast<unsigned long long>(uuid), p.battery ? "ON" : "OFF");
+    return;
+  }
+  if (op == "KEY" || op == "BUTTON" || op == "NOTE") {
+    std::string arg;
+    std::getline(in, arg);
+    while (!arg.empty() && arg.front() == ' ') arg.erase(arg.begin());
+    if (arg.empty()) throw std::runtime_error("argumento ausente");
+    if (p.usb) {
+      if (op == "NOTE") {
+        for (char c : arg) p.outbox.push_back("KEY " + std::to_string(static_cast<unsigned char>(c)));
+        p.outbox.push_back("KEY 13");
+      } else {
+        p.outbox.push_back(op + " " + arg);
+      }
+    } else if (op == "BUTTON" && arg == "P" && !s->poweredOn && !p.usb) {
+      simPanelPower(*s, true);  // desligado, um toque no botão de energia liga
+    } else if (p.app && s->poweredOn) {
+      if (op == "KEY") p.app->onKey(static_cast<uint8_t>(simParseUnsigned(arg, 255)));
+      else if (op == "NOTE") { for (char c : arg) p.app->onKey(static_cast<uint8_t>(c)); p.app->onKey(KEY_ENTER); }
+      else if (arg == "P" || arg == "PP") p.app->onPowerClick(arg == "PP");
+      else if (arg == "H") p.app->onPowerHold();
+      else if (arg == "A" || arg == "B" || arg == "C") p.app->onButton(arg[0]);
+      else throw std::runtime_error("botao: A, B, C, P, PP ou H");
+    } else {
+      throw std::runtime_error("painel desligado");
+    }
+    printf("#CTRL OK PANEL %s uuid=0x%016llX\n", op.c_str(), static_cast<unsigned long long>(uuid));
+    return;
+  }
+  if (!p.usb) throw std::runtime_error("comando da ponte USB: use SENSOR SOURCE <uuid> USB");
+  if (op == "POLL") {
+    std::string data;
+    for (const std::string& item : p.outbox) { if (!data.empty()) data += ';'; data += item; }
+    printf("#CTRL OK PANEL POLL uuid=0x%016llX link=%u items=%zu data=%s\n", static_cast<unsigned long long>(uuid),
+           s->linkUp() ? 1u : 0u, p.outbox.size(), data.c_str());
+    p.outbox.clear();
+    return;
+  }
+  if (op == "JOIN") {
+    std::string idToken;
+    if (!(in >> idToken)) throw std::runtime_error("uso: PANEL JOIN <uuid> <node>");
+    const auto id = simParseUnsigned(idToken, 31);
+    s->parent = static_cast<uint8_t>(id);
+    s->wifiReadyUs = g_now_us + static_cast<uint64_t>(WIFI_JOIN_MS) * 1000u;
+    s->mode = Sensor::Mode::Discovery;
+    p.lastLink = -1;
+    printf("#CTRL OK PANEL JOIN uuid=0x%016llX node=%llu\n", static_cast<unsigned long long>(uuid), id);
+    return;
+  }
+  if (op == "LEAVE") {
+    s->parent = 0;
+    s->mode = Sensor::Mode::Idle;
+    printf("#CTRL OK PANEL LEAVE uuid=0x%016llX\n", static_cast<unsigned long long>(uuid));
+    return;
+  }
+  if (op == "UP") {
+    std::string hex;
+    if (!(in >> hex)) throw std::runtime_error("uso: PANEL UP <uuid> <hex>");
+    const std::vector<uint8_t> bytes = hexBytes(hex);
+    if (!s->poweredOn || !s->linkUp()) throw std::runtime_error("painel sem enlace com o Node");
+    ::SimDatagram d;
+    d.data = bytes;
+    memcpy(d.ip, s->ip, 4);
+    d.port = s->port;
+    if (!simRadioDrop(s->uuid, s->parent)) node(s->parent).inst->udpDeliver(d);
+    printf("#CTRL OK PANEL UP uuid=0x%016llX bytes=%zu\n", static_cast<unsigned long long>(uuid), bytes.size());
+    return;
+  }
+  throw std::runtime_error("acao PANEL desconhecida");
+  }
 
 }  // namespace
 
@@ -1553,8 +2194,8 @@ uint64_t sim_now_us() { return g_now_us; }
 void sim_delay_ms(uint32_t ms) {
   const uint64_t until = g_now_us + static_cast<uint64_t>(ms) * 1000u;
   while (g_now_us < until) {
-    pumpBus(g_now_us + TICK_US);
-    g_now_us += TICK_US;
+  pumpBus(g_now_us + TICK_US);
+  g_now_us += TICK_US;
   }
 }
 

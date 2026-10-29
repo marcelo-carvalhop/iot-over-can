@@ -75,7 +75,7 @@ void sendNodeStatus(uint8_t seq, uint8_t kind, uint8_t state, uint32_t durationM
   msg.data[5] = static_cast<uint8_t>(units >> 8);
   msg.data[6] = 0;
   msg.data[7] = TEST_MAGIC_STATUS;
-  can.tryToSend(msg);
+  canSend(msg);
   Serial.printf("[NODE %u] [ENSAIO] %s %s duracao=%lu ms\n", NODE_ID, kindName(kind), stateName(state),
                 static_cast<unsigned long>(durationMs));
 }
@@ -224,7 +224,7 @@ void probeSendCommand(uint8_t node, uint8_t kind, uint32_t durationMs, uint8_t a
   msg.data[5] = static_cast<uint8_t>(units >> 8);
   msg.data[6] = arg1;
   msg.data[7] = TEST_MAGIC_CMD;
-  if (can.tryToSend(msg)) netMetricsOnTransmit(msg);
+  if (canSend(msg)) netMetricsOnTransmit(msg);
   Serial.printf("[GW] FAULT_TX kind=%s node=%u duration_ms=%lu seq=%u\n", kindName(kind),
                 static_cast<unsigned>(node), static_cast<unsigned long>(durationMs),
                 static_cast<unsigned>(probeSeq));
@@ -291,7 +291,7 @@ void probePollLoad() {
     for (uint8_t i = 2; i < 8; ++i) msg.data[i] = (i & 1u) ? 0xAA : 0x55;
     const uint32_t frameBits = ioc_can_frame_bits(static_cast<uint16_t>(msg.id), msg.len, msg.data);
     if (load.creditBits < frameBits * 1000u) break;
-    if (!can.tryToSend(msg)) break;
+    if (!canSend(msg)) break;
     load.creditBits -= frameBits * 1000u;
     load.bits += frameBits;
     ++load.frames;

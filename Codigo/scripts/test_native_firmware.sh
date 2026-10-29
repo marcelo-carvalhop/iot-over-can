@@ -35,6 +35,21 @@ cc -std=c11 -Wall -Wextra -Werror \
   -lm -o "$OUT_DIR/test_ioc_net"
 "$OUT_DIR/test_ioc_net"
 
+# 3-painel. Painel em papel eletrônico: formatos, retrato do Node, visão da
+#     rede, composição da página e política de atualização (ASan/UBSan quando há).
+PANEL="$REPO_ROOT/Codigo/common/ioc_panel"
+PANEL_FLAGS=(-std=c11 -O1 -g -Wall -Wextra -Werror)
+if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined - -o "$OUT_DIR/san_probe" 2>/dev/null &&
+   "$OUT_DIR/san_probe" 2>/dev/null; then
+  PANEL_FLAGS+=(-fsanitize=address,undefined -fno-sanitize-recover=all)
+fi
+cc "${PANEL_FLAGS[@]}" -I"$LINK" -I"$PANEL" \
+  "$LINK/ioc_sha256.c" "$LINK/ioc_wdata.c" "$LINK/ioc_canbits.c" \
+  "$PANEL/ioc_panel_proto.c" "$PANEL/ioc_panel_cache.c" "$PANEL/ioc_view.c" "$PANEL/ioc_page.c" \
+  "$REPO_ROOT/Codigo/common/tests/test_ioc_panel.c" \
+  -lm -o "$OUT_DIR/test_ioc_panel"
+"$OUT_DIR/test_ioc_panel"
+
 # 3a. Fuzz determinístico dos decodificadores do enlace e do plano de dados
 #     (oferta BLE, envelope UDP, handshake, relatórios, segmentos, PDU
 #     autenticada): entradas aleatórias e mensagens válidas mutadas, em buffers

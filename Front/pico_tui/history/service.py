@@ -5,6 +5,7 @@ fila limitada e são descarregados em lotes por um worker da aplicação.
 """
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections import deque
@@ -13,15 +14,40 @@ from typing import Any
 
 from pico_tui.core.event_bus import EventBus
 from pico_tui.core.events import (
-    BusStatsReceived, CommandAck, ConfigurationApplied, ConnectionClosed, ConnectionOpened, TransferFailed,
-    DtcCleared, DtcReceived, FaultEventReceived, LogEvent, NetworkEventReceived,
-    WirelessAssociationReceived, WirelessFailoverReceived, WirelessLinkReceived,
+    BusStatsReceived,
+    CommandAck,
+    ConfigurationApplied,
+    ConnectionClosed,
+    ConnectionOpened,
+    DtcCleared,
+    DtcReceived,
+    FaultEventReceived,
+    LogEvent,
+    NetworkEventReceived,
+    PanelReported,
+    TransferFailed,
+    WirelessAssociationReceived,
+    WirelessFailoverReceived,
+    WirelessLinkReceived,
 )
 from pico_tui.history.storage import HistoryStore
 from pico_tui.services.recorder import redact
 
 BUS_SAMPLE_INTERVAL_S = 30.0
 MAX_QUEUE = 5000
+
+
+TAG_RE = re.compile(r"#([^\W_][\w-]{0,31})", re.UNICODE)
+
+
+def mark_tags(text: str) -> list[str]:
+    """Etiquetas (#cabo, #ensaio3) de uma nota do operador, sem repetição e em minúsculas."""
+    seen: list[str] = []
+    for tag in TAG_RE.findall(text or ""):
+        tag = tag.lower().rstrip("-")
+        if tag and tag not in seen:
+            seen.append(tag)
+    return seen
 
 
 class HistoryService:
@@ -66,6 +92,7 @@ class HistoryService:
             (TransferFailed, self._on_transfer_failed),
             (CommandAck, self._on_command_ack),
             (LogEvent, self._on_log),
+            (PanelReported, self._on_panel),
         ):
             bus.subscribe(event_type, handler)
 
@@ -81,7 +108,7 @@ class HistoryService:
 
     def _event(self, kind: str, category: str, severity: str, title: str,
                *, node_id: int | None = None, sensor_id: str | None = None,
-               details: dict[str, Any] | None = None) -> None:
+               details: dict[str, Any] | None = None, epoch: float | None = None) -> None:
         if self.closed:
             return
         payload = dict(details or {})
@@ -90,7 +117,7 @@ class HistoryService:
         if sensor_id and sensor_id in self.last_link:
             payload["link_at_observation"] = self.last_link[sensor_id].copy()
         record = {
-            "epoch": time.time(), "kind": kind, "category": category,
+            "epoch": time.time() if epoch is None else epoch, "kind": kind, "category": category,
             "severity": severity, "title": title,
             "node_id": node_id, "sensor_id": sensor_id, "details": payload,
         }
@@ -158,7 +185,8 @@ class HistoryService:
             "lost_datagrams": ev.lost_datagrams,
             "auth_failures": ev.auth_failures, "replay_drops": ev.replay_drops,
         }
-        if previous is None or previous["state"] != state:
+        sleep_cycle = state == "SLEEPING" or (previous is not None and previous["state"] == "SLEEPING" and state == "SECURE")
+        if (previous is None or previous["state"] != state) and not sleep_cycle:
             severity = "WARNING" if state in ("DOWN", "NO_KEY") else "INFO"
             self._event("LINK_STATE", "WIRELESS", severity,
                         f"Enlace {ident}: {state}", node_id=ev.parent_node_id,
@@ -245,6 +273,27 @@ class HistoryService:
     def _on_connection(self, ev: ConnectionClosed) -> None:
         self._event("CONNECTION_CLOSED", "NETWORK", "WARNING", "Conexão de supervisão encerrada",
                     details={"port": ev.port, "reason": ev.reason})
+
+    def _on_panel(self, ev: PanelReported) -> None:
+        """Marcas do operador vão para a faixa OPERATOR, no instante em que foram feitas."""
+        ident = f"{ev.parent_node_id:02d}.{ev.child_id:02d}"
+        if ev.kind == "MARK":
+            kind = ev.payload.get("KIND", "")
+            title = {"BUTTON": "Intervenção física", "STEP": "Passo de roteiro",
+                     "RESULT": "Resultado de roteiro", "FLAG": "Marca do operador",
+                     "ACK": "Alerta reconhecido"}.get(kind, "Nota do operador")
+            details: dict[str, Any] = {"kind": kind, "step": ev.payload.get("STEP"), "seq": ev.payload.get("SEQ"),
+                                       "text": ev.text, "age_ms": ev.age_ms}
+            tags = mark_tags(ev.text)
+            if tags:
+                details["tags"] = tags
+            self._event("OPERATOR_" + (kind or "MARK"), "OPERATOR", "INFO",
+                        f"{title} (painel {ident})" + (f": {ev.text}" if ev.text else ""),
+                        node_id=ev.parent_node_id, sensor_id=ident, epoch=time.time() - ev.age_ms / 1000.0,
+                        details=details)
+        elif ev.kind == "STATUS" and ev.payload.get("STATE", "").upper() == "OFF":
+            self._event("PANEL_OFF", "OPERATOR", "INFO", f"Painel {ident} desligado pelo operador",
+                        node_id=ev.parent_node_id, sensor_id=ident, details=dict(ev.payload))
 
     def _on_log(self, ev: LogEvent) -> None:
         if ev.level.upper() not in ("WARNING", "ERROR", "CRITICAL"):
