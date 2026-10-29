@@ -1,0 +1,27 @@
+{
+  "nome": "sensibilidade_virtual",
+  "descricao": "Sensibilidade da máquina de estados do vínculo ao prazo L (IOT_ASSOC_STALE_MS) e à histerese H (IOT_ASSOC_HYSTERESIS_MS): detecção da perda, recuperação e transições espúrias. Cada combinação compila uma bancada própria.",
+  "bancada": "virtual",
+  "semente_base": 20261030,
+  "ordem_aleatoria": true,
+  "blocos": [
+    {
+      "nome": "deteccao",
+      "repeticoes": 30,
+      "fatores": {"fw_assoc_stale_ms": [10000, 15000, 25000], "fw_assoc_hysteresis_ms": [0, 5000]},
+      "fixos": {"sensors": 1, "iot": "on", "load_pct": 0, "warmup_s": 10, "duration_s": 120, "echo_n": 0,
+                "fault": "sensor_off", "fault_at_s": 15, "fault_s": 60}
+    },
+    {
+      "nome": "normal",
+      "repeticoes": 30,
+      "fatores": {"fw_assoc_stale_ms": [10000, 15000, 25000], "fw_assoc_hysteresis_ms": [0, 5000]},
+      "fixos": {"sensors": 1, "iot": "on", "load_pct": 80, "load_prio": "HIGH", "warmup_s": 10, "duration_s": 120,
+                "echo_n": 0, "fault": "none"}
+    }
+  ],
+  "comparacoes": [
+    {"fator": "fw_assoc_hysteresis_ms", "base": 0},
+    {"fator": "fw_assoc_stale_ms", "base": 15000}
+  ]
+}

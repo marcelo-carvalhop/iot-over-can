@@ -28,7 +28,7 @@ from pico_tui.core.events import (
     WirelessLinkReceived,
 )
 from pico_tui.metrics import rta
-from pico_tui.metrics.catalog import TEST_LOAD_HIGH_ID, TEST_LOAD_LOW_ID, describe
+from pico_tui.metrics.catalog import TEST_LOAD_IDS, describe
 
 BUS_HISTORY = 300          # janelas de 1 s
 INTERVAL_HISTORY = 120     # intervalos de telemetria por sensor
@@ -476,7 +476,7 @@ class MetricsService:
                 dt_avg_us=entry.dt_avg_us,
                 dt_max_us=entry.dt_max_us,
                 bitrate=self.bitrate,
-                has_deadline=entry.can_id not in (TEST_LOAD_HIGH_ID, TEST_LOAD_LOW_ID),
+                has_deadline=entry.can_id not in TEST_LOAD_IDS,
             )
             if flow is not None:
                 flows.append(flow)

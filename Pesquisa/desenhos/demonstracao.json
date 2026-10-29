@@ -1,0 +1,27 @@
+{
+  "nome": "demonstracao",
+  "descricao": "Campanha mínima (minutos) para conferir o caminho inteiro: coleta, análise, comparações e verificação. Usada nos testes.",
+  "bancada": "virtual",
+  "semente_base": 7,
+  "ordem_aleatoria": true,
+  "blocos": [
+    {
+      "nome": "desempenho",
+      "repeticoes": 3,
+      "fatores": {"load_pct": [0, 50], "iot": ["off", "on"]},
+      "fixos": {"sensors": 1, "load_prio": "MID", "warmup_s": 3, "duration_s": 20, "echo_n": 12, "echo_period_ms": 300,
+                "fault": "none"}
+    },
+    {
+      "nome": "falhas",
+      "repeticoes": 2,
+      "fatores": {"fault": ["sensor_off", "owner_power"]},
+      "fixos": {"sensors": 1, "iot": "on", "load_pct": 0, "warmup_s": 3, "duration_s": 75, "echo_n": 0,
+                "fault_at_s": 5, "fault_s": 45}
+    }
+  ],
+  "comparacoes": [
+    {"fator": "iot", "base": "off"},
+    {"fator": "load_pct", "base": 0}
+  ]
+}

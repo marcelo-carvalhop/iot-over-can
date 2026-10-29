@@ -5,6 +5,7 @@
 
 #include "can_ids.h"
 #include "node_config.h"
+#include "pesquisa.h"
 
 #include "ioc_canbits.h"
 
@@ -133,7 +134,7 @@ void emitBusStats(uint32_t nowMs, uint32_t nowUs) {
 
   Serial.printf("[GW] BUS_STATS t_ms=%lu win_ms=%lu frames=%lu bits=%lu load=%s peak=%s "
                 "rx_err=%u tx_err=%u eflg=0x%02X rx_peak=%u ids=%u xfer_ok=%lu xfer_err=%lu "
-                "own=%lu untracked=%lu\n",
+                "own=%lu untracked=%lu t_us=%llu\n",
                 static_cast<unsigned long>(nowMs), static_cast<unsigned long>(nowMs - windowStartMs),
                 static_cast<unsigned long>(windowFrames), static_cast<unsigned long>(windowBits),
                 load, peak,
@@ -143,7 +144,8 @@ void emitBusStats(uint32_t nowMs, uint32_t nowUs) {
                 static_cast<unsigned>(can.receiveBufferPeakCount()),
                 static_cast<unsigned>(usedIds()),
                 static_cast<unsigned long>(transfersOk), static_cast<unsigned long>(transfersErr),
-                static_cast<unsigned long>(windowOwnFrames), static_cast<unsigned long>(untrackedFrames));
+                static_cast<unsigned long>(windowOwnFrames), static_cast<unsigned long>(untrackedFrames),
+                static_cast<unsigned long long>(pesquisaMonoUs()));
 
   windowStartMs = nowMs;
   windowStartUs = nowUs;

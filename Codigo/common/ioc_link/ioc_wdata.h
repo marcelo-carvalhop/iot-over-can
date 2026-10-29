@@ -45,7 +45,8 @@ typedef enum {
     IOC_WD_KIND_LINK      = 5,
     IOC_WD_KIND_CONFIG    = 6,
     IOC_WD_KIND_ACOUSTIC  = 7,  /* relatório do sensor acústico (v0.19) */
-    IOC_WD_KIND_PANEL     = 8   /* STATUS e MARK do painel em papel eletrônico (v0.20) */
+    IOC_WD_KIND_PANEL     = 8,  /* STATUS e MARK do painel em papel eletrônico (v0.20) */
+    IOC_WD_KIND_LINKSTATS = 9   /* medidas de pesquisa do enlace (v0.21), após cada LINK */
 } ioc_wd_kind;
 
 uint8_t ioc_wd_crc8(const uint8_t *data, size_t len);
@@ -296,6 +297,26 @@ size_t ioc_wd_ack_encode(const ioc_wd_ack *in, uint8_t out[IOC_WD_ACK_LEN]);
 int    ioc_wd_ack_decode(const uint8_t *buf, size_t len, ioc_wd_ack *out);
 size_t ioc_wd_dtc_encode(const ioc_wd_dtc *in, uint8_t out[IOC_WD_DTC_LEN]);
 int    ioc_wd_dtc_decode(const uint8_t *buf, size_t len, ioc_wd_dtc *out);
+/*
+ * Medidas de pesquisa do enlace, no domínio de relógio do Node, na janela
+ * desde o relatório anterior (Pesquisa/, Documentacao/pesquisa). Vão numa
+ * transferência própria: o relatório LINK continua com 19 bytes (4 quadros) e
+ * uma Probe antiga apenas ignora este tipo. 0xFFFF = sem medida na janela.
+ */
+#define IOC_WD_LINKSTATS_LEN 12
+
+typedef struct {
+    uint16_t crypto_rx_us;     /* média da verificação HMAC por datagrama de dados recebido */
+    uint16_t crypto_tx_us;     /* média do selo HMAC por datagrama enviado ao sensor */
+    uint16_t crypto_max_us;    /* maior das duas operações na janela */
+    uint16_t handshake_us;     /* CPU da última autenticação (HELLO, chave de sessão, CHALLENGE, CONFIRM) */
+    uint16_t bridge_avg_100us; /* datagrama lido -> último segmento entregue ao controlador CAN */
+    uint16_t bridge_max_100us;
+} ioc_wd_linkstats;
+
+size_t ioc_wd_linkstats_encode(const ioc_wd_linkstats *in, uint8_t out[IOC_WD_LINKSTATS_LEN]);
+int    ioc_wd_linkstats_decode(const uint8_t *buf, size_t len, ioc_wd_linkstats *out);
+
 size_t ioc_wd_link_encode(const ioc_wd_link *in, uint8_t out[IOC_WD_LINK_LEN]);
 int    ioc_wd_link_decode(const uint8_t *buf, size_t len, ioc_wd_link *out);
 size_t ioc_wd_config_encode(const ioc_wd_config *in, uint8_t out[IOC_WD_CONFIG_LEN]);
@@ -307,6 +328,7 @@ typedef enum {
     IOC_WD_OP_STREAM       = 0x01, /* arg0: 0=off 1=on 2=uma amostra; arg1..2: período ms */
     IOC_WD_OP_FFT          = 0x02, /* arg0..1: quantidade de faixas */
     IOC_WD_OP_STATUS       = 0x03, /* publica LINK + CONFIG */
+    IOC_WD_OP_ECHO         = 0x04, /* pesquisa: arg0 0 = o Node responde; 1 = ida e volta ao sensor (PING) */
     IOC_WD_OP_SET_MODE     = 0x10, /* arg0: modo; arg1: perfil esperado (0 = qualquer) */
     IOC_WD_OP_SET_RATE     = 0x11, /* arg0..3: float32 Hz */
     IOC_WD_OP_SET_WINDOW   = 0x12, /* arg0: tipo (0xFF mantém); arg1..2: tamanho (0 mantém) */

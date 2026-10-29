@@ -1,0 +1,27 @@
+{
+  "nome": "bancada_virtual",
+  "descricao": "Custo da integração sem fio autenticada sobre o tráfego CAN, em função da carga de fundo e da prioridade dela, e reação da rede a falhas. Bancada virtual: firmware real dos Nodes, sem modelo de CPU nem de rádio.",
+  "bancada": "virtual",
+  "semente_base": 20261029,
+  "ordem_aleatoria": true,
+  "blocos": [
+    {
+      "nome": "desempenho",
+      "repeticoes": 30,
+      "fatores": {"load_pct": [0, 10, 50, 80], "load_prio": ["HIGH", "MID", "LOW"], "iot": ["off", "on"]},
+      "fixos": {"sensors": 1, "warmup_s": 10, "duration_s": 60, "echo_n": 40, "echo_period_ms": 500, "fault": "none"},
+      "excluir": [{"load_pct": 0, "load_prio": ["MID", "LOW"]}]
+    },
+    {
+      "nome": "falhas",
+      "repeticoes": 30,
+      "fatores": {"fault": ["sensor_off", "owner_power", "ap_outage", "drop_session"], "load_pct": [0, 50]},
+      "fixos": {"sensors": 1, "iot": "on", "load_prio": "MID", "warmup_s": 10, "duration_s": 120, "echo_n": 0,
+                "fault_at_s": 15, "fault_s": 60}
+    }
+  ],
+  "comparacoes": [
+    {"fator": "iot", "base": "off"},
+    {"fator": "load_pct", "base": 0, "ignorar": ["load_prio"]}
+  ]
+}

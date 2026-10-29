@@ -2013,6 +2013,142 @@ int scenarioPanel() {
   return g_failures ? 1 : 0;
 }
 
+
+/* ------------------------------------------------------------ pesquisa */
+
+// Parâmetros de um experimento (--param chave=valor, --seed N): ver
+// Pesquisa/README.md. O cenário não verifica nada; produz o registro bruto
+// que Pesquisa/ analisa. Linhas "# t=<ms> pesquisa ..." são a verdade de
+// referência da bancada (relógio da simulação).
+std::map<std::string, std::string> g_params;
+
+std::string param(const char* key, const char* fallback) {
+  auto it = g_params.find(key);
+  return it == g_params.end() ? std::string(fallback) : it->second;
+}
+
+unsigned long paramU(const char* key, unsigned long fallback) {
+  auto it = g_params.find(key);
+  return it == g_params.end() ? fallback : strtoul(it->second.c_str(), nullptr, 0);
+}
+
+void researchMark(const char* what) {
+  printf("# t=%u pesquisa %s\n", nowMs(), what);
+}
+
+void rebootSensor(Sensor& s) {
+  Sensor fresh;
+  fresh.uuid = s.uuid;
+  fresh.profile = s.profile;
+  fresh.port = s.port;
+  memcpy(fresh.ip, s.ip, sizeof(fresh.ip));
+  memcpy(fresh.devKey, s.devKey, sizeof(fresh.devKey));
+  fresh.rssi = s.rssi;
+  fresh.telemetryPeriodMs = s.telemetryPeriodMs;
+  fresh.usbSource = s.usbSource;
+  s = std::move(fresh);
+}
+
+int scenarioResearch() {
+  const unsigned long loadPct = paramU("load_pct", 0);
+  const std::string prio = param("load_prio", "HIGH");
+  const unsigned long loadSeed = paramU("load_seed", paramU("seed", 1));
+  const unsigned long sensors = paramU("sensors", 1);
+  const bool iot = param("iot", "on") != "off";
+  const unsigned long warmupS = paramU("warmup_s", 10);
+  const unsigned long durationS = paramU("duration_s", 60);
+  const unsigned long echoN = paramU("echo_n", 30);
+  const unsigned long echoPeriod = paramU("echo_period_ms", 500);
+  const std::string fault = param("fault", "none");
+  const unsigned long faultAtS = paramU("fault_at_s", 10);
+  const unsigned long faultS = paramU("fault_s", 20);
+  if (sensors > 2 || durationS == 0 || durationS > 3600) {
+    fprintf(stderr, "pesquisa: sensors 0..2 e duration_s 1..3600\n");
+    return 2;
+  }
+  {
+    std::string line = "parametros";
+    for (const auto& kv : g_params) line += " " + kv.first + "=" + kv.second;
+    researchMark(line.c_str());
+  }
+  formNetwork();
+  if (sensors >= 1) bindSensorA(true);
+  if (sensors >= 2) {
+    Sensor& b = addSensor(SENSOR_B, 4243, 3);
+    b.rssi[2] = -55;
+    b.rssi[3] = -66;
+    runUntilTrue([] { return logHas(probe(), "WIRELESS_CANDIDATE reporter=2 uuid=0xE66164084327A12C"); }, 8000);
+    probeCommand("WIRELESS BIND 2 0xE66164084327A12C AUTO");
+    runUntilTrue([] { return logHas(probe(), "TEL NODE=2 CHILD=1 "); }, 15000);
+  }
+  if (!iot) {
+    // Integração desligada no barramento: os sensores continuam com sessão,
+    // mas os Nodes não encaminham telemetria ao CAN.
+    if (sensors >= 1) probeCommand("CMD TARGET=1.1 ACTION=TELEMETRY STATE=OFF TX=pesquisa");
+    if (sensors >= 2) probeCommand("CMD TARGET=2.1 ACTION=TELEMETRY STATE=OFF TX=pesquisa");
+  }
+  runFor(warmupS * 1000u);
+
+  researchMark("janela=INICIO");
+  const uint32_t t0 = nowMs();
+  if (loadPct) {
+    char cmd[80];
+    snprintf(cmd, sizeof(cmd), "FAULT LOAD %lu %lu %s %lu", loadPct, durationS, prio.c_str(), loadSeed);
+    probeCommand(cmd);
+  }
+  // Trens de eco: primeiro só o CAN (LOCAL), depois até o sensor (SENSOR).
+  bool localDone = echoN == 0, sensorStarted = false;
+  if (echoN) {
+    char cmd[64];
+    snprintf(cmd, sizeof(cmd), "ECHO 1.1 %lu %lu LOCAL", echoN, echoPeriod);
+    probeCommand(cmd);
+  }
+  bool faultStarted = fault == "none", faultEnded = fault == "none";
+  while (nowMs() - t0 < durationS * 1000u) {
+    runFor(100);
+    if (!localDone && logHas(probe(), "[GW] ECHO_DONE node=1 child=1 path=LOCAL", t0)) {
+      localDone = true;
+      if (sensors >= 1 && !sensorStarted) {
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "ECHO 1.1 %lu %lu SENSOR", echoN, echoPeriod);
+        probeCommand(cmd);
+        sensorStarted = true;
+      }
+    }
+    const uint32_t elapsed = nowMs() - t0;
+    if (!faultStarted && elapsed >= faultAtS * 1000u) {
+      faultStarted = true;
+      char cmd[64];
+      if (fault == "sensor_off" && sensors >= 1) {
+        for (Sensor& x : g_sensors) if (x.uuid == SENSOR_A) x.poweredOn = false;
+        researchMark("verdade=SENSOR_OFF uuid=0xE6616408432B6F39");
+      } else if (fault == "owner_power") {
+        snprintf(cmd, sizeof(cmd), "FAULT POWER_CYCLE 1 %lu", faultS);
+        probeCommand(cmd);
+        faultEnded = true;  // o fim vem da própria Probe (FAULT_EVENT)
+      } else if (fault == "ap_outage") {
+        snprintf(cmd, sizeof(cmd), "FAULT AP_OUTAGE 1 %lu", faultS);
+        probeCommand(cmd);
+        faultEnded = true;
+      } else if (fault == "drop_session") {
+        probeCommand("FAULT DROP_SESSION 1");
+        faultEnded = true;
+      } else {
+        faultEnded = true;
+      }
+    }
+    if (faultStarted && !faultEnded && elapsed >= (faultAtS + faultS) * 1000u) {
+      faultEnded = true;
+      for (Sensor& x : g_sensors) if (x.uuid == SENSOR_A) rebootSensor(x);
+      researchMark("verdade=SENSOR_ON uuid=0xE6616408432B6F39");
+    }
+  }
+  probeCommand("ECHO CANCEL");
+  runFor(500);
+  researchMark("janela=FIM");
+  return 0;
+}
+
 struct Scenario {
   const char* name;
   int (*run)();
@@ -2039,6 +2175,9 @@ const Scenario SCENARIOS[] = {
   {"restart_keeps_binding", scenarioRestartKeepsBinding, "Node reinicia e retoma o vinculo gravado na NVS"},
   {"panel_papercolor", scenarioPanel, "painel em papel eletronico: retrato, nota, queda de Node e sono na bateria"},
 };
+
+// Fora de SCENARIOS: não faz verificações nem tem gravação de referência.
+const Scenario RESEARCH = {"pesquisa", scenarioResearch, "experimento parametrizado (--param chave=valor, --seed N)"};
 
 #include "sim_interactive.inc"
 
@@ -2225,6 +2364,15 @@ int main(int argc, char** argv) {
   bool interactivePaused = false;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--verbose") == 0) g_verbose = true;
+    else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
+      g_params["seed"] = argv[++i];
+      g_rng = static_cast<uint32_t>(strtoul(argv[i], nullptr, 0)) * 2654435761u + 0x1234567u;
+    } else if (strcmp(argv[i], "--param") == 0 && i + 1 < argc) {
+      const std::string kv = argv[++i];
+      const size_t eq = kv.find('=');
+      if (eq == std::string::npos || eq == 0) { fprintf(stderr, "--param espera chave=valor\n"); return 2; }
+      g_params[kv.substr(0, eq)] = kv.substr(eq + 1);
+    }
     else if (strcmp(argv[i], "--interactive") == 0) interactive = true;
     else if (strcmp(argv[i], "--interactive-paused") == 0) { interactive = true; interactivePaused = true; }
     else if (strcmp(argv[i], "--list") == 0) {
@@ -2250,6 +2398,15 @@ int main(int argc, char** argv) {
     return simInteractiveLoop(interactivePaused);
   }
 
+  if (strcmp(name, RESEARCH.name) == 0) {
+    setvbuf(stdout, nullptr, _IOFBF, 1 << 16);
+    printf("# cenario=%s: %s\n", RESEARCH.name, RESEARCH.description);
+    setupBench();
+    const int rc = RESEARCH.run();
+    for (Node& n : g_nodes) collectSerial(n);
+    printf("# fim t=%u quadros=%u falhas=%d\n", nowMs(), g_bus_frames, g_failures);
+    return rc;
+  }
   for (const Scenario& s : SCENARIOS) {
     if (strcmp(s.name, name) != 0) continue;
     printf("# cenario=%s: %s\n", s.name, s.description);

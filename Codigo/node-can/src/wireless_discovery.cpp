@@ -8,6 +8,7 @@
 #include "can_ids.h"
 #include "net_metrics.h"
 #include "node_config.h"
+#include "pesquisa.h"
 #include "node_types.h"
 #include "protocolo.h"
 #include "wireless_link.h"
@@ -36,8 +37,10 @@ constexpr uint32_t BIND_CANDIDATE_MAX_AGE_MS = 7000;
 constexpr uint32_t FAILOVER_CANDIDATE_MAX_AGE_MS = 15000;
 constexpr uint32_t FAILOVER_POLL_MS = 1000;
 constexpr uint32_t ASSOCIATING_MIN_MS = 250;
-constexpr uint32_t ONLINE_STALE_MS = 15000;
-constexpr uint32_t STALE_LOST_MS = 45000;
+// Máquina de estados do vínculo (parâmetros de pesquisa em pesquisa.h).
+constexpr uint32_t ONLINE_STALE_MS = IOT_ASSOC_STALE_MS;
+constexpr uint32_t STALE_LOST_MS = IOT_ASSOC_LOST_MS;
+constexpr uint32_t ASSOC_HYSTERESIS_MS = IOT_ASSOC_HYSTERESIS_MS;
 constexpr uint32_t SCAN_WATCHDOG_MS = 2000;
 // O estado do vínculo é republicado periodicamente para que uma TUI aberta
 // depois da associação reconstrua a topologia sem depender de uma transição.
@@ -104,6 +107,9 @@ struct Binding {
   bool autoFailover = false;    // o operador autorizou a reassociação automática
   bool publishedSecure = false; // situação da sessão de dados no último estado publicado
   bool restored = false;        // retomado da NVS; cede em disputa até reabrir a sessão
+  // Última transição (diagnóstico de pesquisa no monitor do Node).
+  uint8_t prevState = WIRELESS_ASSOC_DISCOVERED;
+  uint32_t inPrevMs = 0;
 };
 
 Candidate candidates[MAX_CANDIDATES];
@@ -112,6 +118,15 @@ AssocStatusAssembly assocStatusAssemblies[32];
 AssocCommandAssembly assocCommandAssembly;    // pedidos da Probe 00 (0x300/0x301)
 AssocCommandAssembly leaderCommandAssembly;   // pedidos do líder (0x302/0x303)
 Binding bindings[MAX_BINDINGS];
+
+// Toda mudança de estado do vínculo passa por aqui: guarda de onde veio e
+// quanto tempo ficou lá, para a linha do monitor e a análise.
+void transition(Binding& binding, uint8_t to, uint32_t now) {
+  binding.prevState = binding.assocState;
+  binding.inPrevMs = now - binding.stateSinceMs;
+  binding.assocState = to;
+  binding.stateSinceMs = now;
+}
 portMUX_TYPE candidateMux = portMUX_INITIALIZER_UNLOCKED;
 uint8_t reportSeq = 0;
 uint8_t assocCommandSeq = 0;
@@ -291,14 +306,18 @@ void sendAssociationStatus(const Binding& binding, uint8_t stateOverride = 0) {
   canSend(a);
   canSend(b);
 
-  Serial.printf("[NODE %u] [WIRELESS ASSOC] child=%u uuid=0x%016llX state=%s rssi=%d failover=%s session=%s\n",
+  Serial.printf("[NODE %u] [WIRELESS ASSOC] child=%u uuid=0x%016llX state=%s rssi=%d failover=%s session=%s "
+                "prev=%s in_prev_ms=%lu age_ms=%lu t_us=%llu\n",
                 NODE_ID,
                 static_cast<unsigned>(binding.childId),
                 static_cast<unsigned long long>(binding.uuid),
                 assocStateName(state),
                 static_cast<int>(binding.rssi),
                 binding.autoFailover ? "AUTO" : "MANUAL",
-                secure ? "SECURE" : "NONE");
+                secure ? "SECURE" : "NONE", assocStateName(binding.prevState),
+                static_cast<unsigned long>(binding.inPrevMs),
+                static_cast<unsigned long>(binding.lastSeenMs ? millis() - binding.lastSeenMs : 0u),
+                static_cast<unsigned long long>(pesquisaMonoUs()));
 }
 
 void sendRejectedAssociation(uint64_t uuid, uint8_t profile, uint8_t protocol, int8_t rssi) {
@@ -623,7 +642,7 @@ void printProbeAssociation(uint8_t reporter, const AssocStatusAssembly& as, cons
   ioc_assoc_unpack(as.state, &assocState, &autoFailover, &secure);
 
   Serial.printf("[GW] WIRELESS_ASSOC node=%u child=%u uuid=0x%016llX profile=%s state=%s rssi=%d protocol=%u "
-                "failover=%s session=%s\n",
+                "failover=%s session=%s t_us=%llu\n",
                 reporter,
                 static_cast<unsigned>(as.childId),
                 static_cast<unsigned long long>(uuid),
@@ -632,7 +651,7 @@ void printProbeAssociation(uint8_t reporter, const AssocStatusAssembly& as, cons
                 static_cast<int>(rssi),
                 static_cast<unsigned>(protocol),
                 autoFailover ? "AUTO" : "MANUAL",
-                secure ? "SECURE" : "NONE");
+                secure ? "SECURE" : "NONE", static_cast<unsigned long long>(pesquisaMonoUs()));
 }
 
 bool parseUuid(const char* text, uint64_t& uuid) {
@@ -767,46 +786,40 @@ void pollBindings() {
     if (binding.assocState == WIRELESS_ASSOC_ASSOCIATING &&
         now - binding.stateSinceMs >= ASSOCIATING_MIN_MS &&
         age <= ONLINE_STALE_MS) {
-      binding.assocState = WIRELESS_ASSOC_BOUND;
-      binding.stateSinceMs = now;
+      transition(binding, WIRELESS_ASSOC_BOUND, now);
       snapshot = binding;
       publish = true;
     } else if (binding.assocState == WIRELESS_ASSOC_ASSOCIATING && age > ONLINE_STALE_MS) {
       // O sensor não foi mais ouvido desde o pedido: o vínculo não fica
       // indefinidamente em ASSOCIATING, o que impediria outra reassociação.
-      binding.assocState = WIRELESS_ASSOC_STALE;
-      binding.stateSinceMs = now;
+      transition(binding, WIRELESS_ASSOC_STALE, now);
       snapshot = binding;
       publish = true;
     } else if (binding.assocState == WIRELESS_ASSOC_BOUND &&
                binding.lastSeenMs > binding.stateSinceMs) {
-      binding.assocState = WIRELESS_ASSOC_ONLINE;
-      binding.stateSinceMs = now;
+      transition(binding, WIRELESS_ASSOC_ONLINE, now);
       snapshot = binding;
       publish = true;
     } else if (binding.assocState == WIRELESS_ASSOC_BOUND && age > ONLINE_STALE_MS) {
-      binding.assocState = WIRELESS_ASSOC_STALE;
-      binding.stateSinceMs = now;
+      transition(binding, WIRELESS_ASSOC_STALE, now);
       snapshot = binding;
       publish = true;
     } else if (binding.assocState == WIRELESS_ASSOC_ONLINE && age > ONLINE_STALE_MS) {
-      binding.assocState = WIRELESS_ASSOC_STALE;
-      binding.stateSinceMs = now;
+      transition(binding, WIRELESS_ASSOC_STALE, now);
       snapshot = binding;
       publish = true;
-    } else if (binding.assocState == WIRELESS_ASSOC_STALE && age <= ONLINE_STALE_MS) {
-      binding.assocState = WIRELESS_ASSOC_ONLINE;
-      binding.stateSinceMs = now;
+    } else if (binding.assocState == WIRELESS_ASSOC_STALE && age <= ONLINE_STALE_MS &&
+               now - binding.stateSinceMs >= ASSOC_HYSTERESIS_MS) {
+      transition(binding, WIRELESS_ASSOC_ONLINE, now);
       snapshot = binding;
       publish = true;
     } else if (binding.assocState == WIRELESS_ASSOC_STALE && age > STALE_LOST_MS) {
-      binding.assocState = WIRELESS_ASSOC_LOST;
-      binding.stateSinceMs = now;
+      transition(binding, WIRELESS_ASSOC_LOST, now);
       snapshot = binding;
       publish = true;
-    } else if (binding.assocState == WIRELESS_ASSOC_LOST && age <= ONLINE_STALE_MS) {
-      binding.assocState = WIRELESS_ASSOC_ONLINE;
-      binding.stateSinceMs = now;
+    } else if (binding.assocState == WIRELESS_ASSOC_LOST && age <= ONLINE_STALE_MS &&
+               now - binding.stateSinceMs >= ASSOC_HYSTERESIS_MS) {
+      transition(binding, WIRELESS_ASSOC_ONLINE, now);
       snapshot = binding;
       publish = true;
     }
@@ -1102,11 +1115,12 @@ bool wirelessDiscoveryHandleCanMessage(const CANMessage& rx) {
 
     if (NODE_ID == 0) {
       if (failover) {
-        Serial.printf("[GW] WIRELESS_FAILOVER uuid=0x%016llX from=%u to=%u reason=%s rssi=%d\n",
+        Serial.printf("[GW] WIRELESS_FAILOVER uuid=0x%016llX from=%u to=%u reason=%s rssi=%d t_us=%llu\n",
                       static_cast<unsigned long long>(uuid), static_cast<unsigned>(rx.data[6]),
                       static_cast<unsigned>(target),
                       action == WIRELESS_ASSOC_ACTION_FAILOVER_OWNER_LOST ? "OWNER_LOST" : "SENSOR_LOST",
-                      static_cast<int>(static_cast<int8_t>(rx.data[7])));
+                      static_cast<int>(static_cast<int8_t>(rx.data[7])),
+                      static_cast<unsigned long long>(pesquisaMonoUs()));
       }
       return true;
     }

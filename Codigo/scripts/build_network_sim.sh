@@ -21,8 +21,19 @@ trap 'rm -rf "$OBJ_DIR"' EXIT
 TEST_KEY='"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"'
 CXXFLAGS=(-std=c++17 -O1 -Wall -Wextra -Werror -DIOT_LINK_MASTER_KEY_HEX="$TEST_KEY"
           -I"$HOST" -I"$HOST/stubs" -I"$NODE/include" -I"$LINK" -I"$PANEL" -I"$PAPER" -I"$OBJ_DIR")
+# Parâmetros de compilação extras (análise de sensibilidade em Pesquisa/), por exemplo
+#   IOC_SIM_CXXFLAGS="-DIOT_ASSOC_STALE_MS=10000 -DIOT_ASSOC_HYSTERESIS_MS=2000"
+if [[ -n "${IOC_SIM_CXXFLAGS:-}" ]]; then
+  for flag in $IOC_SIM_CXXFLAGS; do
+    if ! [[ "$flag" =~ ^-DIOT_[A-Z_]+=[0-9]+$ ]]; then
+      echo "IOC_SIM_CXXFLAGS aceita apenas -DIOT_<NOME>=<inteiro>: $flag" >&2
+      exit 2
+    fi
+    CXXFLAGS+=("$flag")
+  done
+fi
 SOURCES=(main.ino comandos.cpp falhas.cpp wireless_discovery.cpp wireless_link.cpp
-         net_metrics.cpp fault_injection.cpp)
+         net_metrics.cpp fault_injection.cpp pesquisa.cpp)
 
 python3 "$ROOT/Simulacao/gen_sim_factories.py" \
   --max-nodes "${IOC_SIM_MAX_NODES:-6}" \
@@ -47,7 +58,7 @@ run() {
   fi
 }
 
-for src in ioc_sha256 ioc_link ioc_wdata ioc_canbits ioc_failover ioc_bindstore; do
+for src in ioc_sha256 ioc_link ioc_wdata ioc_canbits ioc_failover ioc_bindstore ioc_bench; do
   run cc -std=c11 -O1 -Wall -Wextra -Werror -I"$LINK" -c "$LINK/$src.c" -o "$OBJ_DIR/$src.o"
 done
 for src in ioc_panel_proto ioc_panel_cache ioc_view ioc_page; do

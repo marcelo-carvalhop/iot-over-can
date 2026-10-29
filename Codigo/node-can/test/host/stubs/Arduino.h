@@ -27,6 +27,7 @@ typedef uint8_t byte;
 
 uint32_t millis();
 uint32_t micros();
+inline uint32_t getCpuFrequencyMhz() { return 240; }
 void delay(uint32_t ms);
 inline void pinMode(int, int) {}
 inline void digitalWrite(int, int) {}

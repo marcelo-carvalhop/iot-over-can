@@ -12,6 +12,7 @@
 #include "wireless_link.h"
 #include "net_metrics.h"
 #include "fault_injection.h"
+#include "pesquisa.h"
 
 /* =========================================================
  * CONFIGURACAO LOCAL DO NO
@@ -1205,7 +1206,9 @@ void gatewayObserveHeartbeat(uint8_t leader,
   Serial.print(rateMode);
   Serial.print(" periodo=");
   Serial.print(heartbeatPeriodMs);
-  Serial.println(" ms");
+  // Instante em que a Probe tratou o quadro (relógio dela): a distribuição dos
+  // intervalos é a variação observada do sinal de presença.
+  Serial.printf(" ms t_us=%llu\n", static_cast<unsigned long long>(pesquisaMonoUs()));
 }
 
 void gatewayCheckLeaderFailure() {
@@ -1767,7 +1770,8 @@ void setup() {
     Serial.println("[GW] Iniciar eleicao: 22 00 FF 01");
     Serial.println("[GW] Solicitar status: 22 20 FF 00");
     Serial.println("[GW] Velocidade heartbeat: 22 30 FF 01..05");
-    Serial.println("[PROBE 00] FIRMWARE=0.19.0 FEATURES=WIRELESS_DATA,ACOUSTIC_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER");
+    Serial.println("[PROBE 00] FIRMWARE=0.21.0 FEATURES=WIRELESS_DATA,ACOUSTIC_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER,RESEARCH");
+    pesquisaPrintConfig();
   } else {
     state = STATE_IDLE;
     forceNetworkStatusLocal(NODE_ID, STATUS_UNKNOWN);

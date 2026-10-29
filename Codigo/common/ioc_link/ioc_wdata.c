@@ -495,6 +495,27 @@ size_t ioc_wd_link_encode(const ioc_wd_link *in, uint8_t out[IOC_WD_LINK_LEN]) {
     return IOC_WD_LINK_LEN;
 }
 
+size_t ioc_wd_linkstats_encode(const ioc_wd_linkstats *in, uint8_t out[IOC_WD_LINKSTATS_LEN]) {
+    put_u16(&out[0], in->crypto_rx_us);
+    put_u16(&out[2], in->crypto_tx_us);
+    put_u16(&out[4], in->crypto_max_us);
+    put_u16(&out[6], in->handshake_us);
+    put_u16(&out[8], in->bridge_avg_100us);
+    put_u16(&out[10], in->bridge_max_100us);
+    return IOC_WD_LINKSTATS_LEN;
+}
+
+int ioc_wd_linkstats_decode(const uint8_t *buf, size_t len, ioc_wd_linkstats *out) {
+    if (!buf || !out || len != IOC_WD_LINKSTATS_LEN) return 0;
+    out->crypto_rx_us = get_u16(&buf[0]);
+    out->crypto_tx_us = get_u16(&buf[2]);
+    out->crypto_max_us = get_u16(&buf[4]);
+    out->handshake_us = get_u16(&buf[6]);
+    out->bridge_avg_100us = get_u16(&buf[8]);
+    out->bridge_max_100us = get_u16(&buf[10]);
+    return 1;
+}
+
 int ioc_wd_link_decode(const uint8_t *buf, size_t len, ioc_wd_link *out) {
     if (!buf || !out || (len != IOC_WD_LINK_LEN && len != IOC_WD_LINK_LEN_V017)) return 0;
     out->state = buf[0];
