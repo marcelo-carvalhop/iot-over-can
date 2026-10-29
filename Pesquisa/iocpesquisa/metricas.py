@@ -48,7 +48,9 @@ def calcular(cabecalho: dict[str, Any], registros: list[dict[str, Any]]) -> dict
     out: dict[str, Any] = {"janela_ms": t_fim - t_ini}
     amostras: dict[str, list[float]] = {}
 
-    # Ecos.
+    # Ecos. A amostragem (POISSON ou PERIODIC) vem da linha ECHO_START da Probe.
+    amostragens = sorted({e.campos.get("sampling", "PERIODIC") for e in dentro if e.tipo == "ECHO_START"})
+    out["eco_amostragem"] = ",".join(amostragens) if amostragens else None
     for caminho in ("LOCAL", "SENSOR"):
         ecos = [e for e in dentro if e.tipo == "ECHO" and e.campos.get("path") == caminho]
         ok = [e for e in ecos if _nao_negativo(e, "rtt_us")]

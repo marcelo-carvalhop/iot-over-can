@@ -81,7 +81,7 @@
     "gravação das sessões seriais reais no formato de --replay, com segredos mascarados",
     "fuzz determinístico dos decodificadores do enlace e do plano de dados (ASan/UBSan) e das linhas da TUI",
     "vínculos dos sensores gravados na NVS dos Nodes e retomados depois de um reinício, sem disputar o que outro Node assumiu",
-    "instrumento de pesquisa: carimbos t_us da Probe, eco no plano de dados, carga com semente e prioridade MID/MIX, custo da criptografia no Node e BENCH CRYPTO nas placas, parâmetros L/H/T da máquina de estados, desenho fatorial com sementes, coleta com proveniência e análise com IC, Wilson, Hedges, Cliff e Holm"
+    "instrumento de pesquisa: carimbos t_us da Probe, eco no plano de dados com amostragem de Poisson e fase da janela sorteada por repetição, carga com semente e prioridade MID/MIX, custo da criptografia no Node e BENCH CRYPTO nas placas, parâmetros L/H/T da máquina de estados, desenho fatorial com sementes, coleta com proveniência e análise com IC, Wilson, Hedges, Cliff e Holm"
   ],
   "pending": [
     "validação em bancada do plano de dados wireless",

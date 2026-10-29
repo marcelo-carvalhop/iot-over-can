@@ -1747,11 +1747,14 @@ struct ProbePending {
 };
 
 /*
- * Trem de ecos (pesquisa). ECHO <node>.<filho> <n> <período_ms> [LOCAL|SENSOR]
+ * Trem de ecos (pesquisa). ECHO <node>.<filho> <n> <período_ms> [LOCAL|SENSOR] [semente]
  * envia n comandos IOC_WD_OP_ECHO e mede, no relógio da Probe, do envio do
  * quadro 0x304 à confirmação remontada (0x380+N). LOCAL: só o caminho CAN do
  * plano de dados; SENSOR: inclui a ida e volta Wi-Fi ao sensor, que o Node
- * mede no relógio dele e informa à parte (wl_us).
+ * mede no relógio dele e informa à parte (wl_us). Com semente (não nula), os
+ * intervalos entre sondas são exponenciais de média <período_ms> (amostragem
+ * de Poisson, ver pesquisa.h); sem ela, o período é fixo.
+ *   [GW] ECHO_START node=2 child=1 path=SENSOR count=30 period_ms=500 sampling=POISSON seed=7 t_us=...
  *   [GW] ECHO node=2 child=1 path=SENSOR n=1 seq=7 status=APPLIED rtt_us=14250 wl_us=11800 t_us=...
  *   [GW] ECHO_DONE node=2 child=1 path=SENSOR sent=30 received=30 lost=0 min_us=... avg_us=... max_us=...
  */
@@ -1769,6 +1772,8 @@ struct ProbeEcho {
   uint16_t received = 0;
   uint16_t lost = 0;
   uint32_t periodUs = 0;
+  uint32_t seed = 0;     // 0: período fixo; senão, amostragem de Poisson
+  uint32_t rng = 0;
   uint64_t nextUs = 0;
   uint64_t sumUs = 0;
   uint32_t minUs = 0xFFFFFFFFu;
@@ -2397,6 +2402,10 @@ void probeEchoAck(uint8_t node, uint8_t child, const ioc_wd_ack& ack) {
   }
 }
 
+uint32_t probeEchoInterval(ProbeEcho& e) {
+  return e.seed ? pesquisaPoissonUs(e.rng, e.periodUs) : e.periodUs;
+}
+
 void probeEchoPoll() {
   ProbeEcho& e = probeEcho;
   if (!e.active) return;
@@ -2443,15 +2452,23 @@ void probeEchoPoll() {
         ++e.sent;
         waiting = true;
       }
-      e.nextUs = now + e.periodUs;
+      e.nextUs = now + probeEchoInterval(e);
     }
   }
   if (e.sent >= e.total && !waiting) probeEchoFinish();
 }
 
+bool isDecimal(const char* text) {
+  if (!text || !*text) return false;
+  for (const char* p = text; *p; ++p) {
+    if (*p < '0' || *p > '9') return false;
+  }
+  return true;
+}
+
 bool probeEchoCommand(const char* command) {
-  // ECHO <node>.<filho> <n> <período_ms> [LOCAL|SENSOR] | ECHO CANCEL
-  char line[64];
+  // ECHO <node>.<filho> <n> <período_ms> [LOCAL|SENSOR] [semente] | ECHO CANCEL
+  char line[80];
   strncpy(line, command + 4, sizeof(line) - 1);
   line[sizeof(line) - 1] = '\0';
   char* save = nullptr;
@@ -2463,14 +2480,22 @@ bool probeEchoCommand(const char* command) {
   char* countText = strtok_r(nullptr, " \t", &save);
   char* periodText = strtok_r(nullptr, " \t", &save);
   char* pathText = strtok_r(nullptr, " \t", &save);
+  char* seedText = strtok_r(nullptr, " \t", &save);
+  if (isDecimal(pathText) && !seedText) {  // ECHO 1.1 30 500 <semente>
+    seedText = pathText;
+    pathText = nullptr;
+  }
   unsigned node = 0, child = 0;
   const unsigned long count = countText ? strtoul(countText, nullptr, 10) : 0;
   const unsigned long period = periodText ? strtoul(periodText, nullptr, 10) : 0;
+  const unsigned long seed = seedText ? strtoul(seedText, nullptr, 10) : 0;
   const bool viaSensor = pathText && strcasecmp(pathText, "SENSOR") == 0;
   if (!target || sscanf(target, "%u.%u", &node, &child) != 2 || node == 0 || node >= 32 || child == 0 ||
       child > IOC_WD_MAX_CHILD || count == 0 || count > PROBE_ECHO_MAX || period < 20 || period > 60000 ||
-      (pathText && !viaSensor && strcasecmp(pathText, "LOCAL") != 0)) {
-    Serial.println("[GW] ECHO_ERROR use: ECHO <node>.<filho> <n 1..10000> <periodo_ms 20..60000> [LOCAL|SENSOR] | ECHO CANCEL");
+      (pathText && !viaSensor && strcasecmp(pathText, "LOCAL") != 0) || (seedText && !isDecimal(seedText)) ||
+      strtok_r(nullptr, " \t", &save) != nullptr) {
+    Serial.println("[GW] ECHO_ERROR use: ECHO <node>.<filho> <n 1..10000> <periodo_ms 20..60000> [LOCAL|SENSOR] "
+                   "[semente] | ECHO CANCEL");
     return true;
   }
   if (probeEcho.active) probeEchoFinish();
@@ -2481,10 +2506,15 @@ bool probeEchoCommand(const char* command) {
   probeEcho.viaSensor = viaSensor;
   probeEcho.total = static_cast<uint16_t>(count);
   probeEcho.periodUs = static_cast<uint32_t>(period) * 1000u;
-  probeEcho.nextUs = pesquisaMonoUs();
+  probeEcho.seed = static_cast<uint32_t>(seed);
+  probeEcho.rng = pesquisaSemente(probeEcho.seed);
+  // Com Poisson, também a primeira sonda espera um intervalo sorteado: o
+  // instante do comando não fica alinhado à primeira medida.
+  probeEcho.nextUs = pesquisaMonoUs() + (probeEcho.seed ? probeEchoInterval(probeEcho) : 0u);
   for (auto& p : probeEcho.pend) p.used = false;
-  Serial.printf("[GW] ECHO_START node=%u child=%u path=%s count=%lu period_ms=%lu t_us=%llu\n", node, child,
-                viaSensor ? "SENSOR" : "LOCAL", count, period, static_cast<unsigned long long>(pesquisaMonoUs()));
+  Serial.printf("[GW] ECHO_START node=%u child=%u path=%s count=%lu period_ms=%lu sampling=%s seed=%lu t_us=%llu\n",
+                node, child, viaSensor ? "SENSOR" : "LOCAL", count, period, seed ? "POISSON" : "PERIODIC", seed,
+                static_cast<unsigned long long>(pesquisaMonoUs()));
   return true;
 }
 

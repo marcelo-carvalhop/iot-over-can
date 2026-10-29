@@ -46,7 +46,7 @@ resultados/<campanha>/
   relatorio/figuras/*.png         distribuição acumulada do eco e variação do sinal de presença
 ```
 
-O relatório inteiro sai dos registros brutos: apagar `relatorio/` e rodar `analisar` reproduz os mesmos números.
+O relatório inteiro sai dos registros brutos: apagar `relatorio/` e rodar `analisar` reproduz os mesmos números. As métricas de cada execução ficam em cache (`metricas.json`), calculadas em paralelo e refeitas sozinhas quando o código das métricas muda.
 
 ## Desenho
 
@@ -73,7 +73,9 @@ O relatório inteiro sai dos registros brutos: apagar `relatorio/` e rodar `anal
 | `iot` | `on`: os Nodes encaminham a telemetria ao CAN; `off`: sessão mantida, encaminhamento desligado |
 | `sensors` | sensores associados (bancada virtual: 0 a 2) |
 | `warmup_s`, `duration_s` | aquecimento e janela de medição |
-| `echo_n`, `echo_period_ms` | trens de eco (primeiro `LOCAL`, depois `SENSOR`) |
+| `echo_n`, `echo_period_ms` | trens de eco (primeiro `LOCAL`, depois `SENSOR`); `echo_period_ms` é a média dos intervalos |
+| `echo_sampling` | `poisson` (padrão: intervalos exponenciais, sem entrar em fase com as atividades periódicas da rede) ou `periodic` |
+| `echo_seed`, `phase_ms` | sorteados por repetição a partir da semente da execução: semente do eco e fase do início da janela (0 a 5 s). Podem ser fixados em `fixos` |
 | `fault`, `fault_at_s`, `fault_s` | `none`, `sensor_off`, `owner_power`, `ap_outage`, `drop_session`; instante na janela e duração |
 | `alvo`, `alvo_uuid` | sensor de referência (padrão: filho 1 do Node 1, o sensor A da bancada virtual) |
 | `fw_assoc_stale_ms`, `fw_assoc_lost_ms`, `fw_assoc_hysteresis_ms`, `fw_stream_period_ms` | parâmetros de compilação: a bancada virtual é compilada para cada combinação; na física, a coleta confere a linha `CONFIG` da Probe |
@@ -82,7 +84,7 @@ O relatório inteiro sai dos registros brutos: apagar `relatorio/` e rodar `anal
 
 | Placa | Comando | Saída |
 |---|---|---|
-| Probe 00 | `ECHO <node>.<filho> <n> <período_ms> [LOCAL\|SENSOR]`, `ECHO CANCEL` | `[GW] ECHO ... rtt_us= wl_us= t_us=`, `[GW] ECHO_DONE ...` |
+| Probe 00 | `ECHO <node>.<filho> <n> <período_ms> [LOCAL\|SENSOR] [semente]`, `ECHO CANCEL` (com semente, amostragem de Poisson) | `[GW] ECHO_START ... sampling= seed=`, `[GW] ECHO ... rtt_us= wl_us= t_us=`, `[GW] ECHO_DONE ...` |
 | Probe 00 | `FAULT LOAD <pct> <s> [HIGH\|MID\|LOW\|MIX] [semente]` | `FAULT_EVENT ... seed= seq_hash= t_us=` |
 | Probe 00 e Nodes | `CONFIG` | `[GW] CONFIG` com os parâmetros da compilação |
 | Probe 00 e Nodes | `BENCH CRYPTO [n]` | uma linha `BENCH` por operação e `BENCH_DONE` |

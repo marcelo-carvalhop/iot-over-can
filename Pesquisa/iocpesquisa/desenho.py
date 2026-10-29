@@ -20,8 +20,15 @@ from typing import Any
 
 PARAMETROS_CONHECIDOS = {
     "load_pct", "load_prio", "load_seed", "sensors", "iot", "warmup_s", "duration_s", "echo_n",
-    "echo_period_ms", "fault", "fault_at_s", "fault_s", "alvo", "alvo_uuid", "seed",
+    "echo_period_ms", "echo_sampling", "echo_seed", "phase_ms", "fault", "fault_at_s", "fault_s", "alvo",
+    "alvo_uuid", "seed",
 } | set()
+# Sorteados por execução (variam entre as repetições de uma mesma condição; não entram no hash de configuração).
+SORTEADOS_POR_EXECUCAO = ("seed", "load_seed", "echo_seed", "phase_ms")
+AMOSTRAGENS_ECO = {"poisson", "periodic"}
+# Maior período das atividades periódicas da rede (relatório do enlace a 5 s): a fase sorteada do início da
+# janela cobre esse intervalo inteiro.
+FASE_MAX_MS = 5000
 # Parâmetros de compilação (análise de sensibilidade): nome no desenho -> (define, campo da linha [GW] CONFIG).
 PARAMETROS_FIRMWARE = {
     "fw_assoc_stale_ms": ("IOT_ASSOC_STALE_MS", "assoc_stale_ms"),
@@ -70,6 +77,18 @@ def semente(base: int, bloco: str, condicao: str, repeticao: int) -> int:
     return value or 1
 
 
+def derivada(semente_execucao: int, rotulo: str) -> int:
+    """Semente própria de um sorteio da execução (eco, fase), independente da semente da carga."""
+    digest = hashlib.sha256(f"{semente_execucao}:{rotulo}".encode()).digest()
+    return int.from_bytes(digest[:4], "big") or 1
+
+
+def sorteios(semente_execucao: int) -> dict[str, int]:
+    """Sorteios por execução que quebram o alinhamento de fase entre a medida e as atividades periódicas."""
+    return {"echo_seed": derivada(semente_execucao, "eco"),
+            "phase_ms": derivada(semente_execucao, "fase") % FASE_MAX_MS}
+
+
 def _excluida(valores: dict[str, Any], regras: list[dict[str, Any]]) -> bool:
     for regra in regras:
         if all(valores.get(k) in (v if isinstance(v, list) else [v]) for k, v in regra.items()):
@@ -101,6 +120,10 @@ def validar(desenho: dict[str, Any]) -> None:
         falhas = set(bloco.get("fatores", {}).get("fault", [])) | {bloco.get("fixos", {}).get("fault", "none")}
         if falhas - FALHAS:
             raise ValueError(f"bloco {nome}: falhas desconhecidas {sorted(falhas - FALHAS)}")
+        amostragens = set(bloco.get("fatores", {}).get("echo_sampling", [])) | {
+            bloco.get("fixos", {}).get("echo_sampling", "poisson")}
+        if amostragens - AMOSTRAGENS_ECO:
+            raise ValueError(f"bloco {nome}: echo_sampling deve ser 'poisson' ou 'periodic'")
     for comp in desenho.get("comparacoes", []):
         if "fator" not in comp or "base" not in comp:
             raise ValueError("cada comparação precisa de 'fator' e 'base'")
@@ -130,6 +153,8 @@ def expandir(desenho: dict[str, Any]) -> list[Execucao]:
                 s = semente(base, bloco["nome"], cid, rep)
                 params = {**fixos, **valores, "seed": s}
                 params.setdefault("load_seed", s)
+                for chave, valor in sorteios(s).items():
+                    params.setdefault(chave, valor)
                 execucoes.append(Execucao(
                     id=f"{bloco['nome']}-{hashlib.sha256(cid.encode()).hexdigest()[:6]}-r{rep:03d}",
                     bloco=bloco["nome"], condicao=cid, repeticao=rep, semente=s, ordem=0, parametros=params))

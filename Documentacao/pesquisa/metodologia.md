@@ -69,6 +69,14 @@ O MCP2515 não registra o instante de chegada e o Node não compartilha relógio
 
 Sem sensor associado (linha de base), o Node responde ao eco `LOCAL` pelo mesmo caminho, com estado `UNKNOWN`: a medida continua válida para o barramento.
 
+### 3.3 Amostragem das sondas e fase
+
+As sondas de eco são enviadas com **intervalos exponenciais** de média `echo_period_ms` (amostragem de Poisson, RFC 2330, seção 11.1.1), limitados a [T/10, 5T], com semente própria por execução (`echo_seed`; o trem `SENSOR` usa `echo_seed + 1`). A Probe informa a amostragem na linha `ECHO_START` (`sampling=POISSON seed=...`), e o relatório a reproduz. O período fixo continua disponível (`echo_sampling: "periodic"`), mas o `verificar` aponta as execuções que o usam.
+
+O motivo foi observado na primeira campanha virtual, que usava período fixo de 500 ms. O Node publica o relatório do enlace a cada 5 s, e o trem de sondas entrou em fase com ele: com a integração desligada, uma sonda em cada dez caía sempre no mesmo instante do relatório e levava 1 ms a mais. O resultado foi um efeito espúrio, grande e "significativo": sem carga, a integração **ligada** parecia *reduzir* o p99 do eco de 2,57 para 1,57 ms. Esse efeito dependia só da fase, não da condição. Com intervalos exponenciais, cada sonda cai num ponto independente das atividades periódicas (sinal de presença a 1 s, PING a 3 s, relatório a 5 s), e a média das sondas estima a média no tempo (PASTA). As duas condições passaram a dar o mesmo valor (1,57 ms), como esperado. Na bancada física o risco é o mesmo: a deriva entre cristais (partes por milhão) não desfaz o alinhamento ao longo de um trem de 20 s.
+
+Pela mesma razão, o **início da janela** é deslocado por uma fase sorteada por execução (`phase_ms`, de 0 a 5 s, somada ao aquecimento), nas duas bancadas. Na bancada virtual, que é determinística, só a fase e as sementes distinguem uma repetição da outra. Sem elas, as 30 repetições de uma condição sem carga repetiriam a mesma execução: o IC teria largura zero e qualquer diferença viraria "significativa" (pseudorreplicação). O `verificar` confere que cada repetição tem semente, semente do eco e fase próprias. Mesmo assim, sem carga a bancada virtual pode dar o mesmo valor em todas as repetições. Nesse caso a variação nula é propriedade do modelo, que não tem ruído de CPU nem de rádio, e não pseudorreplicação.
+
 ## 4. Relógios e carimbos de tempo
 
 | Domínio | Fonte | Onde aparece | Resolução prática |
@@ -147,7 +155,8 @@ Equipamento da bancada física: Probe 00 e três Nodes ESP32 (`esp32dev`) com MC
 ## 11. Ameaças à validade
 
 - **Bancada e veículo**: barramento curto, de bancada; tráfego de fundo sintético, sem a distribuição de identificadores de um veículo real.
-- **Bancada virtual**: executa o firmware real dos Nodes, mas não modela o tempo de CPU (a criptografia tem custo zero ali), o rádio, a coexistência BLE/Wi-Fi nem a temporização do MCP2515 por SPI. Serve para validar o método e a lógica; números de tempo para o texto vêm da bancada física.
+- **Bancada virtual**: executa o firmware real dos Nodes, mas não modela o tempo de CPU (a criptografia tem custo zero ali), o rádio, a coexistência BLE/Wi-Fi nem a temporização do MCP2515 por SPI. As fases relativas entre os Nodes (instantes de partida, deriva dos cristais) também são fixas; só o início da janela e as sondas são sorteados (seção 3.3). Serve para validar o método e a lógica; números de tempo para o texto vêm da bancada física.
+- **Sincronização da medida com a rede**: sondas e janela com fase sorteada (seção 3.3). Medidas que não são sondas, como o intervalo do sinal de presença e da telemetria, observam todas as ocorrências da janela e não dependem de fase.
 - **Resolução**: carimbos com a latência do laço (cerca de 1 ms). Diferenças abaixo disso não são afirmadas; o limite analítico acompanha.
 - **Escala**: um ou dois sensores, três Nodes. Os limites práticos do projeto (quatro sensores por ponto de acesso e quatro vínculos por Node) e a análise de capacidade (`rta.py`) indicam até onde se pode extrapolar.
 - **Instante de referência humano** no sensor desligado da bancada física (seção 6).

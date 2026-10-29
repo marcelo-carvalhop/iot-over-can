@@ -124,6 +124,24 @@ class DesenhoTest(unittest.TestCase):
         outro = desenho.expandir({**d, "semente_base": 4})
         self.assertNotEqual([e.semente for e in execs], [e.semente for e in outro])
 
+    def test_sorteios_por_repeticao_quebram_a_fase(self) -> None:
+        # Cada repetição sorteia a semente do eco e a fase do início da janela; sem isso, a bancada virtual
+        # (determinística) repetiria a mesma execução e as sondas periódicas cairiam sempre no mesmo ponto das
+        # atividades periódicas da rede.
+        d = {"nome": "t", "semente_base": 9, "blocos": [{"nome": "b", "repeticoes": 30, "fatores": {"iot": ["on"]}}]}
+        execs = desenho.expandir(d)
+        self.assertEqual(len({e.parametros["echo_seed"] for e in execs}), 30)
+        fases = [e.parametros["phase_ms"] for e in execs]
+        self.assertTrue(all(0 <= f < desenho.FASE_MAX_MS for f in fases))
+        self.assertGreater(len(set(fases)), 25)
+        self.assertGreater(max(fases) - min(fases), desenho.FASE_MAX_MS // 2)
+        for e in execs:
+            self.assertNotEqual(e.parametros["echo_seed"], e.semente)
+            self.assertEqual({k: e.parametros[k] for k in ("echo_seed", "phase_ms")}, desenho.sorteios(e.semente))
+        # Fixar um sorteio no desenho é possível (por exemplo, para reproduzir o trem periódico antigo).
+        fixo = desenho.expandir({**d, "blocos": [{**d["blocos"][0], "fixos": {"phase_ms": 0}}]})
+        self.assertEqual({e.parametros["phase_ms"] for e in fixo}, {0})
+
     def test_validacao(self) -> None:
         base = {"nome": "t", "blocos": [{"nome": "b", "repeticoes": 1, "fatores": {"load_pct": [0]}}]}
         desenho.validar(base)
@@ -134,6 +152,7 @@ class DesenhoTest(unittest.TestCase):
             {**base, "blocos": [{"nome": "b", "repeticoes": 1, "fatores": {"velocidade": [1]}}]},
             {**base, "blocos": [{"nome": "b", "repeticoes": 1, "fatores": {"fault": ["meteoro"]}}]},
             {**base, "comparacoes": [{"fator": "iot"}]},
+            {**base, "blocos": [{"nome": "b", "repeticoes": 1, "fixos": {"echo_sampling": "aleatoria"}}]},
         ):
             with self.assertRaises(ValueError):
                 desenho.validar(ruim)

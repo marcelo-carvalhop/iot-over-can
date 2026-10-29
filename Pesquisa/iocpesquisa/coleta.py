@@ -33,8 +33,22 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from iocpesquisa.desenho import PARAMETROS_FIRMWARE, Execucao, expandir, firmware_de, plano, sha256_json
-from iocpesquisa.proveniencia import ambiente, hash_configuracao, parametros_config, raiz_repositorio
+from iocpesquisa.desenho import (
+    PARAMETROS_FIRMWARE,
+    SORTEADOS_POR_EXECUCAO,
+    Execucao,
+    expandir,
+    firmware_de,
+    plano,
+    sha256_json,
+    sorteios,
+)
+from iocpesquisa.proveniencia import (
+    ambiente,
+    hash_configuracao,
+    parametros_config,
+    raiz_repositorio,
+)
 
 STAMP = re.compile(r"^@(\d+) (.*)$")
 MARK = re.compile(r"^# t=(\d+) pesquisa (.*)$")
@@ -47,7 +61,30 @@ def _agora() -> str:
 
 
 def parametros_sem_semente(params: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in params.items() if k not in ("seed", "load_seed")}
+    return {k: v for k, v in params.items() if k not in SORTEADOS_POR_EXECUCAO}
+
+
+def com_sorteios(params: dict[str, Any]) -> dict[str, Any]:
+    """Parâmetros da execução com os sorteios que faltarem (planos anteriores a eles, testes)."""
+    return {**sorteios(int(params.get("seed", 1))), **params}
+
+
+def comandos_eco(params: dict[str, Any]) -> tuple[str, str] | None:
+    """Comandos dos dois trens de eco (LOCAL e SENSOR), iguais nas duas bancadas.
+
+    Amostragem de Poisson por padrão (ver Codigo/node-can/include/pesquisa.h);
+    cada trem tem a própria semente para que as sequências de intervalos não
+    se repitam entre eles."""
+    eco_n = int(params.get("echo_n", 0))
+    if not eco_n:
+        return None
+    alvo = str(params.get("alvo", ALVO_PADRAO))
+    periodo = int(params.get("echo_period_ms", 500))
+    if params.get("echo_sampling", "poisson") == "periodic":
+        return (f"ECHO {alvo} {eco_n} {periodo} LOCAL", f"ECHO {alvo} {eco_n} {periodo} SENSOR")
+    s = int(com_sorteios(params)["echo_seed"]) & 0xFFFFFFFF or 1
+    s_sensor = (s + 1) & 0xFFFFFFFF or 1
+    return (f"ECHO {alvo} {eco_n} {periodo} LOCAL {s}", f"ECHO {alvo} {eco_n} {periodo} SENSOR {s_sensor}")
 
 
 @dataclass
@@ -97,7 +134,7 @@ def argumentos_virtuais(binario: Path, params: dict[str, Any]) -> list[str]:
 
 def coletar_virtual(binario: Path, execucao: Execucao, destino: Path, timeout_s: float = 900) -> dict[str, Any]:
     """Executa uma execução na bancada virtual (rápida e determinística dada a semente)."""
-    params = dict(execucao.parametros)
+    params = com_sorteios(execucao.parametros)
     params.setdefault("alvo", ALVO_PADRAO)
     params.setdefault("alvo_uuid", UUID_PADRAO)
     args = argumentos_virtuais(binario, params)
@@ -193,7 +230,7 @@ def coletar_fisica(porta: Porta, execucao: Execucao, destino: Path,
                    relogio: Callable[[], float] = time.monotonic, dormir: Callable[[float], None] = time.sleep,
                    ) -> dict[str, Any]:
     """Executa o protocolo na Probe 00 real. Os sensores dos alvos já devem estar associados."""
-    params = dict(execucao.parametros)
+    params = com_sorteios(execucao.parametros)
     alvo = str(params.get("alvo", ALVO_PADRAO))
     node = alvo.split(".")[0]
     t0_ns = time.monotonic_ns()
@@ -223,19 +260,19 @@ def coletar_fisica(porta: Porta, execucao: Execucao, destino: Path,
         estado = "ON" if params.get("iot", "on") != "off" else "OFF"
         if int(params.get("sensors", 1)) > 0:
             enviar(f"CMD TARGET={alvo} ACTION=TELEMETRY STATE={estado} TX=pesquisa")
-        esperar(float(params.get("warmup_s", 10)))
+        # Aquecimento mais a fase sorteada (phase_ms), como na bancada virtual.
+        esperar(float(params.get("warmup_s", 10)) + float(params.get("phase_ms", 0)) / 1000.0)
         marca("janela=INICIO")
         t_janela = relogio()
         duracao = float(params.get("duration_s", 60))
         if int(params.get("load_pct", 0)) > 0:
             enviar(f"FAULT LOAD {params['load_pct']} {int(duracao)} {params.get('load_prio', 'HIGH')} "
                    f"{params.get('load_seed', params.get('seed', 0))}")
-        eco_n = int(params.get("echo_n", 0))
-        periodo = int(params.get("echo_period_ms", 500))
-        fase_eco = "LOCAL" if eco_n else "FIM"
+        ecos = comandos_eco({**params, "alvo": alvo})
+        fase_eco = "LOCAL" if ecos else "FIM"
         marca_eco = len(leitor.copia())
-        if eco_n:
-            enviar(f"ECHO {alvo} {eco_n} {periodo} LOCAL")
+        if ecos:
+            enviar(ecos[0])
         falha = params.get("fault", "none")
         falha_em = float(params.get("fault_at_s", 10))
         falha_s = float(params.get("fault_s", 20))
@@ -246,8 +283,8 @@ def coletar_fisica(porta: Porta, execucao: Execucao, destino: Path,
             decorrido = relogio() - t_janela
             if fase_eco == "LOCAL" and leitor.tem(f"ECHO_DONE node={node}", marca_eco):
                 fase_eco = "FIM"
-                if int(params.get("sensors", 1)) > 0:
-                    enviar(f"ECHO {alvo} {eco_n} {periodo} SENSOR")
+                if ecos and int(params.get("sensors", 1)) > 0:
+                    enviar(ecos[1])
             if not falha_iniciada and decorrido >= falha_em:
                 falha_iniciada = True
                 if falha == "sensor_off":

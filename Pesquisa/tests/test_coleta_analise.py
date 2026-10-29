@@ -107,8 +107,9 @@ class ColetaFisicaTest(unittest.TestCase):
                                       relogio=relogio.agora, dormir=relogio.dormir)
             self.assertEqual(r["status"], "ok", r)
             self.assertEqual(r["config_firmware"]["assoc_stale_ms"], "15000")
+            s = desenho.sorteios(99)["echo_seed"]
             esperado = ["PROBE_VERSION", "CONFIG", "CMD TARGET=1.1 ACTION=TELEMETRY STATE=OFF TX=pesquisa",
-                        "FAULT LOAD 50 20 HIGH 99", "ECHO 1.1 5 300 LOCAL", "ECHO 1.1 5 300 SENSOR",
+                        "FAULT LOAD 50 20 HIGH 99", f"ECHO 1.1 5 300 LOCAL {s}", f"ECHO 1.1 5 300 SENSOR {s + 1}",
                         "FAULT POWER_CYCLE 1 8", "ECHO CANCEL", "CMD TARGET=1.1 ACTION=TELEMETRY STATE=ON TX=pesquisa"]
             self.assertEqual(probe.comandos, esperado)
             cab, regs = coleta.ler_traco(Path(tmp) / "traco.jsonl")
@@ -123,6 +124,28 @@ class ColetaFisicaTest(unittest.TestCase):
             self.assertIn("deteccao_sessao_ms", m)
             self.assertIsNone(m["deteccao_sessao_ms"])
         self.assertEqual(avisos, [])  # owner_power não pede nada ao operador
+
+    def test_eco_de_poisson_por_padrao_e_sorteios_fora_do_hash(self) -> None:
+        params = {"seed": 5, "echo_n": 40, "echo_period_ms": 500, **desenho.sorteios(5)}
+        local, sensor = coleta.comandos_eco(params)
+        s = params["echo_seed"]
+        self.assertEqual((local, sensor), (f"ECHO 1.1 40 500 LOCAL {s}", f"ECHO 1.1 40 500 SENSOR {s + 1}"))
+        self.assertEqual(coleta.comandos_eco({**params, "echo_sampling": "periodic"}),
+                         ("ECHO 1.1 40 500 LOCAL", "ECHO 1.1 40 500 SENSOR"))
+        self.assertIsNone(coleta.comandos_eco({**params, "echo_n": 0}))
+        # Repetições de uma condição só diferem nos sorteios: o hash de configuração é o mesmo.
+        outra = {**params, "seed": 6, "load_seed": 6, **desenho.sorteios(6)}
+        self.assertEqual(coleta.parametros_sem_semente(params), coleta.parametros_sem_semente(outra))
+
+    def test_sorteios_repetidos_sao_pseudorreplicacao(self) -> None:
+        def execucao(rep: int, **params: object) -> tuple[dict, dict]:
+            return ({"bloco": "b", "condicao": "c", "parametros": params}, {})
+        boas = [execucao(r, seed=r, echo_seed=100 + r, phase_ms=r * 7) for r in range(3)]
+        self.assertEqual(relatorio.sorteios_repetidos(boas), [])
+        repetidas = [execucao(r, seed=r, echo_seed=100, phase_ms=0) for r in range(3)]
+        self.assertTrue(any("echo_seed repetida" in p for p in relatorio.sorteios_repetidos(repetidas)))
+        antigas = [execucao(r, seed=r) for r in range(3)]
+        self.assertEqual(len(relatorio.sorteios_repetidos(antigas)), 2)  # sem echo_seed e sem phase_ms
 
     def test_firmware_diferente_do_pedido_e_recusado(self) -> None:
         self.assertEqual(coleta.conferir_firmware({"fw_assoc_stale_ms": 15000}, {"assoc_stale_ms": "15000"}), "")
@@ -184,6 +207,9 @@ class PontaAPontaTest(unittest.TestCase):
         self.assertGreater(res["comparacoes"], 5)
         problemas = [p for p in relatorio.verificar(base) if "alterações não gravadas" not in p]
         self.assertEqual(problemas, [])
+        # O eco usa amostragem de Poisson, e as repetições diferem na fase e nos instantes das sondas.
+        execs = relatorio.carregar_execucoes(base)[0]
+        self.assertEqual({met.get("eco_amostragem") for m, met in execs if m["bloco"] == "desempenho"}, {"POISSON"})
         linhas = {(c["bloco"], c["condicao"]): c for c in relatorio.agregar(relatorio.carregar_execucoes(base)[0])}
         carga50 = linhas[("desempenho", "iot=on,load_pct=50")]
         self.assertAlmostEqual(carga50["carga_obtida_pct_media"], 50.0, delta=0.5)

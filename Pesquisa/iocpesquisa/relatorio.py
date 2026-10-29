@@ -16,8 +16,11 @@ diferença de médias, g de Hedges, delta de Cliff e Mann-Whitney.
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import math
+import os
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -65,24 +68,57 @@ def _fmt(v: Any, nd: int = 1) -> str:
     return f"{v:.{nd}f}"
 
 
-def carregar_execucoes(base: Path) -> tuple[list[tuple[dict[str, Any], dict[str, Any]]], list[dict[str, Any]]]:
-    """(manifesto, métricas) de cada execução completa; e as que falharam."""
-    boas, falhas = [], []
+def _versao_metricas() -> str:
+    """Hash do código que define as métricas: um cache calculado por outra versão é refeito."""
+    h = hashlib.sha256()
+    for nome in ("metricas.py", "traco.py", "carga.py"):
+        h.update((Path(__file__).parent / nome).read_bytes())
+    return h.hexdigest()[:16]
+
+
+VERSAO_METRICAS = _versao_metricas()
+
+
+def _metricas_de(pasta: str) -> dict[str, Any]:
+    cab, regs = ler_traco(Path(pasta) / "traco.jsonl")
+    met = calcular(cab, regs)
+    met["versao_metricas"] = VERSAO_METRICAS
+    (Path(pasta) / "metricas.json").write_text(json.dumps(met, ensure_ascii=False) + "\n", encoding="utf-8")
+    return met
+
+
+def _cache_valido(pasta: Path) -> dict[str, Any] | None:
+    cache, traco = pasta / "metricas.json", pasta / "traco.jsonl"
+    if not cache.exists() or cache.stat().st_mtime < traco.stat().st_mtime:
+        return None
+    met = json.loads(cache.read_text(encoding="utf-8"))
+    return met if met.get("versao_metricas") == VERSAO_METRICAS else None
+
+
+def carregar_execucoes(base: Path, paralelo: int | None = None,
+                       ) -> tuple[list[tuple[dict[str, Any], dict[str, Any]]], list[dict[str, Any]]]:
+    """(manifesto, métricas) de cada execução completa; e as que falharam.
+
+    As métricas ficam em ``metricas.json`` ao lado do registro; as que faltam
+    (ou vieram de outra versão do código das métricas) são calculadas em
+    paralelo."""
+    boas: list[tuple[str, dict[str, Any], dict[str, Any] | None]] = []
+    falhas = []
     for manifesto_path in sorted(base.glob("execucoes/*/manifesto.json")):
         m = json.loads(manifesto_path.read_text(encoding="utf-8"))
         if m.get("status") != "ok":
             falhas.append(m)
             continue
-        traco = manifesto_path.parent / "traco.jsonl"
-        cache = manifesto_path.parent / "metricas.json"
-        if cache.exists() and cache.stat().st_mtime >= traco.stat().st_mtime:
-            met = json.loads(cache.read_text(encoding="utf-8"))
-        else:
-            cab, regs = ler_traco(traco)
-            met = calcular(cab, regs)
-            cache.write_text(json.dumps(met, ensure_ascii=False) + "\n", encoding="utf-8")
-        boas.append((m, met))
-    return boas, falhas
+        boas.append((str(manifesto_path.parent), m, _cache_valido(manifesto_path.parent)))
+    faltam = [pasta for pasta, _, met in boas if met is None]
+    calculadas: dict[str, dict[str, Any]] = {}
+    trabalhadores = min(paralelo or os.cpu_count() or 1, len(faltam))
+    if trabalhadores > 1:
+        with ProcessPoolExecutor(max_workers=trabalhadores) as pool:
+            calculadas = dict(zip(faltam, pool.map(_metricas_de, faltam, chunksize=8)))
+    else:
+        calculadas = {pasta: _metricas_de(pasta) for pasta in faltam}
+    return [(m, met if met is not None else calculadas[pasta]) for pasta, m, met in boas], falhas
 
 
 def agregar(execs: list[tuple[dict[str, Any], dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -307,6 +343,9 @@ def analisar(base: Path, figuras: bool = True) -> dict[str, Any]:
         "- Parâmetros da compilação informados pela Probe ([GW] CONFIG): "
         + (", ".join(f"`{k}={v}`" for k, v in sorted(config.items())) if config else "—"),
         f"- Execuções: {len(execs)} completas de {planejadas} planejadas; {len(falhas)} com erro",
+        "- Amostragem do eco: " + (", ".join(sorted({met["eco_amostragem"] for _, met in execs
+                                                     if met.get("eco_amostragem")})) or "—")
+        + "; fase do início da janela sorteada por execução (`phase_ms`)",
         (f"- Configuração idêntica entre as repetições de cada condição: "
         f"{'sim' if all(c['hash_configuracao_unico'] for c in condicoes) else '**não** (ver condicoes.csv)'}"),
         (f"- Sequência de carga conferida pela semente: "
@@ -397,8 +436,32 @@ def analisar(base: Path, figuras: bool = True) -> dict[str, Any]:
             "figuras": imagens, "relatorio": str(dest / "relatorio.md")}
 
 
+def sorteios_repetidos(execs: list[tuple[dict[str, Any], dict[str, Any]]]) -> list[str]:
+    """Condições em que as repetições não sortearam valores próprios (semente, semente do eco, fase).
+
+    Repetições com os mesmos sorteios refazem a mesma execução: a variação entre
+    elas some, o IC sai com largura zero e qualquer diferença vira "significativa"
+    (pseudorreplicação). Na bancada virtual, que é determinística, só os sorteios
+    distinguem uma repetição da outra."""
+    grupos: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for m, _ in execs:
+        grupos.setdefault((m["bloco"], m["condicao"]), []).append(m.get("parametros", {}))
+    problemas = []
+    for (bloco, cond), lista in sorted(grupos.items()):
+        if len(lista) < 2:
+            continue
+        for chave in ("seed", "echo_seed", "phase_ms"):
+            vals = [p.get(chave) for p in lista]
+            if all(v is None for v in vals):
+                problemas.append(f"{bloco}: {cond}: {chave} não sorteado por repetição (plano anterior a esse sorteio)")
+            elif chave != "phase_ms" and len(set(map(str, vals))) < len(vals):
+                # A fase (0 a 5 s) pode repetir por acaso; as sementes de 32 bits, não.
+                problemas.append(f"{bloco}: {cond}: {chave} repetida entre repetições (pseudorreplicação)")
+    return problemas
+
+
 def verificar(base: Path) -> list[str]:
-    """Problemas de reprodutibilidade encontrados na campanha (lista vazia = nada a apontar)."""
+    """Problemas de reprodutibilidade ou de validade encontrados na campanha (lista vazia = nada a apontar)."""
     problemas = []
     desenho = json.loads((base / "desenho.json").read_text(encoding="utf-8"))
     from iocpesquisa.desenho import plano as gerar_plano
@@ -419,6 +482,11 @@ def verificar(base: Path) -> list[str]:
     for cond, hashes in por_cond.items():
         if len(hashes) > 1:
             problemas.append(f"{cond[0]}: {cond[1]}: repetições com configurações diferentes")
+    problemas += sorteios_repetidos(execs)
+    periodicas = sum(1 for _, met in execs if "PERIODIC" in (met.get("eco_amostragem") or ""))
+    if periodicas:
+        problemas.append(f"{periodicas} execução(ões) com eco de período fixo: as sondas podem entrar em fase com as "
+                         "atividades periódicas da rede (use echo_sampling=poisson)")
     if sujas:
         problemas.append(f"{sujas} execução(ões) coletada(s) com alterações não gravadas no código "
                          "(grave um commit antes de uma campanha que vá para o texto)")

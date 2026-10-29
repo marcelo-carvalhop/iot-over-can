@@ -2059,6 +2059,13 @@ int scenarioResearch() {
   const unsigned long durationS = paramU("duration_s", 60);
   const unsigned long echoN = paramU("echo_n", 30);
   const unsigned long echoPeriod = paramU("echo_period_ms", 500);
+  // Amostragem de Poisson por padrão (pesquisa.h); "periodic" reproduz o trem de
+  // período fixo. A semente do trem SENSOR é a do LOCAL mais um, como no coletor.
+  const bool echoPoisson = param("echo_sampling", "poisson") != "periodic";
+  const unsigned long echoSeed = paramU("echo_seed", paramU("seed", 1)) & 0xFFFFFFFFul;
+  // Fase sorteada do início da janela: sem ela, todas as repetições começariam
+  // no mesmo ponto das atividades periódicas da rede simulada.
+  const unsigned long phaseMs = paramU("phase_ms", 0);
   const std::string fault = param("fault", "none");
   const unsigned long faultAtS = paramU("fault_at_s", 10);
   const unsigned long faultS = paramU("fault_s", 20);
@@ -2087,7 +2094,7 @@ int scenarioResearch() {
     if (sensors >= 1) probeCommand("CMD TARGET=1.1 ACTION=TELEMETRY STATE=OFF TX=pesquisa");
     if (sensors >= 2) probeCommand("CMD TARGET=2.1 ACTION=TELEMETRY STATE=OFF TX=pesquisa");
   }
-  runFor(warmupS * 1000u);
+  runFor(warmupS * 1000u + phaseMs);
 
   researchMark("janela=INICIO");
   const uint32_t t0 = nowMs();
@@ -2098,20 +2105,23 @@ int scenarioResearch() {
   }
   // Trens de eco: primeiro só o CAN (LOCAL), depois até o sensor (SENSOR).
   bool localDone = echoN == 0, sensorStarted = false;
-  if (echoN) {
-    char cmd[64];
-    snprintf(cmd, sizeof(cmd), "ECHO 1.1 %lu %lu LOCAL", echoN, echoPeriod);
+  auto echoCommand = [&](const char* path, unsigned long seed) {
+    char cmd[80];
+    if (echoPoisson) {
+      snprintf(cmd, sizeof(cmd), "ECHO 1.1 %lu %lu %s %lu", echoN, echoPeriod, path, seed ? seed : 1ul);
+    } else {
+      snprintf(cmd, sizeof(cmd), "ECHO 1.1 %lu %lu %s", echoN, echoPeriod, path);
+    }
     probeCommand(cmd);
-  }
+  };
+  if (echoN) echoCommand("LOCAL", echoSeed);
   bool faultStarted = fault == "none", faultEnded = fault == "none";
   while (nowMs() - t0 < durationS * 1000u) {
     runFor(100);
     if (!localDone && logHas(probe(), "[GW] ECHO_DONE node=1 child=1 path=LOCAL", t0)) {
       localDone = true;
       if (sensors >= 1 && !sensorStarted) {
-        char cmd[64];
-        snprintf(cmd, sizeof(cmd), "ECHO 1.1 %lu %lu SENSOR", echoN, echoPeriod);
-        probeCommand(cmd);
+        echoCommand("SENSOR", (echoSeed + 1ul) & 0xFFFFFFFFul);
         sensorStarted = true;
       }
     }

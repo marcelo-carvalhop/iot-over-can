@@ -94,6 +94,12 @@ cc -std=c11 -Wall -Wextra -Werror -I"$AUDIO" -I"$FW" \
   -lm -o "$OUT_DIR/test_audio_config"
 "$OUT_DIR/test_audio_config"
 
+# 3b. Amostragem de Poisson das sondas de eco (instrumentação de pesquisa).
+c++ -std=c++17 -O2 -Wall -Wextra -Werror \
+  -I"$REPO_ROOT/Codigo/node-can/test/host/stubs" -I"$REPO_ROOT/Codigo/node-can/include" \
+  "$REPO_ROOT/Codigo/node-can/test/host/test_pesquisa.cpp" -lm -o "$OUT_DIR/test_pesquisa"
+"$OUT_DIR/test_pesquisa"
+
 # 4. Simulação sensor <-> Node <-> Probe com o código real de wireless_link.cpp.
 "$REPO_ROOT/Codigo/scripts/build_wireless_link_sim.sh" "$OUT_DIR/sim_wireless_link"
 "$OUT_DIR/sim_wireless_link" > /dev/null
