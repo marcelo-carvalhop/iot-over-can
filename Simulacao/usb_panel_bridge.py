@@ -32,6 +32,8 @@ from studio.protocol import parse_status, request
 
 UUID_RE = re.compile(r"uuid=(0x[0-9a-fA-F]{16})")
 HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
+# Linhas de enlace que o firmware pode emitir antes do READY.
+LINK_LINES = ("#IOC JOIN ", "#IOC LEAVE", "#IOC UP ")
 Requester = Callable[[str], str]
 
 
@@ -50,6 +52,8 @@ class PanelBridge:
         self.pending = bytearray()
         self.stats = {"up": 0, "down": 0, "offers": 0, "errors": 0}
         self.powered = False
+        # Enlace anunciado pelo painel enquanto a bancada o vê desligado (ver handle_panel_line).
+        self.held: list[str] = []
 
     # ---------------------------------------------------------------- serial
     def write(self, line: str) -> None:
@@ -76,6 +80,9 @@ class PanelBridge:
         """Põe o painel no modo USB e cria (ou reaproveita) o painel na bancada."""
         deadline = time.monotonic() + timeout
         next_bridge = 0.0
+        # O firmware pode escrever JOIN antes de READY no mesmo lote USB.
+        # Nenhuma mensagem inicial de enlace pode ser perdida durante attach.
+        boot_lines: list[str] = []
         while self.uuid is None:
             if time.monotonic() > deadline:
                 raise RuntimeError("o painel não respondeu: confira a porta e se o firmware é o do PaperColor")
@@ -86,6 +93,8 @@ class PanelBridge:
                 match = UUID_RE.search(line)
                 if line.startswith("#IOC READY") and match:
                     self.uuid = "0x" + match.group(1)[2:].upper()
+                elif line.startswith(LINK_LINES):
+                    boot_lines.append(line)
         uuid = self.uuid
         snapshot = parse_status(self.ask("STATUS"))
         known = next((s for s in snapshot["sensors"] if s["uuid"].upper() == uuid.upper()), None)
@@ -100,11 +109,20 @@ class PanelBridge:
             self.ask(f"SENSOR RSSI {uuid} {node} {rssi}")
         self.write(f"#IOC TIME {int(time.time())}")
         self.powered = True
+        # Reproduz o que o painel anunciou antes do READY (JOIN, LEAVE, UP).
+        for line in boot_lines:
+            self.handle_panel_line(line)
         self.log(f"[painel] {uuid} na bancada, alcance do Node {self.node} ({self.rssi} dBm)")
         return uuid
 
     def handle_panel_line(self, line: str) -> None:
         assert self.uuid
+        if not self.powered and line.startswith(LINK_LINES):
+            # Religando, o firmware anuncia JOIN antes do READY. Ligar o painel na bancada o reinicia,
+            # então o enlace só é repassado depois do READY (como em attach()).
+            if len(self.held) < 64:
+                self.held.append(line)
+            return
         if line.startswith("#IOC UP "):
             payload = line[8:].strip()
             if not HEX_RE.match(payload) or len(payload) % 2 or len(payload) > 4096:
@@ -135,6 +153,9 @@ class PanelBridge:
             self.write(f"#IOC TIME {int(time.time())}")
             self.powered = True
             self.log("[painel] religado")
+            held, self.held = self.held, []
+            for pending in held:
+                self.handle_panel_line(pending)
         elif line.startswith("#IOC LOG "):
             self.log("[painel] " + line[9:])
 
