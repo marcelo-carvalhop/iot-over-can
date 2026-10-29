@@ -228,14 +228,21 @@ class UsbPanelBridgeTest(unittest.TestCase):
         fake.emit("#IOC OFF")
         bridge.step()
         self.assertFalse(self._powered(uuid))
+        # Religado, o firmware anuncia o Node (JOIN) antes do READY, no mesmo lote. Ligar o painel na
+        # bancada o reinicia; o JOIN só vale se for repassado depois disso.
+        fake.emit("#IOC JOIN 2")
         fake.emit(f"#IOC READY uuid=0x{UUID:016X} profile=PANEL fw=teste")
         bridge.step()
         self.assertTrue(self._powered(uuid))
+        self.assertEqual(self._sensor(uuid)["parent"], 2)
         bridge.detach()
         self.assertFalse(self._powered(uuid))
 
+    def _sensor(self, uuid: str) -> dict:
+        return {s["uuid"]: s for s in parse_status(self.ask("STATUS"))["sensors"]}[uuid]
+
     def _powered(self, uuid: str) -> bool:
-        return {s["uuid"]: s["powered"] for s in parse_status(self.ask("STATUS"))["sensors"]}[uuid]
+        return self._sensor(uuid)["powered"]
 
 
 if __name__ == "__main__":
