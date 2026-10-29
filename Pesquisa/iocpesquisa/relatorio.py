@@ -233,6 +233,123 @@ def _csv(caminho: Path, linhas: list[dict[str, Any]]) -> None:
             w.writerow({k: ("" if not _ok(v) else v) for k, v in linha.items()})
 
 
+# Figuras estáticas (PNG no relatório em Markdown): paleta categórica validada para dois grupos (azul e
+# laranja passam nos limites de daltonismo e de contraste) e tinta neutra para texto, eixos e grade.
+COR_IOT = {"off": "#2a78d6", "on": "#eb6834"}
+COR_REFERENCIA = "#898781"
+TINTA, TINTA_2, GRADE, EIXO, FUNDO = "#0b0b0b", "#52514e", "#e1e0d9", "#c3c2b7", "#fcfcfb"
+NOME_IOT = {"off": "integração desligada", "on": "integração ligada"}
+
+
+def _estilo(plt: Any) -> None:
+    plt.rcParams.update({
+        "figure.facecolor": FUNDO, "axes.facecolor": FUNDO, "savefig.facecolor": FUNDO,
+        "axes.edgecolor": EIXO, "axes.labelcolor": TINTA_2, "axes.titlecolor": TINTA, "axes.titlesize": 9,
+        "axes.labelsize": 8, "xtick.color": TINTA_2, "ytick.color": TINTA_2, "xtick.labelsize": 7,
+        "ytick.labelsize": 7, "axes.grid": True, "grid.color": GRADE, "grid.linewidth": 0.6,
+        "axes.spines.top": False, "axes.spines.right": False, "legend.fontsize": 8, "legend.frameon": False,
+        "text.color": TINTA, "lines.linewidth": 1.6,
+    })
+
+
+def _desempenho(execs: list[tuple[dict[str, Any], dict[str, Any]]]) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """Execuções sem falha injetada (as de desempenho)."""
+    return [(m, met) for m, met in execs if m.get("parametros", {}).get("fault", "none") == "none"]
+
+
+def _faixas(execs: list[tuple[dict[str, Any], dict[str, Any]]]) -> tuple[list[str], list[int]]:
+    prios = sorted({str(m["parametros"].get("load_prio", "HIGH")) for m, _ in execs
+                    if int(m["parametros"].get("load_pct", 0)) > 0}, key=["HIGH", "MID", "LOW", "MIX"].index)
+    cargas = sorted({int(m["parametros"].get("load_pct", 0)) for m, _ in execs} - {0})
+    return prios or ["HIGH"], cargas or [0]
+
+
+def _figura_eco(dest: Path, execs: list[tuple[dict[str, Any], dict[str, Any]]], plt: Any) -> str | None:
+    """Distribuição complementar do eco LOCAL (fração das sondas acima de x, escala log): mostra a cauda.
+
+    Uma linha (prioridade da carga) por carga (coluna); em cada painel, integração desligada e ligada, e a
+    referência sem carga em cinza."""
+    perf = _desempenho(execs)
+    amostras: dict[tuple[str, int, str], list[float]] = {}
+    for m, met in perf:
+        p = m["parametros"]
+        carga = int(p.get("load_pct", 0))
+        chave = ("—" if carga == 0 else str(p.get("load_prio", "HIGH")), carga, str(p.get("iot", "on")))
+        amostras.setdefault(chave, []).extend(v / 1000.0 for v in met["amostras"].get("eco_local_us") or [])
+    if not any(amostras.values()):
+        return None
+    prios, cargas = _faixas(perf)
+    # Eixo x por coluna (a cauda cresce muito com a carga); eixo y comum a todos os painéis.
+    fig, eixos = plt.subplots(len(prios), len(cargas), figsize=(2.7 * len(cargas) + 0.8, 2.0 * len(prios) + 1.0),
+                              sharex="col", sharey=True, squeeze=False, layout="constrained")
+
+    def ccdf(ax: Any, vals: list[float], **kw: Any) -> None:
+        xs = sorted(vals)
+        n = len(xs)
+        ys = [(n - i - 1) / n for i in range(n)]
+        pares = [(x, y) for x, y in zip(xs, ys) if y > 0]
+        if pares:
+            ax.step([xs[0], *[x for x, _ in pares]], [1.0, *[y for _, y in pares]], where="post", **kw)
+
+    for i, prio in enumerate(prios):
+        for j, carga in enumerate(cargas):
+            ax = eixos[i][j]
+            ref = amostras.get(("—", 0, "off")) or amostras.get(("—", 0, "on"))
+            if ref:
+                ccdf(ax, ref, color=COR_REFERENCIA, linewidth=1.0, label="sem carga")
+            for iot in ("off", "on"):
+                vals = amostras.get((prio if carga else "—", carga, iot))
+                if vals:
+                    ccdf(ax, vals, color=COR_IOT[iot], label=NOME_IOT[iot])
+            ax.set_yscale("log")
+            if i == 0:
+                ax.set_title(f"carga {carga} %" if carga else "sem carga")
+            if j == 0:
+                ax.set_ylabel(f"prioridade {prio}\nfração acima de x")
+            if i == len(prios) - 1:
+                ax.set_xlabel("ida e volta no CAN (ms)")
+    handles, labels = eixos[0][-1].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="outside upper center", ncol=len(labels))
+    fig.savefig(dest / "eco_local_ccdf.png", dpi=150)
+    plt.close(fig)
+    return "figuras/eco_local_ccdf.png"
+
+
+def _figura_jitter(dest: Path, execs: list[tuple[dict[str, Any], dict[str, Any]]], plt: Any) -> str | None:
+    """Variação do intervalo do sinal de presença: um ponto por repetição, por carga, prioridade e integração."""
+    perf = [(m, met) for m, met in _desempenho(execs) if _ok(met.get("hb_jitter_us"))]
+    if not perf:
+        return None
+    prios, cargas = _faixas(perf)
+    niveis = [0, *cargas] if any(int(m["parametros"].get("load_pct", 0)) == 0 for m, _ in perf) else cargas
+    fig, eixos = plt.subplots(1, len(prios), figsize=(3.0 * len(prios) + 0.6, 3.4), sharey=True, squeeze=False,
+                              layout="constrained")
+    rotulos: dict[str, Any] = {}
+    for j, prio in enumerate(prios):
+        ax = eixos[0][j]
+        for k, carga in enumerate(niveis):
+            for d, iot in ((-0.17, "off"), (0.17, "on")):
+                vals = [met["hb_jitter_us"] for m, met in perf
+                        if int(m["parametros"].get("load_pct", 0)) == carga and str(m["parametros"].get("iot", "on")) == iot
+                        and (carga == 0 or str(m["parametros"].get("load_prio", "HIGH")) == prio)]
+                if not vals:
+                    continue
+                passo = 0.18 / max(len(vals) - 1, 1)
+                xs = [k + d - 0.09 + passo * n for n in range(len(vals))]
+                h = ax.scatter(xs, sorted(vals), s=9, color=COR_IOT[iot], alpha=0.55, linewidths=0)
+                ax.plot([k + d - 0.13, k + d + 0.13], [st.percentile(vals, 50)] * 2, color=TINTA, linewidth=1.2)
+                rotulos.setdefault(NOME_IOT[iot], h)
+        ax.set_xticks(range(len(niveis)), labels=[f"{c} %" for c in niveis])
+        ax.set_xlabel("carga de fundo")
+        ax.set_title(f"prioridade {prio}")
+        if j == 0:
+            ax.set_ylabel("desvio do intervalo por repetição (µs)")
+    fig.legend(list(rotulos.values()), list(rotulos), loc="outside upper center", ncol=2, markerscale=1.6)
+    fig.savefig(dest / "hb_jitter.png", dpi=150)
+    plt.close(fig)
+    return "figuras/hb_jitter.png"
+
+
 def _figuras(dest: Path, execs: list[tuple[dict[str, Any], dict[str, Any]]]) -> list[str]:
     try:
         import matplotlib
@@ -240,41 +357,11 @@ def _figuras(dest: Path, execs: list[tuple[dict[str, Any], dict[str, Any]]]) -> 
         import matplotlib.pyplot as plt
     except ImportError:
         return []
-    feitas = []
     dest.mkdir(parents=True, exist_ok=True)
-    grupos: dict[str, list[float]] = {}
-    for m, met in execs:
-        grupos.setdefault(m["condicao"], []).extend(met["amostras"].get("eco_local_us") or [])
-    grupos = {k: v for k, v in grupos.items() if v}
-    if grupos:
-        fig, ax = plt.subplots(figsize=(8, 5))
-        for cond, vals in sorted(grupos.items())[:12]:
-            xs = sorted(v / 1000.0 for v in vals)
-            ax.step(xs, [(i + 1) / len(xs) for i in range(len(xs))], where="post", label=cond, linewidth=1.2)
-        ax.set_xlabel("ida e volta no CAN, eco LOCAL (ms)")
-        ax.set_ylabel("fração acumulada")
-        ax.grid(alpha=0.3)
-        ax.legend(fontsize=6, loc="lower right")
-        fig.tight_layout()
-        fig.savefig(dest / "eco_local_cdf.png", dpi=150)
-        plt.close(fig)
-        feitas.append("figuras/eco_local_cdf.png")
-    jitter: dict[str, list[float]] = {}
-    for m, met in execs:
-        if _ok(met.get("hb_jitter_us")):
-            jitter.setdefault(m["condicao"], []).append(met["hb_jitter_us"])
-    if jitter:
-        nomes = sorted(jitter)[:16]
-        fig, ax = plt.subplots(figsize=(8, 5))
-        ax.boxplot([jitter[n] for n in nomes], vert=False)
-        ax.set_yticks(range(1, len(nomes) + 1), labels=nomes, fontsize=6)
-        ax.set_xlabel("variação do intervalo do sinal de presença por repetição (desvio, µs)")
-        ax.grid(alpha=0.3)
-        fig.tight_layout()
-        fig.savefig(dest / "hb_jitter.png", dpi=150)
-        plt.close(fig)
-        feitas.append("figuras/hb_jitter.png")
-    return feitas
+    with plt.rc_context():
+        _estilo(plt)
+        feitas = [_figura_eco(dest, execs, plt), _figura_jitter(dest, execs, plt)]
+    return [f for f in feitas if f]
 
 
 def _tabela(linhas: list[dict[str, Any]], colunas: list[tuple[str, str, int]]) -> str:
@@ -413,7 +500,15 @@ def analisar(base: Path, figuras: bool = True) -> dict[str, Any]:
                          f"{_fmt(c['hedges_g_ic95_sup'], 2)}] | {_fmt(c['cliff_delta'], 2)} ({c['cliff_magnitude']}) | "
                          f"{_fmt(c['mann_whitney_p_holm'], 4)} |")
     if imagens:
-        texto += ["", "## Figuras", ""] + [f"![{i}]({i})" for i in imagens]
+        legendas = {
+            "figuras/eco_local_ccdf.png": "Eco LOCAL: fração das sondas acima de cada tempo (escala log), por carga "
+                                          "(colunas) e prioridade da carga (linhas). A cauda mostra o custo da integração.",
+            "figuras/hb_jitter.png": "Sinal de presença do líder: desvio do intervalo em cada repetição "
+                                     "(um ponto por repetição; traço = mediana).",
+        }
+        texto += ["", "## Figuras", ""]
+        for i in imagens:
+            texto += [f"![{legendas.get(i, i)}]({i})", "", f"*{legendas.get(i, i)}*", ""]
     texto += [
         "",
         "## Reprodutibilidade",
@@ -426,7 +521,9 @@ def analisar(base: Path, figuras: bool = True) -> dict[str, Any]:
         "## Ressalvas",
         "",
         ("- Bancada virtual: executa o firmware real dos Nodes, mas não modela o tempo de CPU (a criptografia "
-        "aparece com custo zero), o rádio nem a temporização do MCP2515 por SPI."),
+        "aparece com custo zero), o rádio nem a temporização do MCP2515 por SPI. As fases relativas entre os Nodes "
+        "são fixas; só o início da janela e os instantes das sondas são sorteados por repetição. Os números de "
+        "tempo para o texto vêm da bancada física."),
         ("- Os carimbos da Probe têm a latência do laço principal (da ordem de 1 ms): abaixo disso, a medida "
         "não distingue efeitos de arbitragem (o pior caso analítico está em Front/pico_tui/metrics/rta.py)."),
         "- Intervalos de relógios diferentes (Probe e Node) são subtraídos (eco_can); instantes, nunca.",

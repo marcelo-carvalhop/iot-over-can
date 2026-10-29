@@ -43,8 +43,10 @@ resultados/<campanha>/
   relatorio/relatorio.md          tabelas, comparações, proveniência e ressalvas
   relatorio/condicoes.csv         todas as métricas por condição
   relatorio/comparacoes.csv       efeitos (g de Hedges, delta de Cliff, Mann-Whitney com Holm)
-  relatorio/figuras/*.png         distribuição acumulada do eco e variação do sinal de presença
+  relatorio/figuras/*.png         cauda do eco (por carga e prioridade) e variação do sinal de presença
 ```
+
+Um exemplo completo dessa saída (a campanha virtual de validação do método, com o que ela encontrou) está em [`Documentacao/pesquisa/validacao-virtual/`](../Documentacao/pesquisa/validacao-virtual/README.md).
 
 O relatório inteiro sai dos registros brutos: apagar `relatorio/` e rodar `analisar` reproduz os mesmos números. As métricas de cada execução ficam em cache (`metricas.json`), calculadas em paralelo e refeitas sozinhas quando o código das métricas muda.
 

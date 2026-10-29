@@ -176,5 +176,5 @@ Equipamento da bancada física: Probe 00 e três Nodes ESP32 (`esp32dev`) com MC
 | Trabalhos relacionados | análise de tempo de resposta do CAN (Tindell 1995; Davis et al. 2007), custo de autenticação em CAN e reprodutibilidade de artefatos de sistemas embarcados |
 | Arquitetura | `Documentacao/arquitetura/`, escrito como decisões e compromissos |
 | Metodologia | este documento |
-| Resultados | `relatorio/` de cada campanha: tabelas com IC, efeitos e figuras |
+| Resultados | `relatorio/` de cada campanha: tabelas com IC, efeitos e figuras (exemplo da bancada virtual em [`validacao-virtual/`](validacao-virtual/README.md)) |
 | Discussão | seção 11 e o que os resultados não mostram |

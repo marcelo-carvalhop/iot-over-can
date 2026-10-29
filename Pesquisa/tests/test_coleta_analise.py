@@ -1,6 +1,7 @@
 """Coleta (física, com uma Probe de mentira; virtual, com a bancada real) e análise."""
 from __future__ import annotations
 
+import importlib.util
 import json
 import shutil
 import subprocess
@@ -202,8 +203,10 @@ class PontaAPontaTest(unittest.TestCase):
         # Retomada: nada a refazer.
         self.assertEqual(coleta.executar(d, saida, binario=self.binario, progresso=lambda _m: None)["ja_feitas"], 16)
         base = saida / "demonstracao"
-        res = relatorio.analisar(base, figuras=False)
+        res = relatorio.analisar(base, figuras=importlib.util.find_spec("matplotlib") is not None)
         self.assertEqual(res["execucoes"], 16)
+        for figura in res["figuras"]:  # desenho sem prioridade de carga: painéis só por carga
+            self.assertTrue((base / "relatorio" / figura).stat().st_size > 10_000)
         self.assertGreater(res["comparacoes"], 5)
         problemas = [p for p in relatorio.verificar(base) if "alterações não gravadas" not in p]
         self.assertEqual(problemas, [])
