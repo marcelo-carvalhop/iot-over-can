@@ -11,9 +11,16 @@ constexpr uint32_t OFFER_SWITCH_HOLD_MS = 15000;
 constexpr uint32_t DISCOVERY_GIVEUP_MS = 60000;
 constexpr uint32_t STATUS_PERIOD_MS = 60000;
 constexpr uint32_t MARK_RETRY_MS = 3000;
-constexpr uint32_t DRAFT_IDLE_MS = 2500;
+constexpr uint32_t DRAFT_IDLE_MS = 1500;
 constexpr uint32_t DRAFT_REDRAW_MS = 30000;
+constexpr uint32_t DRAFT_ABANDON_MS = 90000;  /* nota esquecida: grava o que foi digitado */
 constexpr uint32_t AWAKE_IDLE_MS = 20000;
+constexpr uint32_t KEY_AWAKE_MS = 60000;      /* depois de digitar, fica acordado mais tempo */
+constexpr uint32_t POWER_HOLD_MS = 1500;      /* segurar o botão de energia desliga */
+constexpr uint32_t POWER_HOLD_SHOW_MS = 200;  /* antes disso é um toque */
+constexpr uint32_t ALERT_AWAKE_MS = 180000;   /* na bateria, fica acordado chamando o operador */
+constexpr uint32_t REPEAT_YOU_S = 60;
+constexpr uint32_t REPEAT_ATTENTION_S = 300;
 constexpr uint32_t NO_DATA_MS = 30000;
 constexpr uint32_t BOOT_NO_DATA_MS = 60000;
 constexpr uint32_t VALID_FOR_S = 3600;
@@ -69,6 +76,36 @@ int64_t daysFromCivil(int64_t y, unsigned m, unsigned d) {
 
 bool isSensor(const ioc_view_sensor& s) { return s.used && s.profile != IOC_PANEL_PROFILE; }
 
+uint32_t itemKey(const ioc_page_item& it) {
+  return (static_cast<uint32_t>(it.code) << 16) | (static_cast<uint32_t>(it.node) << 8) | it.child;
+}
+
+bool hasKey(const uint32_t* set, uint8_t n, uint32_t key) {
+  for (uint8_t i = 0; i < n; ++i) if (set[i] == key) return true;
+  return false;
+}
+
+/* Conjuntos de alertas na NVS: "0b020100,0d010101". */
+void keysToStr(const uint32_t* set, uint8_t n, char* out, size_t cap) {
+  size_t used = 0;
+  out[0] = '\0';
+  for (uint8_t i = 0; i < n && used + 10 < cap; ++i) {
+    used += static_cast<size_t>(snprintf(out + used, cap - used, i ? ",%08lx" : "%08lx", static_cast<unsigned long>(set[i])));
+  }
+}
+
+uint8_t strToKeys(const char* text, uint32_t* set, uint8_t cap) {
+  uint8_t n = 0;
+  while (text && *text && n < cap) {
+    char* end = nullptr;
+    const unsigned long v = strtoul(text, &end, 16);
+    if (end == text) break;
+    set[n++] = static_cast<uint32_t>(v);
+    text = *end == ',' ? end + 1 : end;
+  }
+  return n;
+}
+
 }  // namespace
 
 /* ------------------------------------------------------------------ início */
@@ -99,7 +136,23 @@ void PanelApp::begin(PanelHal* hal, const PanelConfig& cfg) {
   page_ = static_cast<uint8_t>(hal_->loadU32("page", PAGE_SITUATION));
   if (page_ >= PAGE_COUNT || page_ == PAGE_RADIO) page_ = PAGE_SITUATION;
   cfg_.sleepNormalS = static_cast<uint16_t>(hal_->loadU32("sleep", cfg_.sleepNormalS));
-  drawnLevel_ = static_cast<uint8_t>(hal_->loadU32("alevel", 0));
+  annLevel_ = static_cast<uint8_t>(hal_->loadU32("alevel", 0));
+  annEpoch_ = hal_->loadU32("aep", 0);
+  {
+    char keys[IOC_PAGE_MAX_ITEMS * 9 + 1];
+    annN_ = hal_->loadStr("anns", keys, sizeof(keys)) ? strToKeys(keys, annKeys_, IOC_PAGE_MAX_ITEMS) : 0;
+    ackN_ = hal_->loadStr("acks", keys, sizeof(keys)) ? strToKeys(keys, ackKeys_, IOC_PAGE_MAX_ITEMS) : 0;
+  }
+  off_ = Off::None;
+  powerPressed_ = false;
+  powerReleasedSeen_ = false;
+  // A tela mostra "Painel desligado": troca pela página de partida já.
+  splash_ = hal_->loadU32("offpg", 0) != 0;
+  if (cfg_.userBoot) {
+    scene_ = LedScene::Boot;
+    sceneStart_ = now;
+    tones_.play(Melody::Boot);
+  }
   for (int i = 0; i < IOC_PAGE_MARKS; ++i) {
     char key[4] = {'m', static_cast<char>('0' + i), 0, 0};
     if (!hal_->loadStr(key, recent_[i], sizeof(recent_[i]))) recent_[i][0] = '\0';
@@ -238,7 +291,8 @@ void PanelApp::sendStatus(uint8_t extraFlags, uint16_t sleepS) {
   bool usb = false;
   hal_->readSensors(st.battery_pct, st.battery_mv, st.temp_c10, st.rh_10, usb);
   st.flags = static_cast<uint8_t>(extraFlags | (usb ? IOC_PANEL_ST_USB : 0) | (hal_->clockValid() ? IOC_PANEL_ST_CLOCK : 0) |
-                                  (hal_->keyboardPresent() ? IOC_PANEL_ST_KEYBOARD : 0));
+                                  (hal_->keyboardPresent() ? IOC_PANEL_ST_KEYBOARD : 0) |
+                                  (unacked_ ? IOC_PANEL_ST_ALERT : 0));
   st.sleep_s = sleepS;
   st.page_hash = refresh_.hash;
   st.page_seq = static_cast<uint16_t>(refresh_.count);
@@ -324,6 +378,8 @@ void PanelApp::handleData(const uint8_t* inner, size_t len) {
             m.acked = true;
             m.used = false;
             ++marksAcked_;
+            tones_.play(Melody::Saved);  // gravada: o Node a levou para a Probe e a TUI
+            savedFlashUntil_ = now + 600;
           }
         }
       }
@@ -375,7 +431,8 @@ void PanelApp::rememberMark(const PanelMark& m) {
   ioc_page_time(&ctx, m.createdMs, t);
   for (int i = IOC_PAGE_MARKS - 1; i > 0; --i) memcpy(recent_[i], recent_[i - 1], sizeof(recent_[i]));
   char line[sizeof(recent_[0]) + IOC_PANEL_MARK_TEXT_MAX + 8];
-  snprintf(line, sizeof(line), "%s %s", t, m.text[0] ? m.text : "intervenção física");
+  const char* fallback = m.kind == IOC_PANEL_MARK_FLAG ? "marca do operador" : "intervenção física";
+  snprintf(line, sizeof(line), "%s %s", t, m.text[0] ? m.text : fallback);
   memcpy(recent_[0], line, sizeof(recent_[0]) - 1);
   recent_[0][sizeof(recent_[0]) - 1] = '\0';
   for (int i = 0; i < IOC_PAGE_MARKS; ++i) {
@@ -384,7 +441,7 @@ void PanelApp::rememberMark(const PanelMark& m) {
   }
 }
 
-void PanelApp::addMark(uint8_t kind, uint8_t step, const char* text) {
+void PanelApp::addMark(uint8_t kind, uint8_t step, const char* text, uint32_t createdMs) {
   PanelMark* slot = nullptr;
   for (PanelMark& m : marks_) if (!m.used) { slot = &m; break; }
   if (!slot) {  // todas pendentes: descarta a mais antiga
@@ -397,13 +454,22 @@ void PanelApp::addMark(uint8_t kind, uint8_t step, const char* text) {
   slot->seq = ++markSeq_;
   slot->kind = kind;
   slot->step = step;
-  slot->createdMs = hal_->millis();
-  slot->lastSendMs = slot->createdMs - MARK_RETRY_MS;
+  const uint32_t now = hal_->millis();
+  slot->createdMs = createdMs;
+  slot->lastSendMs = now - MARK_RETRY_MS;
   snprintf(slot->text, sizeof(slot->text), "%s", text ? text : "");
   hal_->storeU32("mseq", markSeq_);
   if (kind != IOC_PANEL_MARK_RESULT || text) rememberMark(*slot);
-  hal_->beep(2);
-  flushMarks(slot->createdMs);
+  switch (kind) {
+    case IOC_PANEL_MARK_ACK: tones_.play(Melody::Ack); break;
+    case IOC_PANEL_MARK_NOTE:
+    case IOC_PANEL_MARK_RESULT: tones_.play(Melody::Sent); break;
+    default: tones_.play(Melody::Flag); break;
+  }
+  char line[48];
+  snprintf(line, sizeof(line), "marca %u %s", slot->seq, ioc_panel_mark_kind_name(kind));
+  hal_->log(line);
+  flushMarks(now);
 }
 
 void PanelApp::flushMarks(uint32_t now) {
@@ -441,7 +507,7 @@ void PanelApp::routineMark() {
   stepLeader_ = view_.leader;
   char text[IOC_PANEL_MARK_TEXT_MAX + 1];
   snprintf(text, sizeof(text), "%s, passo %u", r.name, static_cast<unsigned>(step_ + 1));
-  addMark(IOC_PANEL_MARK_STEP, static_cast<uint8_t>(step_ + 1), text);
+  addMark(IOC_PANEL_MARK_STEP, static_cast<uint8_t>(step_ + 1), text, now);
   snprintf(stepResult_, sizeof(stepResult_), "Medindo: aguardando %s.", condName(r.steps[step_].cond));
   pageChanged_ = true;
 }
@@ -487,7 +553,7 @@ void PanelApp::routineTick(uint32_t now) {
   stepRunning_ = false;
   memcpy(stepResult_, text, sizeof(stepResult_) - 1);
   stepResult_[sizeof(stepResult_) - 1] = '\0';
-  addMark(IOC_PANEL_MARK_RESULT, static_cast<uint8_t>(step_ + 1), text);
+  addMark(IOC_PANEL_MARK_RESULT, static_cast<uint8_t>(step_ + 1), text, now);
   ++step_;
   pageChanged_ = true;
 }
@@ -528,34 +594,47 @@ bool PanelApp::slashCommand(const char* text) {
   return false;
 }
 
-void PanelApp::submitComposer() {
+void PanelApp::submitComposer(uint32_t now) {
   composing_ = false;
   draft_[draftLen_] = '\0';
-  if (draftLen_ > 0 && !slashCommand(draft_)) addMark(IOC_PANEL_MARK_NOTE, 0, draft_);
+  pageChanged_ = true;
+  if (draftLen_ > 0 && slashCommand(draft_)) {
+    tones_.play(flash_[0] && strncmp(flash_, "Comando desconhecido", 20) == 0 ? Melody::Error : Melody::Sent);
+  } else {
+    // A marca vale desde a primeira tecla: é o instante que o operador quis registrar.
+    addMark(draftLen_ ? IOC_PANEL_MARK_NOTE : IOC_PANEL_MARK_FLAG, 0, draftLen_ ? draft_ : nullptr, draftStartMs_);
+  }
   draftLen_ = 0;
   draft_[0] = '\0';
-  pageChanged_ = true;
+  (void)now;
 }
 
 void PanelApp::onKey(uint8_t code) {
   const uint32_t now = hal_->millis();
+  if (off_ != Off::None) return;
   userActivity(now);
   lastKeyMs_ = now;
-  hal_->led(level_, true);
+  keyFlashUntil_ = now + 80;  // a tecla foi lida: retorno imediato no LED
+  const bool printable = code >= 0x20 && code < 0x7F;
+  // Com um alerta sem ciência, a primeira tecla é a ciência; uma letra também começa a nota.
+  if (acknowledge(now) && !printable) return;
   if (composing_) {
     if (code == KEY_ENTER) {
-      submitComposer();
+      submitComposer(now);
     } else if (code == KEY_ESC) {
       composing_ = false;
       draftLen_ = 0;
+      draft_[0] = '\0';
       pageChanged_ = true;
+      tones_.play(Melody::Error);
+      hal_->log("marca cancelada");
     } else if (code == KEY_BACKSPACE) {
       while (draftLen_ > 0) {
         const unsigned char c = static_cast<unsigned char>(draft_[--draftLen_]);
         if ((c & 0xC0u) != 0x80u) break;
       }
       draft_[draftLen_] = '\0';
-    } else if (code >= 0x20 && code < 0x7F && draftLen_ < IOC_PANEL_MARK_TEXT_MAX) {
+    } else if (printable && draftLen_ < IOC_PANEL_MARK_TEXT_MAX) {
       draft_[draftLen_++] = static_cast<char>(code);
       draft_[draftLen_] = '\0';
     }
@@ -590,14 +669,19 @@ void PanelApp::onKey(uint8_t code) {
       break;
     case KEY_ENTER:
       if (page_ == PAGE_ROUTINE) routineMark();
-      else { composing_ = true; draftLen_ = 0; draft_[0] = '\0'; }
+      else addMark(IOC_PANEL_MARK_FLAG, 0, nullptr, now);  // só o instante
+      pageChanged_ = true;
       break;
     default:
-      if (code >= 0x20 && code < 0x7F) {
+      if (printable) {  // a primeira tecla abre a marca neste instante
         composing_ = true;
+        draftStartMs_ = now;
+        draftDrawnMs_ = 0;
         draftLen_ = 0;
         draft_[draftLen_++] = static_cast<char>(code);
         draft_[draftLen_] = '\0';
+        tones_.play(Melody::Flag);
+        hal_->log("marca aberta pelo teclado");
       }
       break;
   }
@@ -607,23 +691,177 @@ void PanelApp::onKey(uint8_t code) {
 
 void PanelApp::onButton(char button) {
   const uint32_t now = hal_->millis();
+  if (off_ != Off::None) return;
   userActivity(now);
+  clickFlashUntil_ = now + 120;
+  if (acknowledge(now)) return;
   if (button == 'A') {
     if (page_ == PAGE_ROUTINE) routineMark();
-    else addMark(IOC_PANEL_MARK_BUTTON, 0, nullptr);
+    else addMark(IOC_PANEL_MARK_BUTTON, 0, nullptr, now);
     pageChanged_ = true;
   } else if (button == 'B') {
     onKey(KEY_TAB);
   } else if (button == 'C') {
     if (page_ == PAGE_RADIO) radioValid_ = hal_->radioSurvey(radio_, sizeof(radio_));
     forceRefresh_ = true;
+    tones_.play(Melody::Click);
   }
 }
 
 void PanelApp::onPowerClick(bool doubleClick) {
-  userActivity(hal_->millis());
-  if (doubleClick) shutdown();
-  else forceRefresh_ = true;  // atualiza agora
+  const uint32_t now = hal_->millis();
+  if (off_ != Off::None) return;
+  userActivity(now);
+  if (doubleClick) { shutdown(); return; }
+  clickFlashUntil_ = now + 150;
+  if (acknowledge(now)) return;
+  forceRefresh_ = true;  // um toque: atualiza agora
+  tones_.play(Melody::Click);
+}
+
+void PanelApp::onPowerPressed(bool pressed) {
+  const uint32_t now = hal_->millis();
+  if (off_ != Off::None) return;
+  // Quem ligou o painel segurando o botão ainda pode estar com o dedo nele:
+  // só vale depois de visto solto uma vez.
+  if (!powerReleasedSeen_) {
+    powerReleasedSeen_ = !pressed;
+    return;
+  }
+  if (pressed && !powerPressed_) {
+    powerPressed_ = true;
+    powerPressMs_ = now;
+    userActivity(now);
+  } else if (!pressed) {
+    powerPressed_ = false;
+  }
+}
+
+/* ------------------------------------------------------- alertas e sinais */
+
+void PanelApp::saveAlert() {
+  char keys[IOC_PAGE_MAX_ITEMS * 9 + 1];
+  keysToStr(annKeys_, annN_, keys, sizeof(keys));
+  hal_->storeStr("anns", keys);
+  keysToStr(ackKeys_, ackN_, keys, sizeof(keys));
+  hal_->storeStr("acks", keys);
+  hal_->storeU32("alevel", annLevel_);
+  hal_->storeU32("aep", annEpoch_);
+}
+
+/* Gestão por exceção no canal rápido: anuncia o que é novo, repete o que está
+ * sem ciência e cala o que o operador já viu. A memória sobrevive ao sono. */
+void PanelApp::updateAlert(uint32_t now) {
+  if (!view_.snapshot_done) return;
+  alertN_ = 0;
+  for (int i = 0; i < itemCount_ && alertN_ < IOC_PAGE_MAX_ITEMS; ++i) {
+    if (items_[i].level >= IOC_LEVEL_ATTENTION) alertKeys_[alertN_++] = itemKey(items_[i]);
+  }
+  if (level_ < IOC_LEVEL_ATTENTION) {
+    if (annLevel_ >= IOC_LEVEL_ATTENTION) {
+      tones_.play(Melody::Resolved);
+      savedFlashUntil_ = now + 1500;
+      hal_->log("alerta resolvido");
+    } else if (level_ == IOC_LEVEL_HANDLING && annLevel_ < IOC_LEVEL_HANDLING) {
+      tones_.play(Melody::Handling);
+    }
+    unacked_ = false;
+    if (annLevel_ != level_ || annN_ || ackN_) {
+      annLevel_ = level_;
+      annN_ = 0;
+      ackN_ = 0;
+      saveAlert();
+    }
+    return;
+  }
+  bool fresh = level_ > annLevel_;
+  unacked_ = false;
+  for (uint8_t i = 0; i < alertN_; ++i) {
+    const bool acked = hasKey(ackKeys_, ackN_, alertKeys_[i]);
+    if (!acked) unacked_ = true;
+    if (!acked && !hasKey(annKeys_, annN_, alertKeys_[i])) fresh = true;
+  }
+  const uint32_t epoch = static_cast<uint32_t>(hal_->epochNow());
+  const uint32_t repeatS = level_ >= IOC_LEVEL_YOU ? REPEAT_YOU_S : REPEAT_ATTENTION_S;
+  const bool repeat = unacked_ && epoch - annEpoch_ >= repeatS;
+  if (fresh || repeat) {
+    tones_.play(level_ >= IOC_LEVEL_YOU ? Melody::You : Melody::Attention);
+    if (fresh) annMs_ = now;
+    annEpoch_ = epoch;
+    ++alertsAnnounced_;
+    char line[64];
+    snprintf(line, sizeof(line), "alerta nivel=%u %s", level_, fresh ? "novo" : "repetido (sem ciencia)");
+    hal_->log(line);
+    if (fresh && mode_ == Mode::Bound) sendStatus(0, 0);  // a TUI vê o alerta pendente
+  }
+  if (fresh || repeat || annLevel_ != level_) {
+    memcpy(annKeys_, alertKeys_, sizeof(annKeys_));
+    annN_ = alertN_;
+    annLevel_ = level_;
+    saveAlert();
+  }
+}
+
+/* Ciência do operador: cala o alerta e registra no histórico quanto tempo levou. */
+bool PanelApp::acknowledge(uint32_t now) {
+  if (!unacked_) return false;
+  unacked_ = false;
+  memcpy(ackKeys_, alertKeys_, sizeof(ackKeys_));
+  ackN_ = alertN_;
+  saveAlert();
+  ++acks_;
+  const char* what = "alerta";
+  for (int i = 0; i < itemCount_; ++i) {
+    if (items_[i].level >= IOC_LEVEL_ATTENTION) { what = items_[i].title; break; }
+  }
+  char text[IOC_PANEL_MARK_TEXT_MAX + 1];
+  if (annMs_ && now - annMs_ < 86400000u) {
+    snprintf(text, sizeof(text), "Ciente em %lu s: %.72s", static_cast<unsigned long>((now - annMs_) / 1000u), what);
+  } else {
+    snprintf(text, sizeof(text), "Ciente: %.80s", what);
+  }
+  addMark(IOC_PANEL_MARK_ACK, level_, text, now);
+  if (mode_ == Mode::Bound) sendStatus(0, 0);
+  pageChanged_ = true;
+  return true;
+}
+
+void PanelApp::updateSignals(uint32_t now) {
+  Tone t;
+  if (tones_.next(now, t)) hal_->tone(t.hz, t.ms);
+  if (scene_ == LedScene::Boot && now - sceneStart_ > 1500) scene_ = LedScene::None;
+  LedInputs in;
+  in.now = now;
+  in.level = level_;
+  in.synced = view_.snapshot_done != 0;
+  in.session = mode_ == Mode::Bound;
+  uint8_t bat = 255; uint16_t mv = 0; int16_t tc = 0; uint16_t rh = 0; bool usb = false;
+  hal_->readSensors(bat, mv, tc, rh, usb);
+  in.usb = usb;
+  in.unacked = unacked_;
+  in.awakeSinceMs = bootMs_;
+  in.composing = composing_;
+  in.markPending = marksPending() > 0;
+  in.rendering = hal_->renderBusy();
+  in.keyFlashUntil = keyFlashUntil_;
+  in.savedFlashUntil = savedFlashUntil_;
+  in.clickFlashUntil = clickFlashUntil_;
+  if (powerPressed_ && now - powerPressMs_ >= POWER_HOLD_SHOW_MS) {
+    const uint32_t held = now - powerPressMs_ - POWER_HOLD_SHOW_MS;
+    const uint32_t span = POWER_HOLD_MS - POWER_HOLD_SHOW_MS;
+    in.holdPermille = static_cast<uint16_t>(held >= span ? 1000u : 1u + held * 999u / span);
+  }
+  in.scene = scene_;
+  in.sceneStart = sceneStart_;
+  uint32_t out[2];
+  ledFrame(in, out);
+  if (off_ == Off::Done || off_ == Off::Finished) out[0] = out[1] = 0;
+  if (!ledsSent_ || out[0] != ledOut_[0] || out[1] != ledOut_[1]) {
+    ledOut_[0] = out[0];
+    ledOut_[1] = out[1];
+    ledsSent_ = true;
+    hal_->leds(out[0], out[1]);
+  }
 }
 
 /* --------------------------------------------------------------- composição */
@@ -703,36 +941,74 @@ void PanelApp::composeRadio(const ioc_page_ctx& ctx) {
 }
 
 void PanelApp::composeHelp(const ioc_page_ctx& ctx) {
-  int y = ioc_page_header(&dl_, level_, "Teclado e botões", PANEL_FW_VERSION);
+  int y = ioc_page_header(&dl_, level_, "Teclado, botões e sinais", PANEL_FW_VERSION);
   static const char* const lines[] = {
-      "A: marca uma intervenção física agora",
-      "B ou Tab: próxima página; C: atualizar",
-      "Energia: 1 toque atualiza; 2 toques desliga",
-      "Digite para escrever uma nota; Enter envia",
-      "Esc: cancela a nota / volta à Situação",
-      "/hora HH:MM e /data AAAA-MM-DD: relógio",
-      "/sono N: verificar a cada N min (bateria)",
-      "Roteiro: Enter marca o passo e mede",
-      "Setas na página Roteiro: outro roteiro",
+      "Digite: abre uma marca no instante da 1ª tecla",
+      "Enter grava; sem texto, marca só o instante",
+      "#etiqueta no texto: filtro no histórico da TUI",
+      "Esc cancela a nota; A: intervenção física",
+      "B ou Tab: página; C: atualizar a tela",
+      "Energia: 1 toque atualiza ou dá ciência",
+      "Segure 1,5 s ou dê 2 toques: desliga",
+      "Qualquer tecla ou botão dá ciência do alerta",
+      "/hora HH:MM  /data AAAA-MM-DD  /sono N",
   };
   for (const char* line : lines) {
     ioc_dl_text(&dl_, 8, y, 16, IOC_INK_BLACK, 0, 384, line);
-    y += 24;
+    y += 22;
   }
+  y += 6;
+  ioc_dl_text(&dl_, 8, y, 16, IOC_INK_BLACK, 0, 384, "LED da rede e bipes:");
+  y += 24;
+  struct Legend { uint8_t ink; uint8_t sym; const char* text; };
+  static const Legend legend[] = {
+      {IOC_INK_GREEN, IOC_SYM_DOT, "verde: rede normal (só na USB)"},
+      {IOC_INK_BLUE, IOC_SYM_DOT, "azul respirando: a rede está tratando, 1 bipe"},
+      {IOC_INK_YELLOW, IOC_SYM_TRIANGLE, "amarelo piscando: atenção, 2 bipes"},
+      {IOC_INK_RED, IOC_SYM_CROSS, "vermelho alternando: requer você, 3 bipes"},
+  };
+  for (const Legend& l : legend) {
+    ioc_dl_symbol(&dl_, 10, y + 1, 16, l.sym, l.ink, 0);
+    ioc_dl_text(&dl_, 32, y, 16, IOC_INK_BLACK, 0, 360, l.text);
+    y += 22;
+  }
+  y += 4;
+  ioc_dl_wrap(&dl_, 8, y, 384, 16, IOC_INK_BLACK, 0,
+              "Sem ciência, os bipes voltam (1 min em vermelho, 5 min em amarelo). O outro LED mostra o painel: "
+              "tecla lida (branco), nota aberta (ciano), marca gravada (verde), tela desenhando (magenta).", 4);
   char id[64];
-  snprintf(id, sizeof(id), "Painel 0x%08lX%08lX", static_cast<unsigned long>(cfg_.uuid >> 32),
-           static_cast<unsigned long>(cfg_.uuid & 0xFFFFFFFFu));
-  ioc_dl_text(&dl_, 8, y + 12, 16, IOC_INK_BLACK, 0, 384, id);
+  snprintf(id, sizeof(id), "Painel 0x%08lX%08lX · teclado %s", static_cast<unsigned long>(cfg_.uuid >> 32),
+           static_cast<unsigned long>(cfg_.uuid & 0xFFFFFFFFu), hal_->keyboardPresent() ? "conectado" : "ausente");
+  ioc_dl_text(&dl_, 8, 548, 16, IOC_INK_BLACK, IOC_DL_VOLATILE, 384, id);
   ioc_page_footer(&dl_, &ctx);
 }
 
+void PanelApp::draftHeader(char* out, size_t cap) const {
+  // Instante da marca com segundos: é o que vai para a linha do tempo.
+  if (hal_->clockValid()) {
+    const int64_t at = hal_->epochNow() - static_cast<int64_t>((hal_->millis() - draftStartMs_) / 1000u) +
+                       static_cast<int64_t>(cfg_.tzMin) * 60;
+    const int64_t day = ((at % 86400) + 86400) % 86400;
+    snprintf(out, cap, "Marca às %02d:%02d:%02d", static_cast<int>(day / 3600), static_cast<int>((day / 60) % 60),
+             static_cast<int>(day % 60));
+  } else {
+    snprintf(out, cap, "Marca do operador");
+  }
+}
+
 void PanelApp::composeDraft(const ioc_page_ctx& ctx) {
-  int y = ioc_page_header(&dl_, level_, "Nota do operador", "Enter envia");
+  char title[32];
+  draftHeader(title, sizeof(title));
+  int y = ioc_page_header(&dl_, level_, title, "Enter grava");
   ioc_dl_frame(&dl_, 6, y, 388, 150, IOC_INK_BLACK, 0);
   ioc_dl_wrap(&dl_, 14, y + 8, 372, 24, IOC_INK_BLACK, IOC_DL_VOLATILE, draftLen_ ? draft_ : "_", 5);
   y += 166;
-  ioc_dl_wrap(&dl_, 8, y, 384, 16, IOC_INK_BLACK, 0,
-              "A nota vai para o histórico da TUI com o horário de agora. Esc cancela. Comandos: /hora, /data, /sono.", 3);
+  y += ioc_dl_wrap(&dl_, 8, y, 384, 16, IOC_INK_BLACK, 0,
+                   "A marca já vale a partir da primeira tecla. Enter grava o texto no histórico da TUI "
+                   "(faixa OPERATOR), com captura dos dados da rede ao redor.", 4) + 10;
+  y += ioc_dl_wrap(&dl_, 8, y, 384, 16, IOC_INK_BLUE, 0,
+                   "Use #etiqueta para encontrar depois (ex.: #cabo #ensaio3). Esc cancela.", 3) + 10;
+  ioc_dl_wrap(&dl_, 8, y, 384, 16, IOC_INK_BLACK, 0, "Comandos: /hora HH:MM, /data AAAA-MM-DD, /sono N.", 2);
   ioc_page_footer(&dl_, &ctx);
 }
 
@@ -753,16 +1029,46 @@ void PanelApp::composeNoData(const ioc_page_ctx& ctx, uint32_t lastMs) {
 }
 
 void PanelApp::composeShutdown(const ioc_page_ctx& ctx) {
+  // Tela final: precisa dizer de longe que o painel está desligado.
   ioc_dl_clear(&dl_);
-  int y = ioc_page_header(&dl_, IOC_LEVEL_NORMAL, "Painel desligado", nullptr);
+  int y = 28 + ioc_page_logo(&dl_, 8, 28, 384) + 16;
+  ioc_dl_fill(&dl_, 0, y, IOC_DL_W, 60, IOC_INK_RED, 0);
+  const char* off = "Painel desligado";
+  ioc_dl_text(&dl_, (IOC_DL_W - ioc_dl_text_width(32, off)) / 2, y + 12, 32, IOC_INK_WHITE, 0, 0, off);
+  y += 76;
   char t[8], line[160];
   ioc_page_time(&ctx, ctx.now_ms, t);
   snprintf(line, sizeof(line), "Desligado pelo operador às %s.", t);
-  y += ioc_dl_wrap(&dl_, 8, y + 8, 384, 24, IOC_INK_BLACK, 0, line, 2) + 20;
-  snprintf(line, sizeof(line), "Esta tela não se atualiza mais. Última situação: %s (%d %s).",
-           ioc_page_level_title(level_), itemCount_, itemCount_ == 1 ? "item" : "itens");
-  y += ioc_dl_wrap(&dl_, 8, y, 384, 16, IOC_INK_BLACK, 0, line, 3) + 12;
-  ioc_dl_wrap(&dl_, 8, y, 384, 16, IOC_INK_BLACK, 0, "Aperte o botão de energia uma vez para ligar.", 2);
+  y += ioc_dl_wrap(&dl_, 8, y, 384, 24, IOC_INK_BLACK, 0, line, 2) + 10;
+  y += ioc_dl_wrap(&dl_, 8, y, 384, 16, IOC_INK_BLACK, 0,
+                   "Esta tela fica assim até o painel ser ligado: não se atualiza e não avisa sobre a rede. "
+                   "LEDs, som, rádio e teclado estão desligados.", 4) + 10;
+  snprintf(line, sizeof(line), "Última situação vista: %s.", ioc_page_level_title(level_));
+  y += ioc_dl_wrap(&dl_, 8, y, 384, 16, IOC_INK_BLACK, 0, line, 2) + 14;
+  ioc_dl_wrap(&dl_, 8, y, 384, 24, IOC_INK_BLUE, 0, "Para ligar: aperte o botão de energia.", 2);
+  char id[64];
+  snprintf(id, sizeof(id), "Painel 0x%08lX%08lX · fw %s", static_cast<unsigned long>(cfg_.uuid >> 32),
+           static_cast<unsigned long>(cfg_.uuid & 0xFFFFFFFFu), PANEL_FW_VERSION);
+  ioc_dl_line(&dl_, 0, 574, IOC_DL_W, 0, IOC_INK_BLACK, 0);
+  ioc_dl_text(&dl_, 8, 579, 16, IOC_INK_BLACK, 0, 384, id);
+}
+
+void PanelApp::composeSplash(const ioc_page_ctx& ctx) {
+  // Ligado pelo operador sobre a tela "desligado": troca por esta, já.
+  ioc_dl_clear(&dl_);
+  int y = 28 + ioc_page_logo(&dl_, 8, 28, 384) + 16;
+  ioc_dl_fill(&dl_, 0, y, IOC_DL_W, 60, IOC_INK_GREEN, 0);
+  const char* on = "Painel ligado";
+  ioc_dl_text(&dl_, (IOC_DL_W - ioc_dl_text_width(32, on)) / 2, y + 12, 32, IOC_INK_WHITE, 0, 0, on);
+  y += 76;
+  char line[128];
+  if (parent_) snprintf(line, sizeof(line), "Conectando ao Node %u.", parent_);
+  else snprintf(line, sizeof(line), "Procurando um Node da rede.");
+  y += ioc_dl_wrap(&dl_, 8, y, 384, 24, IOC_INK_BLACK, 0, line, 2) + 10;
+  ioc_dl_wrap(&dl_, 8, y, 384, 16, IOC_INK_BLACK, 0,
+              "A situação da rede aparece aqui em seguida. Enquanto isso, o LED da rede já mostra o "
+              "estado: pulso laranja procurando o Node, azul recebendo a rede, verde normal.", 4);
+  ioc_page_footer(&dl_, &ctx);
 }
 
 void PanelApp::compose(uint32_t now) {
@@ -799,6 +1105,21 @@ void PanelApp::compose(uint32_t now) {
 }
 
 void PanelApp::maybeRender(uint32_t now) {
+  if (splash_) {
+    // A tela mostra "Painel desligado": a primeira coisa é dizer que ligou.
+    if (hal_->renderBusy()) return;
+    ioc_page_ctx ctx;
+    fillCtx(ctx, now);
+    composeSplash(ctx);
+    hal_->render(dl_);
+    memcpy(&drawn_, &dl_, sizeof(drawn_));
+    splash_ = false;
+    hal_->storeU32("offpg", 0);
+    memset(&refresh_, 0, sizeof(refresh_));
+    forceRefresh_ = true;  // a página da rede entra assim que houver retrato
+    hal_->log("pagina de partida desenhada");
+    return;
+  }
   // Sem o retrato, a página da rede seria um estado incompleto: espera-o (ou o
   // prazo da página "sem dados"), salvo quando o operador pede outra página.
   const bool networkPage = !composing_ && (page_ == PAGE_SITUATION || page_ == PAGE_NETWORK);
@@ -806,13 +1127,8 @@ void PanelApp::maybeRender(uint32_t now) {
                                                                               : now - bootMs_ < BOOT_NO_DATA_MS);
   if (waitingSnapshot && networkPage && !pageChanged_) return;
   compose(now);
-  // Canal rápido: o agravamento acende o LED e soa já, sem esperar o papel.
-  if (view_.snapshot_done && level_ >= IOC_LEVEL_ATTENTION && level_ > drawnLevel_) hal_->beep(1);
-  if (view_.snapshot_done && level_ != drawnLevel_) {
-    drawnLevel_ = level_;
-    hal_->storeU32("alevel", drawnLevel_);
-  }
-  hal_->led(level_, true);
+  // Canal rápido: o alerta acende o LED e soa já, sem esperar o papel.
+  updateAlert(now);
   if (hal_->renderBusy()) return;
   const uint32_t hash = ioc_dl_hash(&dl_);
   bool forced = forceRefresh_ || pageChanged_;
@@ -849,8 +1165,14 @@ void PanelApp::maybeRender(uint32_t now) {
 void PanelApp::maybeSleep(uint32_t now) {
   uint8_t bat = 255; uint16_t mv = 0; int16_t t = 0; uint16_t rh = 0; bool usb = false;
   hal_->readSensors(bat, mv, t, rh, usb);
-  if (!cfg_.canSleep || usb || composing_ || stepRunning_ || hal_->renderBusy() || forceRefresh_ || pageChanged_) return;
+  if (!cfg_.canSleep || usb || composing_ || stepRunning_ || hal_->renderBusy() || forceRefresh_ || pageChanged_ ||
+      splash_ || powerPressed_ || tones_.busy(now)) {
+    return;
+  }
   if (now - lastActivityMs_ < AWAKE_IDLE_MS) return;
+  if (lastKeyMs_ && now - lastKeyMs_ < KEY_AWAKE_MS) return;
+  // Alerta sem ciência: fica acordado chamando o operador por um tempo.
+  if (unacked_ && annMs_ && now - annMs_ < ALERT_AWAKE_MS) return;
   const bool ready = mode_ == Mode::Bound && view_.snapshot_done && marksPending() == 0;
   const bool hopeless = mode_ != Mode::Bound && now - bootMs_ > 90000;  // sem rede: não gasta bateria esperando
   if (!ready && !hopeless) return;
@@ -859,32 +1181,85 @@ void PanelApp::maybeSleep(uint32_t now) {
   char line[48];
   snprintf(line, sizeof(line), "dormindo por %lu s", static_cast<unsigned long>(seconds));
   hal_->log(line);
+  hal_->leds(0, 0);
   hal_->sleepFor(seconds);
 }
 
+/* Desligamento ordenado: avisa o Node, desenha a tela final (com os LEDs
+ * vermelhos respirando durante os 15 a 30 s do papel), apaga tudo e desliga. */
 void PanelApp::shutdown() {
-  if (shuttingDown_) return;
-  shuttingDown_ = true;
+  if (off_ != Off::None) return;
   const uint32_t now = hal_->millis();
+  off_ = Off::WaitRender;
+  offStepMs_ = now;
+  powerPressed_ = false;
+  composing_ = false;
+  scene_ = LedScene::Shutdown;
+  sceneStart_ = now;
+  tones_.clear();
+  tones_.play(Melody::Shutdown);
+  for (PanelMark& m : marks_) m.lastSendMs = now - MARK_RETRY_MS;  // última chance para as marcas pendentes
+  flushMarks(now);
   if (mode_ == Mode::Bound) sendStatus(IOC_PANEL_ST_POWER_OFF, 0);
-  hal_->beep(3);
   ioc_page_ctx ctx;
   fillCtx(ctx, now);
   composeShutdown(ctx);
-  hal_->render(dl_);
-  memcpy(&drawn_, &dl_, sizeof(drawn_));
   hal_->storeU32("rvalid", 0);  // a próxima partida redesenha
+  hal_->storeU32("offpg", 1);   // e troca a tela final pela de partida
   hal_->log("desligamento pelo operador");
-  hal_->powerOff();
+}
+
+void PanelApp::shutdownTick(uint32_t now) {
+  switch (off_) {
+    case Off::WaitRender:  // um desenho em curso termina antes
+      if (!hal_->renderBusy() || now - offStepMs_ > 40000) {
+        hal_->render(dl_);
+        memcpy(&drawn_, &dl_, sizeof(drawn_));
+        off_ = Off::Drawing;
+        offStepMs_ = now;
+      }
+      break;
+    case Off::Drawing:
+      if (!hal_->renderBusy() || now - offStepMs_ > 45000) {
+        off_ = Off::Done;
+        offStepMs_ = now;
+        scene_ = LedScene::None;
+        tones_.play(Melody::Off);
+        hal_->log("tela final desenhada");
+      }
+      break;
+    case Off::Done:
+      if (now - offStepMs_ >= 450 && !tones_.busy(now)) {
+        off_ = Off::Finished;
+        hal_->leds(0, 0);
+        hal_->powerOff();
+      }
+      break;
+    default:
+      break;
+  }
 }
 
 void PanelApp::loop() {
-  if (shuttingDown_) return;
   const uint32_t now = hal_->millis();
+  updateSignals(now);
+  if (off_ != Off::None) {
+    shutdownTick(now);
+    return;
+  }
+  if (powerPressed_ && now - powerPressMs_ >= POWER_HOLD_MS) {
+    hal_->log("botao de energia segurado: desligando");
+    shutdown();
+    return;
+  }
   maintainLink(now);
   flushMarks(now);
   routineTick(now);
-  if (forceRefresh_ || pageChanged_ || composing_ || now - lastEvalMs_ >= 1000u) {
+  if (composing_ && now - lastKeyMs_ >= DRAFT_ABANDON_MS) {
+    hal_->log("nota gravada por inatividade");
+    submitComposer(now);
+  }
+  if (splash_ || forceRefresh_ || pageChanged_ || composing_ || now - lastEvalMs_ >= 1000u) {
     lastEvalMs_ = now;
     maybeRender(now);
   }

@@ -11,8 +11,9 @@ Simulation Studio.
 Protocolo de linha com o painel (115200, USB CDC):
   painel -> ponte   #IOC HELLO|READY uuid=0x... profile=PANEL ...
                     #IOC JOIN <node> | #IOC LEAVE | #IOC UP <hex> | #IOC LOG <texto>
+                    #IOC OFF (desligado pelo operador)
   ponte -> painel   #IOC BRIDGE 1 | #IOC TIME <epoch> | #IOC LINK 0|1
-                    #IOC OFFER <hex> | #IOC DOWN <hex> | #IOC KEY <n> | #IOC BUTTON A|B|C|P|PP
+                    #IOC OFFER <hex> | #IOC DOWN <hex> | #IOC KEY <n> | #IOC BUTTON A|B|C|P|PP|H
 
 Uso, com o Studio aberto (python3 Simulacao/studio/server.py ...):
   Front/.venv/bin/python Simulacao/usb_panel_bridge.py --port /dev/ttyACM0 --node 2 --rssi -52
@@ -31,6 +32,8 @@ from studio.protocol import parse_status, request
 
 UUID_RE = re.compile(r"uuid=(0x[0-9a-fA-F]{16})")
 HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
+# Linhas de enlace que o firmware pode emitir antes do READY.
+LINK_LINES = ("#IOC JOIN ", "#IOC LEAVE", "#IOC UP ")
 Requester = Callable[[str], str]
 
 
@@ -48,6 +51,9 @@ class PanelBridge:
         self.uuid: str | None = None
         self.pending = bytearray()
         self.stats = {"up": 0, "down": 0, "offers": 0, "errors": 0}
+        self.powered = False
+        # Enlace anunciado pelo painel enquanto a bancada o vê desligado (ver handle_panel_line).
+        self.held: list[str] = []
 
     # ---------------------------------------------------------------- serial
     def write(self, line: str) -> None:
@@ -87,7 +93,7 @@ class PanelBridge:
                 match = UUID_RE.search(line)
                 if line.startswith("#IOC READY") and match:
                     self.uuid = "0x" + match.group(1)[2:].upper()
-                elif line.startswith(("#IOC JOIN ", "#IOC LEAVE", "#IOC UP ")):
+                elif line.startswith(LINK_LINES):
                     boot_lines.append(line)
         uuid = self.uuid
         snapshot = parse_status(self.ask("STATUS"))
@@ -102,6 +108,8 @@ class PanelBridge:
         for node, rssi in [(self.node, self.rssi), *self.extra]:
             self.ask(f"SENSOR RSSI {uuid} {node} {rssi}")
         self.write(f"#IOC TIME {int(time.time())}")
+        self.powered = True
+        # Reproduz o que o painel anunciou antes do READY (JOIN, LEAVE, UP).
         for line in boot_lines:
             self.handle_panel_line(line)
         self.log(f"[painel] {uuid} na bancada, alcance do Node {self.node} ({self.rssi} dBm)")
@@ -109,6 +117,12 @@ class PanelBridge:
 
     def handle_panel_line(self, line: str) -> None:
         assert self.uuid
+        if not self.powered and line.startswith(LINK_LINES):
+            # Religando, o firmware anuncia JOIN antes do READY. Ligar o painel na bancada o reinicia,
+            # então o enlace só é repassado depois do READY (como em attach()).
+            if len(self.held) < 64:
+                self.held.append(line)
+            return
         if line.startswith("#IOC UP "):
             payload = line[8:].strip()
             if not HEX_RE.match(payload) or len(payload) % 2 or len(payload) > 4096:
@@ -128,6 +142,20 @@ class PanelBridge:
         elif line.startswith("#IOC HELLO") and "mode=WIFI" in line:
             # O painel reiniciou: volta ao modo USB.
             self.write("#IOC BRIDGE 1")
+        elif line.startswith("#IOC OFF"):
+            # Desligado pelo operador: a bancada também o vê desligado (o Node registra STATE=OFF).
+            self.ask(f"SENSOR POWER {self.uuid} OFF")
+            self.powered = False
+            self.log("[painel] desligado pelo botão de energia")
+        elif line.startswith("#IOC READY") and not self.powered:
+            # Religado pelo operador e de volta ao modo USB.
+            self.ask(f"SENSOR POWER {self.uuid} ON")
+            self.write(f"#IOC TIME {int(time.time())}")
+            self.powered = True
+            self.log("[painel] religado")
+            held, self.held = self.held, []
+            for pending in held:
+                self.handle_panel_line(pending)
         elif line.startswith("#IOC LOG "):
             self.log("[painel] " + line[9:])
 

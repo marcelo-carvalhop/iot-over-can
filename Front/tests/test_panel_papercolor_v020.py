@@ -88,3 +88,41 @@ def test_panel_status_carries_environment_and_page() -> None:
     line = next(raw for raw in _probe_lines() if raw.startswith("PANEL ") and "TYPE=STATUS" in raw)
     for key in ("BAT_PCT=80", "TEMP_C=23.5", "RH_PCT=48.0", "KEYBOARD=YES", "CLOCK=YES", "PAGE=0x"):
         assert key in line
+
+
+def test_keyboard_flags_tags_and_acknowledgement_reach_the_timeline(tmp_path: Path) -> None:
+    _state, store, panels, logs = _run(_probe_lines(), tmp_path)
+    marks = [p for p in panels if p.kind == "MARK"]
+    assert [m.payload["KIND"] for m in marks[:5]] == ["NOTE", "BUTTON", "FLAG", "NOTE", "ACK"]
+    # A nota vale desde a primeira tecla: o texto foi terminado segundos depois.
+    assert marks[0].age_ms >= 3000
+    operator = [e for e in store.list_events("painel") if e.category == "OPERATOR"]
+    by_kind = {e.kind: e for e in operator}
+    assert by_kind["OPERATOR_FLAG"].title.startswith("Marca do operador")
+    tagged = next(e for e in operator if e.details.get("tags"))
+    assert tagged.details["tags"] == ["ensaio3", "cabo"]
+    ack = by_kind["OPERATOR_ACK"]
+    assert ack.title.startswith("Alerta reconhecido") and "Ciente em" in ack.title
+    assert "PANEL_OFF" in {e.kind for e in store.list_events("painel")}
+    assert any(log.source == "PAINEL" and "ciente do alerta" in log.message for log in logs)
+    # Navegação pelas marcas na sessão inteira (teclas m/M do histórico).
+    first, second = operator[0], operator[1]
+    assert store.adjacent_event("painel", first.epoch, first.id, category="OPERATOR").id == second.id
+    assert store.adjacent_event("painel", second.epoch, second.id, category="OPERATOR", forward=False).id == first.id
+
+
+def test_panel_status_reports_unacknowledged_alerts_and_power_off() -> None:
+    lines = _probe_lines()
+    assert any(raw.startswith("PANEL ") and "TYPE=STATUS" in raw and "ALERT=UNACKED" in raw for raw in lines)
+    assert any(raw.startswith("PANEL ") and "TYPE=STATUS STATE=OFF" in raw for raw in lines)
+
+
+def test_operator_marks_trigger_a_network_capture_and_tags_are_parsed() -> None:
+    from pico_tui.history.captures import decide_scope
+    from pico_tui.history.service import mark_tags
+
+    event = {"kind": "OPERATOR_NOTE", "severity": "INFO", "details": {}, "node_id": 2, "sensor_id": "02.01"}
+    assert decide_scope(event) == ("NETWORK", "*")
+    assert decide_scope({**event, "kind": "OPERATOR_ACK"}) is None
+    assert mark_tags("#Cabo troca do #cabo no #ensaio-3, #_x e # solto") == ["cabo", "ensaio-3"]
+    assert mark_tags("") == []

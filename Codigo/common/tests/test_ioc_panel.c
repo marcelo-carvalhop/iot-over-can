@@ -353,7 +353,30 @@ static void test_refresh(void) {
     CHECK(ioc_refresh_decide(&r, 50000, 9, 3, 1, &next) == 1);  /* pedido do operador */
 }
 
+/* Marca IoT-over-CAN: dentro da largura pedida, com o nome, sem estourar a lista. */
+static void test_logo(void) {
+    static ioc_dl dl;
+    ioc_dl_clear(&dl);
+    const int h = ioc_page_logo(&dl, 8, 28, 384);
+    CHECK(h > 100 && h < 200);
+    CHECK(!dl.overflow && dl.count > 10);
+    int named = 0;
+    for (uint16_t i = 0; i < dl.count; ++i) {
+        const ioc_dl_item *it = &dl.item[i];
+        CHECK(it->x >= 8 && it->x + (it->op == IOC_DL_TEXT_OP ? ioc_dl_text_width(it->size, dl.text + it->text) : it->w) <= 392);
+        CHECK(!(it->flags & IOC_DL_VOLATILE));
+        if (it->op == IOC_DL_TEXT_OP && strcmp(dl.text + it->text, "IoT-over-") == 0) named = 1;
+    }
+    CHECK(named);
+    /* Os sinalizadores de marca e estado são distintos e nomeados. */
+    CHECK(strcmp(ioc_panel_mark_kind_name(IOC_PANEL_MARK_FLAG), "FLAG") == 0);
+    CHECK(strcmp(ioc_panel_mark_kind_name(IOC_PANEL_MARK_ACK), "ACK") == 0);
+    CHECK((IOC_PANEL_ST_ALERT & (IOC_PANEL_ST_USB | IOC_PANEL_ST_SLEEP | IOC_PANEL_ST_POWER_OFF |
+                                 IOC_PANEL_ST_CLOCK | IOC_PANEL_ST_KEYBOARD)) == 0);
+}
+
 int main(void) {
+    test_logo();
     test_ids();
     test_proto();
     test_dl();

@@ -1866,6 +1866,7 @@ void probePrintPanel(uint8_t node, uint8_t child, const uint8_t* data, size_t le
             node, child, state, (st.flags & IOC_PANEL_ST_USB) ? "USB" : "BATTERY", st.sleep_s, st.severity,
             static_cast<unsigned long>(st.page_hash), st.page_seq, st.refreshes, static_cast<unsigned long>(st.uptime_s),
             yesNo(st.flags & IOC_PANEL_ST_CLOCK), yesNo(st.flags & IOC_PANEL_ST_KEYBOARD));
+    if (st.flags & IOC_PANEL_ST_ALERT) out.add(" ALERT=UNACKED");
     if (st.battery_pct != 255) out.add(" BAT_PCT=%u BAT_MV=%u", st.battery_pct, st.battery_mv);
     if (st.temp_c10 != IOC_PANEL_NA_I16) out.add(" TEMP_C=%.1f", static_cast<double>(st.temp_c10) / 10.0);
     if (st.rh_10 != IOC_PANEL_NA_U16) out.add(" RH_PCT=%.1f", static_cast<double>(st.rh_10) / 10.0);

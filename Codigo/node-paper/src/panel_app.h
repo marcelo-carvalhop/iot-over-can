@@ -16,8 +16,9 @@
 #include "ioc_page.h"
 #include "ioc_panel_proto.h"
 #include "ioc_view.h"
+#include "panel_signal.h"
 
-#define PANEL_FW_VERSION "0.20.0"
+#define PANEL_FW_VERSION "0.21.0"
 
 /* Teclas do CardKB v1.1 (I2C 0x5F). */
 enum : uint8_t {
@@ -43,13 +44,16 @@ class PanelHal {
   /* Inicia o desenho da página (no papel, 15 a 30 s, em outra tarefa). */
   virtual void render(const ioc_dl& dl) = 0;
   virtual bool renderBusy() = 0;
-  virtual void led(uint8_t level, bool on) = 0;
-  /* 1 agravamento, 2 confirmação, 3 desligamento. */
-  virtual void beep(uint8_t pattern) = 0;
+  /* Os dois LEDs RGB do topo (0xRRGGBB); ver panel_signal.h. */
+  virtual void leds(uint32_t rgb0, uint32_t rgb1) = 0;
+  /* Uma nota, sem bloquear; o PanelApp encadeia as melodias. */
+  virtual void tone(uint16_t hz, uint16_t ms) = 0;
   virtual void readSensors(uint8_t& batteryPct, uint16_t& batteryMv, int16_t& tempC10, uint16_t& rh10, bool& usb) = 0;
   virtual bool keyboardPresent() = 0;
-  /* Desliga e religa após `seconds` (no aparelho, pelo RTC; não retorna). */
+  /* Desliga e religa após `seconds` (no aparelho, pelo RTC; não retorna). O
+   * botão de energia acorda o painel antes da hora. */
   virtual void sleepFor(uint32_t seconds) = 0;
+  /* Desliga tudo: rádios, LEDs, som, teclado e o próprio painel (não retorna). */
   virtual void powerOff() = 0;
   virtual void storeU32(const char* key, uint32_t value) = 0;
   virtual uint32_t loadU32(const char* key, uint32_t fallback) = 0;
@@ -67,6 +71,7 @@ struct PanelConfig {
   uint16_t sleepNormalS = 600;  /* rede normal */
   uint16_t sleepAttentionS = 120;
   int16_t tzMin = -180;
+  bool userBoot = true;         /* ligado pelo operador (false: acordou pelo RTC) */
 };
 
 struct PanelMark {
@@ -92,6 +97,9 @@ class PanelApp {
   void onKey(uint8_t code);
   void onButton(char button);
   void onPowerClick(bool doubleClick);
+  /* Estado do botão de energia (lido do M5PM1): segurar 1,5 s desliga. */
+  void onPowerPressed(bool pressed);
+  void onPowerHold() { shutdown(); }
   /* Tempo de tela forçado (por exemplo, ao entrar na USB). */
   void requestRefresh() { forceRefresh_ = true; }
 
@@ -111,9 +119,16 @@ class PanelApp {
   bool composing() const { return composing_; }
   bool snapshotReceived() const { return view_.snapshot_done != 0; }
   uint32_t sleepSeconds() const;
+  bool unacked() const { return unacked_; }
+  uint16_t alertsAnnounced() const { return alertsAnnounced_; }
+  uint16_t acks() const { return acks_; }
+  uint32_t ledColor(uint8_t i) const { return ledOut_[i & 1]; }
+  bool poweringOff() const { return off_ != Off::None; }
+  bool powerOffDone() const { return off_ == Off::Finished; }
 
  private:
   enum class Mode : uint8_t { Idle, Discovery, Bound };
+  enum class Off : uint8_t { None, WaitRender, Drawing, Done, Finished };
 
   void startDiscovery(uint8_t node);
   void sendHello();
@@ -124,11 +139,17 @@ class PanelApp {
   void handleData(const uint8_t* inner, size_t len);
   void maintainLink(uint32_t now);
   void flushMarks(uint32_t now);
-  void addMark(uint8_t kind, uint8_t step, const char* text);
+  void addMark(uint8_t kind, uint8_t step, const char* text, uint32_t createdMs);
   void rememberMark(const PanelMark& m);
   void routineTick(uint32_t now);
   void routineMark();
-  void submitComposer();
+  void submitComposer(uint32_t now);
+  void updateAlert(uint32_t now);
+  bool acknowledge(uint32_t now);
+  void saveAlert();
+  void updateSignals(uint32_t now);
+  void shutdownTick(uint32_t now);
+  void composeSplash(const ioc_page_ctx& ctx);
   bool slashCommand(const char* text);
   void compose(uint32_t now);
   void composeRoutine(const ioc_page_ctx& ctx);
@@ -146,6 +167,7 @@ class PanelApp {
   void maybeSleep(uint32_t now);
   void shutdown();
   void userActivity(uint32_t now) { lastActivityMs_ = now; }
+  void draftHeader(char* out, size_t cap) const;
 
   PanelHal* hal_ = nullptr;
   PanelConfig cfg_;
@@ -173,7 +195,6 @@ class PanelApp {
   ioc_page_item items_[IOC_PAGE_MAX_ITEMS];
   int itemCount_ = 0;
   uint8_t level_ = 0;
-  uint8_t drawnLevel_ = 0xFF;
   uint8_t page_ = PAGE_SITUATION;
   bool forceRefresh_ = true;
   bool pageChanged_ = false;
@@ -193,7 +214,38 @@ class PanelApp {
   uint8_t draftLen_ = 0;
   uint32_t lastKeyMs_ = 0;
   uint32_t draftDrawnMs_ = 0;
+  uint32_t draftStartMs_ = 0;  /* a marca vale a partir da primeira tecla */
   char flash_[96] = {0};      /* confirmação mostrada na próxima página */
+
+  /* Canal rápido: LEDs, bipes e alertas com ciência. */
+  ToneQueue tones_;
+  uint32_t ledOut_[2] = {0, 0};
+  bool ledsSent_ = false;
+  uint32_t keyFlashUntil_ = 0;
+  uint32_t savedFlashUntil_ = 0;
+  uint32_t clickFlashUntil_ = 0;
+  LedScene scene_ = LedScene::None;
+  uint32_t sceneStart_ = 0;
+  uint32_t alertKeys_[IOC_PAGE_MAX_ITEMS] = {0};
+  uint8_t alertN_ = 0;
+  uint32_t annKeys_[IOC_PAGE_MAX_ITEMS] = {0};  /* alertas já anunciados */
+  uint8_t annN_ = 0;
+  uint8_t annLevel_ = 0;
+  uint32_t annEpoch_ = 0;
+  uint32_t annMs_ = 0;
+  uint32_t ackKeys_[IOC_PAGE_MAX_ITEMS] = {0};  /* alertas com ciência do operador */
+  uint8_t ackN_ = 0;
+  bool unacked_ = false;
+  uint16_t alertsAnnounced_ = 0;
+  uint16_t acks_ = 0;
+
+  /* Energia. */
+  bool powerPressed_ = false;
+  bool powerReleasedSeen_ = false;
+  uint32_t powerPressMs_ = 0;
+  Off off_ = Off::None;
+  uint32_t offStepMs_ = 0;
+  bool splash_ = false;
 
   uint8_t routine_ = 0;
   uint8_t step_ = 0;
@@ -204,5 +256,4 @@ class PanelApp {
 
   char radio_[640] = {0};
   bool radioValid_ = false;
-  bool shuttingDown_ = false;
 };

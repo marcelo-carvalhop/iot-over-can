@@ -90,7 +90,7 @@ class PaperColorNativeTests(unittest.TestCase):
                 objects.append(str(obj))
             exe = workdir / "panel-reconnect"
             build = subprocess.run(["c++", "-std=c++17", "-O0", *includes,
-                                    str(fixture), str(app / "panel_app.cpp"),
+                                    str(fixture), str(app / "panel_app.cpp"), str(app / "panel_signal.cpp"),
                                     *objects, "-lm", "-o", str(exe)],
                                    capture_output=True, text=True)
             self.assertEqual(build.returncode, 0, build.stdout + "\n" + build.stderr)

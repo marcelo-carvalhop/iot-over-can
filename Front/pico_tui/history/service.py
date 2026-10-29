@@ -5,6 +5,7 @@ fila limitada e são descarregados em lotes por um worker da aplicação.
 """
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections import deque
@@ -34,6 +35,19 @@ from pico_tui.services.recorder import redact
 
 BUS_SAMPLE_INTERVAL_S = 30.0
 MAX_QUEUE = 5000
+
+
+TAG_RE = re.compile(r"#([^\W_][\w-]{0,31})", re.UNICODE)
+
+
+def mark_tags(text: str) -> list[str]:
+    """Etiquetas (#cabo, #ensaio3) de uma nota do operador, sem repetição e em minúsculas."""
+    seen: list[str] = []
+    for tag in TAG_RE.findall(text or ""):
+        tag = tag.lower().rstrip("-")
+        if tag and tag not in seen:
+            seen.append(tag)
+    return seen
 
 
 class HistoryService:
@@ -266,12 +280,17 @@ class HistoryService:
         if ev.kind == "MARK":
             kind = ev.payload.get("KIND", "")
             title = {"BUTTON": "Intervenção física", "STEP": "Passo de roteiro",
-                     "RESULT": "Resultado de roteiro"}.get(kind, "Nota do operador")
+                     "RESULT": "Resultado de roteiro", "FLAG": "Marca do operador",
+                     "ACK": "Alerta reconhecido"}.get(kind, "Nota do operador")
+            details: dict[str, Any] = {"kind": kind, "step": ev.payload.get("STEP"), "seq": ev.payload.get("SEQ"),
+                                       "text": ev.text, "age_ms": ev.age_ms}
+            tags = mark_tags(ev.text)
+            if tags:
+                details["tags"] = tags
             self._event("OPERATOR_" + (kind or "MARK"), "OPERATOR", "INFO",
                         f"{title} (painel {ident})" + (f": {ev.text}" if ev.text else ""),
                         node_id=ev.parent_node_id, sensor_id=ident, epoch=time.time() - ev.age_ms / 1000.0,
-                        details={"kind": kind, "step": ev.payload.get("STEP"), "seq": ev.payload.get("SEQ"),
-                                 "text": ev.text, "age_ms": ev.age_ms})
+                        details=details)
         elif ev.kind == "STATUS" and ev.payload.get("STATE", "").upper() == "OFF":
             self._event("PANEL_OFF", "OPERATOR", "INFO", f"Painel {ident} desligado pelo operador",
                         node_id=ev.parent_node_id, sensor_id=ident, details=dict(ev.payload))

@@ -131,7 +131,7 @@ def build_command(payload: dict[str, Any]) -> str:
         if verb=='key':
             return f'PANEL KEY {uuid} {num(payload.get("code"),1,255,"Tecla")}'
         if verb=='button':
-            return f'PANEL BUTTON {uuid} {enum(payload.get("button"),{"A","B","C","P","PP"},"Botão")}'
+            return f'PANEL BUTTON {uuid} {enum(payload.get("button"),{"A","B","C","P","PP","H"},"Botão")}'
         if verb=='battery':
             return f'PANEL BATTERY {uuid} {enum(payload.get("state"),{"ON","OFF"},"Bateria")}'
         if verb=='note':
@@ -169,7 +169,11 @@ def parse_panel_page(output: str) -> dict[str, Any]:
     return {'uuid':f.get('uuid','').upper().replace('0X','0x'),'source':f.get('source','OFF'),
             'powered':f.get('powered')=='1','hash':f.get('hash',''),'level':int(f.get('level','0')),
             'renders':int(f.get('renders','0')),'beeps':int(f.get('beeps','0')),'session':f.get('session')=='1',
-            'node':int(f.get('node','0')),'child':int(f.get('child','0')),'battery':f.get('battery')=='1','items':items}
+            'node':int(f.get('node','0')),'child':int(f.get('child','0')),'battery':f.get('battery')=='1',
+            'leds':[led if re.fullmatch(r'[0-9A-Fa-f]{6}',led) else '000000'
+                    for led in (f.get('leds','000000,000000').split(',')+['000000','000000'])[:2]],
+            'unacked':f.get('unacked')=='1','alerts':int(f.get('alerts','0')),'acks':int(f.get('acks','0')),
+            'off':f.get('off')=='1','items':items}
 
 
 def validate_native_command(command: str) -> str:

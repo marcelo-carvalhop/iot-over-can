@@ -13,10 +13,16 @@
  *    Node virtual do Simulation Studio ("#IOC UP/DOWN <hex>"), como um canal
  *    Wi-Fi. A troca acontece quando a ponte envia "#IOC BRIDGE".
  *
- * Energia: um toque no botão liga; com o painel ligado, um toque atualiza e
- * dois toques desligam de forma ordenada (página "Painel desligado", aviso
- * ao Node). Na bateria, entre verificações, o M5PM1 desliga tudo e o RTC
- * religa o painel (timerSleep).
+ * Energia: um toque no botão liga; com o painel ligado, um toque atualiza (ou
+ * dá ciência de um alerta) e segurar 1,5 s ou dois toques desligam de forma
+ * ordenada: aviso ao Node, tela "Painel desligado" com a marca IoT-over-CAN,
+ * LEDs vermelhos enquanto o papel desenha, e então rádios, LEDs, som, teclado
+ * e o sistema desligados. Enquanto o firmware roda, ele trata o botão (o
+ * M5PM1 não reinicia nem desliga sozinho); antes de dormir ou desligar, o
+ * comportamento de fábrica volta, e um toque sempre religa o painel.
+ *
+ * Teclado: o CardKB fica na Port A (Ex_I2C, G4/G5), que o M5Unified não
+ * inicializa sozinho; sem M5.Ex_I2C.begin() nenhuma tecla é lida.
  */
 #include <Arduino.h>
 #include <M5Unified.h>
@@ -24,6 +30,7 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <esp_sleep.h>
 #include <esp_task_wdt.h>
 #include <time.h>
 
@@ -37,6 +44,9 @@ constexpr uint8_t CARDKB_ADDR = 0x5F;
 constexpr uint8_t SHT40_ADDR = 0x44;
 constexpr uint8_t M5PM1_ADDR = 0x6E;
 constexpr uint32_t I2C_FREQ = 100000;
+constexpr uint8_t PM1_BTN_STATUS = 0x48;  // bit 0: botão pressionado agora
+constexpr uint8_t PM1_BTN_CFG_1 = 0x49;   // bit 0: SINGLE_RST_DIS
+constexpr uint8_t PM1_BTN_CFG_2 = 0x4A;   // bit 0: DOUBLE_OFF_DIS
 
 enum class Transport : uint8_t { Wifi, Usb };
 
@@ -51,6 +61,27 @@ bool bleStarted = false;
 WiFiUDP udp;
 bool udpStarted = false;
 uint8_t joinedNode = 0;
+bool exI2cReady = false;
+bool timerWake = false;
+
+/* Firmware no controle do botão de energia (true) ou comportamento de fábrica
+ * do M5PM1 (false: um toque reinicia/acorda, dois toques desligam). */
+void pmicButtons(bool firmware) {
+  if (firmware) {
+    M5.In_I2C.bitOn(M5PM1_ADDR, PM1_BTN_CFG_1, 0x01, I2C_FREQ);
+    M5.In_I2C.bitOn(M5PM1_ADDR, PM1_BTN_CFG_2, 0x01, I2C_FREQ);
+  } else {
+    M5.In_I2C.bitOff(M5PM1_ADDR, PM1_BTN_CFG_1, 0x01, I2C_FREQ);
+    M5.In_I2C.bitOff(M5PM1_ADDR, PM1_BTN_CFG_2, 0x01, I2C_FREQ);
+  }
+}
+
+bool powerButtonDown() {
+  uint8_t v = 0;
+  return M5.In_I2C.readRegister(M5PM1_ADDR, PM1_BTN_STATUS, &v, 1, I2C_FREQ) && (v & 0x01);
+}
+
+void waitRender();
 
 /* ------------------------------------------------------------- relógio */
 
@@ -149,6 +180,13 @@ void drawPage(const ioc_dl& dl) {
   M5.Display.waitDisplay();
 }
 
+void waitRender() {
+  while (renderActive) {
+    esp_task_wdt_reset();
+    delay(20);
+  }
+}
+
 // O papel leva 15 a 30 s: a tarefa de desenho roda no núcleo 0 para que o
 // enlace (PING a cada 3 s, sessão de 10 s) continue respondendo.
 void renderTask(void*) {
@@ -201,19 +239,33 @@ void refreshSensors(bool force) {
   readSht40();
 }
 
+bool keyboardReported = false;
+
+// O CardKB pode ser plugado a qualquer momento: procura a cada 2 s até achar.
 void probeKeyboard() {
-  if (millis() - keyboardProbeMs < 5000 && keyboardProbeMs) return;
+  if (keyboardProbeMs && millis() - keyboardProbeMs < (keyboard ? 5000u : 2000u)) return;
   keyboardProbeMs = millis();
-  keyboard = M5.Ex_I2C.start(CARDKB_ADDR, true, I2C_FREQ);
-  M5.Ex_I2C.stop();
+  const bool found = exI2cReady && M5.Ex_I2C.scanID(CARDKB_ADDR, I2C_FREQ);
+  if (found != keyboard || !keyboardReported) {
+    keyboardReported = true;
+    Serial.printf("#IOC LOG teclado CardKB %s (Port A, I2C 0x%02X, SDA G%d SCL G%d%s)\n", found ? "conectado" : "ausente",
+                  CARDKB_ADDR, M5.Ex_I2C.getSDA(), M5.Ex_I2C.getSCL(), exI2cReady ? "" : ", barramento nao iniciado");
+  }
+  keyboard = found;
 }
 
 uint8_t readKey() {
   if (!keyboard) return 0;
   uint8_t c = 0;
-  if (!M5.Ex_I2C.start(CARDKB_ADDR, true, I2C_FREQ)) { keyboard = false; return 0; }
-  M5.Ex_I2C.read(&c, 1, true);
+  if (!M5.Ex_I2C.start(CARDKB_ADDR, true, I2C_FREQ)) return 0;
+  const bool ok = M5.Ex_I2C.read(&c, 1, true);
   M5.Ex_I2C.stop();
+  if (!ok) {  // desconectado: volta a procurar
+    keyboard = false;
+    keyboardProbeMs = millis();
+    Serial.println("#IOC LOG teclado CardKB parou de responder");
+    return 0;
+  }
   return c;
 }
 
@@ -276,15 +328,29 @@ void startBle() {
   scan->start(0, false, true);
 }
 
-void stopRadios() {
+void stopRadios(bool deinit = false) {
   if (bleStarted) {
     NimBLEDevice::getScan()->stop();
     NimBLEDevice::getAdvertising()->stop();
+    if (deinit) {
+      NimBLEDevice::deinit(true);
+      bleStarted = false;
+    }
   }
   udp.stop();
   udpStarted = false;
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
+}
+
+/* Apaga o que consome além do ESP32: LEDs (e o LDO deles), som e a Port A. */
+void quietPeripherals() {
+  M5.Led.setAllColor(0, 0, 0);
+  M5.Led.display();
+  M5.Speaker.stop();
+  M5.Speaker.end();
+  M5.Power.setExtOutput(false);  // 5 V do CardKB
+  M5.Power.M5pm1.setLDOOutput(false);
 }
 
 /* --------------------------------------------------------- utilidades USB */
@@ -383,43 +449,51 @@ class DeviceHal : public PanelHal {
     return udp.endPacket() == 1;
   }
   void render(const ioc_dl& dl) override {
+    waitRender();  // nunca troca a lista no meio de um desenho
     renderActive = true;
     memcpy(&renderDl, &dl, sizeof(renderDl));
     renderPending = true;
   }
   bool renderBusy() override { return renderActive; }
-  void led(uint8_t level, bool on) override {
-    static int last = -1;
-    const int key = on ? level : 9;
-    if (key == last) return;
-    last = key;
-    // Na bateria o LED só pisca nos agravamentos (beep); alimentado, mostra o nível.
-    if (!on || (!onUsb && level < IOC_LEVEL_ATTENTION)) { M5.Led.setAllColor(0, 0, 0); M5.Led.display(); return; }
-    static const uint8_t rgb[4][3] = {{0, 24, 0}, {0, 0, 60}, {80, 60, 0}, {120, 0, 0}};
-    M5.Led.setAllColor(rgb[level & 3][0], rgb[level & 3][1], rgb[level & 3][2]);
+  void leds(uint32_t rgb0, uint32_t rgb1) override {
+    M5.Led.setColor(0, static_cast<uint8_t>(rgb0 >> 16), static_cast<uint8_t>(rgb0 >> 8), static_cast<uint8_t>(rgb0));
+    M5.Led.setColor(1, static_cast<uint8_t>(rgb1 >> 16), static_cast<uint8_t>(rgb1 >> 8), static_cast<uint8_t>(rgb1));
     M5.Led.display();
   }
-  void beep(uint8_t pattern) override {
-    if (pattern == 1) { M5.Speaker.tone(2200, 120); delay(160); M5.Speaker.tone(2200, 120); }
-    else if (pattern == 2) M5.Speaker.tone(3000, 30);
-    else M5.Speaker.tone(880, 200);
-  }
+  void tone(uint16_t hz, uint16_t ms) override { M5.Speaker.tone(hz, ms); }
   void readSensors(uint8_t& pct, uint16_t& mv, int16_t& t, uint16_t& rh, bool& usb) override {
     refreshSensors(false);
     pct = batteryPct; mv = batteryMv; t = tempC10; rh = rh10; usb = onUsb || transport == Transport::Usb;
   }
   bool keyboardPresent() override { return keyboard; }
   void sleepFor(uint32_t seconds) override {
-    while (renderActive) delay(50);
+    waitRender();
     stopRadios();
+    quietPeripherals();
+    prefs.putUInt("slp", 1);
+    prefs.putUInt("slpw", static_cast<uint32_t>(epochNow() + seconds));
+    pmicButtons(false);  // um toque no botão acorda (reinicia) o painel antes da hora
     Serial.flush();
     M5.Power.timerSleep(static_cast<int>(seconds));
+    esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(seconds) * 1000000ULL);  // se o RTC falhar
+    esp_deep_sleep_start();
   }
   void powerOff() override {
-    while (renderActive) delay(50);
-    stopRadios();
+    waitRender();
+    Serial.println("#IOC OFF");
+    stopRadios(true);
+    quietPeripherals();
+    M5.Display.sleep();
+    M5.Display.waitDisplay();
+    pmicButtons(false);  // desligado, o botão volta ao M5PM1: um toque liga
     Serial.flush();
-    M5.Power.powerOff();
+    M5.Power.M5pm1.powerOff();
+    delay(1500);
+    // Ainda alimentado (USB): espera sem fonte de despertar; um toque no botão
+    // reinicia o ESP32 pelo M5PM1 e o painel liga de novo.
+    Serial.println("#IOC LOG alimentacao externa presente: em espera ate o botao de energia");
+    Serial.flush();
+    esp_deep_sleep_start();
   }
   void storeU32(const char* key, uint32_t value) override {
     if (prefs.getUInt(key, value ^ 1u) != value) prefs.putUInt(key, value);
@@ -475,6 +549,7 @@ void configureApp(Transport t) {
     ioc_link_hex_to_key(SIM_MASTER_KEY, master);
     ioc_link_derive_device_key(master, panelUuid, cfg.devKey);
     cfg.canSleep = false;
+    cfg.userBoot = false;  // a mesma partida, agora pela ponte
   } else {
 #if defined(IOT_PANEL_DEVICE_KEY_HEX)
     ioc_link_hex_to_key(IOT_PANEL_DEVICE_KEY_HEX, cfg.devKey);
@@ -487,6 +562,7 @@ void configureApp(Transport t) {
     }
 #endif
     cfg.canSleep = true;
+    cfg.userBoot = !timerWake;
   }
   app.begin(&hal, cfg);
 }
@@ -530,6 +606,7 @@ void handleHostLine(char* line) {
   } else if (strncmp(cmd, "BUTTON ", 7) == 0) {
     const char b = cmd[7];
     if (b == 'P') app.onPowerClick(cmd[8] == 'P');
+    else if (b == 'H') app.onPowerHold();
     else app.onButton(b);
   }
 }
@@ -586,15 +663,25 @@ void setup() {
   // O firmware trata o botão de energia: sem reinício por um toque e sem
   // desligamento direto por dois toques no M5PM1 (o desligamento passa pela
   // página "Painel desligado" e pelo aviso ao Node).
-  M5.In_I2C.bitOn(M5PM1_ADDR, 0x49, 0x01, I2C_FREQ);  // BTN_CFG_1.SINGLE_RST_DIS
-  M5.In_I2C.bitOn(M5PM1_ADDR, 0x4A, 0x01, I2C_FREQ);  // BTN_CFG_2.DOUBLE_OFF_DIS
+  pmicButtons(true);
   M5.Power.setExtOutput(true);
+  // A Port A (CardKB) não é iniciada pelo M5Unified no PaperColor.
+  exI2cReady = M5.Ex_I2C.begin();
+  M5.Led.setAutoDisplay(false);
   M5.Display.setRotation(0);
   M5.Display.setEpdMode(epd_mode_t::epd_fastest);
   M5.Display.setAutoDisplay(false);
   M5.Speaker.setVolume(96);
   prefs.begin("iocpanel", false);
   loadClock();
+  // Acordou pelo RTC (sono na bateria) ou foi ligado pelo operador?
+  const esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+  if (prefs.getUInt("slp", 0)) {
+    prefs.putUInt("slp", 0);
+    const int64_t due = prefs.getUInt("slpw", 0);
+    timerWake = cause == ESP_SLEEP_WAKEUP_EXT0 || cause == ESP_SLEEP_WAKEUP_TIMER ||
+                (clockOk && clockBase + static_cast<int64_t>((millis() - clockBaseMs) / 1000u) >= due - 5);
+  }
 #if defined(IOT_PANEL_UUID)
   panelUuid = IOT_PANEL_UUID;
 #else
@@ -611,12 +698,19 @@ void setup() {
   esp_task_wdt_add(nullptr);
   Serial.printf("#IOC HELLO uuid=0x%016llX profile=PANEL fw=%s keys=%s\n", static_cast<unsigned long long>(panelUuid),
                 PANEL_FW_VERSION, haveNetworkKey ? "LINK" : "NONE");
+  Serial.printf("#IOC LOG IoT-over-CAN painel PaperColor fw %s: %s\n", PANEL_FW_VERSION,
+                timerWake ? "acordou pelo RTC" : "ligado pelo operador");
 }
 
 void loop() {
   esp_task_wdt_reset();
   M5.update();
   if (M5.BtnPWR.wasClicked()) app.onPowerClick(M5.Power.M5pm1.wasPekDoubleClicked());
+  static uint32_t lastPwrPoll = 0;
+  if (millis() - lastPwrPoll >= 40) {  // segurar o botão: o M5PM1 só informa toques
+    lastPwrPoll = millis();
+    app.onPowerPressed(powerButtonDown());
+  }
   if (M5.BtnA.wasClicked()) app.onButton('A');
   if (M5.BtnB.wasClicked()) app.onButton('B');
   if (M5.BtnC.wasClicked()) app.onButton('C');

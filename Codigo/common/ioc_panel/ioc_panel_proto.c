@@ -177,6 +177,8 @@ const char *ioc_panel_mark_kind_name(uint8_t kind) {
         case IOC_PANEL_MARK_NOTE: return "NOTE";
         case IOC_PANEL_MARK_STEP: return "STEP";
         case IOC_PANEL_MARK_RESULT: return "RESULT";
+        case IOC_PANEL_MARK_FLAG: return "FLAG";
+        case IOC_PANEL_MARK_ACK: return "ACK";
         default: return "UNKNOWN";
     }
 }

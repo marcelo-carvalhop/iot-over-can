@@ -33,8 +33,8 @@ class MockHal final : public PanelHal {
   }
   void render(const ioc_dl&) override {}
   bool renderBusy() override { return false; }
-  void led(uint8_t, bool) override {}
-  void beep(uint8_t) override {}
+  void leds(uint32_t, uint32_t) override {}
+  void tone(uint16_t, uint16_t) override {}
   void readSensors(uint8_t& pct, uint16_t& mv, int16_t& t, uint16_t& rh, bool& usb) override {
     pct = 90; mv = 3900; t = 230; rh = 450; usb = true;
   }
