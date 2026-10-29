@@ -123,6 +123,7 @@ void ioc_fo_on_observation(ioc_fo_table *table, uint32_t now_ms, uint8_t node, u
         }
     }
     if (!slot) slot = oldest;
+    if (slot->node != node || now_ms - slot->seen_ms > IOC_FO_OBSERVATION_AGE_MS) slot->first_ms = now_ms;
     slot->node = node;
     slot->rssi = rssi;
     slot->seen_ms = now_ms;
@@ -152,6 +153,24 @@ void ioc_fo_on_local_stall(ioc_fo_table *table, uint32_t now_ms) {
     }
 }
 
+/*
+ * O responsável voltou a ouvir o sensor depois do último estado que publicou
+ * (STALE ou LOST): a volta a ONLINE está a caminho, ainda que o quadro de
+ * estado não tenha chegado ao líder. Sem esta regra, uma decisão tomada entre a
+ * observação de outro Node e o novo estado do responsável movia o sensor para
+ * um Node com sinal pior (visto na bancada virtual com a fase sorteada).
+ */
+static int owner_hears_again(const ioc_fo_entry *entry, uint32_t now_ms) {
+    for (unsigned k = 0; k < IOC_FO_MAX_OBSERVERS; ++k) {
+        const ioc_fo_observation *obs = &entry->obs[k];
+        if (obs->node != entry->owner) continue;
+        if ((int32_t)(obs->seen_ms - entry->status_ms) > 0 && now_ms - obs->seen_ms <= IOC_FO_OBSERVATION_AGE_MS) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int ioc_fo_poll(ioc_fo_table *table, uint32_t now_ms, ioc_fo_decision *out) {
     if (!table || !out) return 0;
 
@@ -177,6 +196,7 @@ int ioc_fo_poll(ioc_fo_table *table, uint32_t now_ms, ioc_fo_decision *out) {
             reason = IOC_FO_REASON_SENSOR_LOST;
         }
         if (reason == IOC_FO_REASON_NONE) continue;
+        if (reason == IOC_FO_REASON_SENSOR_LOST && owner_hears_again(entry, now_ms)) continue;
 
         const ioc_fo_observation *best = NULL;
         for (unsigned k = 0; k < IOC_FO_MAX_OBSERVERS; ++k) {
@@ -193,6 +213,7 @@ int ioc_fo_poll(ioc_fo_table *table, uint32_t now_ms, ioc_fo_decision *out) {
             }
             if (now_ms - obs->seen_ms > IOC_FO_OBSERVATION_AGE_MS) continue;
             if (obs->rssi < IOC_FO_MIN_RSSI) continue;
+            if (reason == IOC_FO_REASON_SENSOR_LOST && now_ms - obs->first_ms < IOC_FO_SETTLE_MS) continue;
             if (!best || obs->rssi > best->rssi ||
                 (obs->rssi == best->rssi && obs->node < best->node)) {
                 best = obs;

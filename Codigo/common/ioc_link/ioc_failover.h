@@ -77,6 +77,11 @@ void    ioc_assoc_unpack(uint8_t raw, uint8_t *state, int *auto_failover, int *s
  * que o último estado dele (mais que um ciclo de republicação). */
 #define IOC_FO_OWNER_RETURN_MS      12000u
 #define IOC_FO_MIN_RSSI             (-90)
+/* Sensor fora do alcance do responsável (SENSOR_LOST): o candidato precisa
+ * observá-lo sem interrupção por mais que um ciclo de reenvio (5 s). Quando o
+ * sensor reaparece, todos os Nodes o veem quase ao mesmo tempo; o responsável
+ * tem esse prazo para também observá-lo e voltar a ONLINE. */
+#define IOC_FO_SETTLE_MS            6000u
 #define IOC_FO_PURGE_MS             600000u
 
 typedef enum {
@@ -89,6 +94,7 @@ typedef struct {
     uint8_t  node;
     int8_t   rssi;
     uint32_t seen_ms;
+    uint32_t first_ms;    /* início da observação contínua (sem vencer IOC_FO_OBSERVATION_AGE_MS) */
 } ioc_fo_observation;
 
 typedef struct {
