@@ -125,6 +125,9 @@ def decide_scope(event: dict[str, Any]) -> tuple[str, str] | None:
         return ('NODE', str(node)) if node is not None else ('NETWORK', '*')
     if kind == 'FAULT_STARTED':
         return ('NODE', str(node)) if node is not None else ('NETWORK', '*')
+    if kind in ('OPERATOR_NOTE', 'OPERATOR_FLAG', 'OPERATOR_BUTTON'):
+        # Marca do operador: guarda a rede ao redor do instante marcado para avaliar depois.
+        return 'NETWORK', '*'
     return None
 
 

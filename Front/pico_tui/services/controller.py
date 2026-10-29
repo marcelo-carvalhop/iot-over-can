@@ -118,6 +118,10 @@ class DomainController:
                 text = f"roteiro: {event.text}"
             elif kind == "RESULT":
                 text = f"resultado medido pelo painel: {event.text}"
+            elif kind == "FLAG":
+                text = "marca do operador no painel"
+            elif kind == "ACK":
+                text = f"operador ciente do alerta: {event.text}"
             else:
                 text = f"nota do operador: {event.text}"
             self.state.add_sensor_incident(event.parent_node_id, event.child_id, Severity.INFO, "OPERADOR", text,

@@ -104,7 +104,7 @@ void simPrintHelp() {
   puts("#CTRL HELP NODE <id> BUDGET <1..100>  (percentual de passos do loop)");
   puts("#CTRL HELP SENSOR ADD <uuid> VIBRATION|ACOUSTIC|PANEL");
   puts("#CTRL HELP PANEL PAGE <uuid>  (pagina no papel ou espelho do painel USB)");
-  puts("#CTRL HELP PANEL KEY <uuid> <codigo> | PANEL BUTTON <uuid> A|B|C|P|PP | PANEL NOTE <uuid> <texto>");
+  puts("#CTRL HELP PANEL KEY <uuid> <codigo> | PANEL BUTTON <uuid> A|B|C|P|PP|H (H: segurar energia) | PANEL NOTE <uuid> <texto>");
   puts("#CTRL HELP PANEL BATTERY <uuid> ON|OFF  (painel virtual dorme entre verificacoes)");
   puts("#CTRL HELP PANEL POLL|JOIN|LEAVE|UP <uuid> ...  (ponte USB do PaperColor)");
   puts("#CTRL HELP SENSOR REMOVE <uuid>");

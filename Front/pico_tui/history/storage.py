@@ -231,6 +231,19 @@ class HistoryStore:
             ).fetchall()
         return [HistoryEvent(*row[:-1], json.loads(row[-1])) for row in rows]
 
+    def adjacent_event(self, session_id: str, epoch: float, event_id: int, *, category: str,
+                       forward: bool = True) -> HistoryEvent | None:
+        """Evento seguinte (ou anterior) de uma faixa, na sessão inteira: navega pelas marcas do operador."""
+        op, order = (">", "ASC") if forward else ("<", "DESC")
+        with self._connect() as db:
+            row = db.execute(
+                f"""SELECT id,session_id,epoch,kind,category,severity,title,node_id,sensor_id,details_json
+                    FROM events WHERE session_id=? AND category=? AND (epoch {op} ? OR (epoch=? AND id {op} ?))
+                    ORDER BY epoch {order}, id {order} LIMIT 1""",
+                (session_id, category, epoch, epoch, event_id),
+            ).fetchone()
+        return HistoryEvent(*row[:-1], json.loads(row[-1])) if row else None
+
     def nearest_bus(self, session_id: str, epoch: float, max_age_s: float = 120.0) -> dict | None:
         with self._connect() as db:
             row = db.execute(

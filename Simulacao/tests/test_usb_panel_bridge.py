@@ -220,9 +220,22 @@ class UsbPanelBridgeTest(unittest.TestCase):
         self.run_until(bridge, fake, lambda: any(r.startswith("#IOC KEY 13") for r in replies), 3)
         self.assertIn("#IOC BUTTON A", replies)
         self.assertIn("#IOC KEY 111", replies)  # 'o'
+        # Segurar o botão de energia pelo Studio chega ao painel físico.
+        self.ask(f"PANEL BUTTON {uuid} H")
+        self.assertTrue(self.run_until(bridge, fake, lambda: "#IOC BUTTON H" in replies, 3))
+
+        # Desligado pelo botão de energia: a bancada o vê desligado; religado, volta a ligar.
+        fake.emit("#IOC OFF")
+        bridge.step()
+        self.assertFalse(self._powered(uuid))
+        fake.emit(f"#IOC READY uuid=0x{UUID:016X} profile=PANEL fw=teste")
+        bridge.step()
+        self.assertTrue(self._powered(uuid))
         bridge.detach()
-        powered = {s["uuid"]: s["powered"] for s in parse_status(self.ask("STATUS"))["sensors"]}
-        self.assertFalse(powered[uuid])
+        self.assertFalse(self._powered(uuid))
+
+    def _powered(self, uuid: str) -> bool:
+        return {s["uuid"]: s["powered"] for s in parse_status(self.ask("STATUS"))["sensors"]}[uuid]
 
 
 if __name__ == "__main__":

@@ -440,6 +440,34 @@ int ioc_page_footer(ioc_dl *dl, const ioc_page_ctx *ctx) {
     return FOOTER_Y;
 }
 
+int ioc_page_logo(ioc_dl *dl, int x, int y, int w) {
+    /* Três Nodes pendurados no par CAN_H/CAN_L, com 120 ohms em cada ponta, e
+     * o enlace sem fio do sensor saindo do terceiro. */
+    const int bus_y = y + 84, box_w = 64, box_h = 40, box_y = y + 24;
+    ioc_dl_fill(dl, x + 4, bus_y, w - 8, 4, IOC_INK_BLACK, 0);
+    ioc_dl_fill(dl, x + 4, bus_y + 10, w - 8, 4, IOC_INK_BLACK, 0);
+    ioc_dl_fill(dl, x, bus_y - 4, 8, 22, IOC_INK_RED, 0);
+    ioc_dl_fill(dl, x + w - 8, bus_y - 4, 8, 22, IOC_INK_RED, 0);
+    for (int i = 0; i < 3; ++i) {
+        const int bx = x + (w * (2 * i + 1)) / 6 - box_w / 2;
+        char label[4] = {'N', (char)('1' + i), 0, 0};
+        ioc_dl_fill(dl, bx, box_y, box_w, box_h, IOC_INK_BLUE, 0);
+        ioc_dl_text(dl, bx + box_w / 2 - 8, box_y + 12, 16, IOC_INK_WHITE, 0, 0, label);
+        ioc_dl_fill(dl, bx + box_w / 2 - 10, box_y + box_h, 3, bus_y - box_y - box_h, IOC_INK_BLACK, 0);
+        ioc_dl_fill(dl, bx + box_w / 2 + 8, box_y + box_h, 3, bus_y + 10 - box_y - box_h, IOC_INK_BLACK, 0);
+        if (i == 2) {  /* enlace sem fio: barras de sinal */
+            for (int b = 0; b < 3; ++b) ioc_dl_fill(dl, bx + box_w + 6 + b * 8, box_y - 4 - b * 8, 5, 12 + b * 8, IOC_INK_GREEN, 0);
+        }
+    }
+    /* Nome: "IoT-over-" em preto e "CAN" em azul, centrados (avanço fixo). */
+    const int size = 32, adv = size / 2, total = 12 * adv, tx = x + (w - total) / 2, ty = bus_y + 30;
+    ioc_dl_text(dl, tx, ty, size, IOC_INK_BLACK, 0, 0, "IoT-over-");
+    ioc_dl_text(dl, tx + 9 * adv, ty, size, IOC_INK_BLUE, 0, 0, "CAN");
+    const char *tag = "rede CAN com sensores sem fio";
+    ioc_dl_text(dl, x + (w - ioc_dl_text_width(16, tag)) / 2, ty + 40, 16, IOC_INK_BLACK, 0, 0, tag);
+    return ty + 60 - y;
+}
+
 static const char *node_word(const ioc_view *v, uint8_t id) {
     const ioc_view_node *n = &v->nodes[id];
     if (n->absent) return "fora";

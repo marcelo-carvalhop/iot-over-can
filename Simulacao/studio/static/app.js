@@ -317,22 +317,37 @@
     const section=elt('section',{class:'editor-section'});root.append(section);
     heading(section,'Página no papel');
     const info=elt('p',{class:'wireless-hint'},'Carregando a página…');section.append(info);
+    // Os dois LEDs do topo do PaperColor (a cor é ampliada para ficar visível na tela).
+    const ledRow=elt('div',{style:'display:flex;gap:10px;align-items:center;margin:4px 0 8px'});
+    const ledDots=[0,1].map(()=>elt('span',{style:'width:18px;height:18px;border-radius:50%;background:#222;border:1px solid #556;display:inline-block'}));
+    const ledText=elt('span',{class:'wireless-hint'},'LEDs: rede · painel');
+    ledRow.append(...ledDots,ledText);section.append(ledRow);
+    const showLeds=page=>{
+      (page?page.leds:['000000','000000']).forEach((hex,i)=>{
+        const v=[0,2,4].map(k=>parseInt(hex.slice(k,k+2),16)||0),m=Math.max(...v);
+        ledDots[i].style.background=m?`rgb(${v.map(c=>Math.round(c*255/m)).join(',')})`:'#222';
+      });
+      if(page)ledText.textContent=page.off?'Desligando: LEDs vermelhos até a tela final.':
+        page.unacked?`Alerta sem ciência (${page.alerts} anúncios) — qualquer botão dá ciência.`:
+        `LEDs: rede · painel. ${page.acks} ciências registradas.`;
+    };
     const canvas=elt('canvas',{width:300,height:450,style:'width:100%;max-width:300px;border-radius:6px;border:1px solid #445'});
     section.append(canvas);
     const cached=panelCache.get(s.uuid);
-    if(cached)drawPaper(canvas,cached.data);
+    if(cached){drawPaper(canvas,cached.data);showLeds(cached.data);}
     fetchPanel(s.uuid).then(page=>{
-      drawPaper(canvas,page);
+      drawPaper(canvas,page);showLeds(page);
       if(!page){info.textContent='Página indisponível.';return;}
       const levels=['rede normal','a rede está tratando','atenção','requer você'];
-      info.textContent=(page.source==='MIRROR'?'Espelho do PaperColor físico (USB). ':page.source==='VIRTUAL'?'Painel virtual (firmware na bancada). ':'Painel desligado. ')+
+      info.textContent=(page.source==='MIRROR'?'Espelho do PaperColor físico (USB). ':page.source==='VIRTUAL'?'Painel virtual (firmware na bancada). ':
+        page.source==='PAPER'?'Painel desligado: o papel guarda a última tela. ':'Painel desligado. ')+
         `Nível: ${levels[page.level]||'?'} · sessão ${page.session?'ativa com o Node '+page.node:'inativa'} · ${page.renders} desenhos · ${page.beeps} alertas sonoros.`;
     });
     const acts=actionsBox(section);
-    for(const [label,btn] of [['A: marca','A'],['B: página','B'],['C: atualiza','C'],['⏻ 1×','P'],['⏻ 2× (desliga)','PP']])
-      button(acts,label,{type:'panel.button',uuid:s.uuid,button:btn},btn==='PP'?'btn-danger':'btn-secondary');
+    for(const [label,btn] of [['A: marca','A'],['B: página','B'],['C: atualiza','C'],['⏻ toque','P'],['⏻ segurar (desliga)','H']])
+      button(acts,label,{type:'panel.button',uuid:s.uuid,button:btn},btn==='H'?'btn-danger':'btn-secondary');
     const grid=elt('div',{class:'inline-fields'});section.append(grid);
-    const note=field(grid,'Nota (CardKB)','text','');note.maxLength=96;
+    const note=field(grid,'Marca/nota (CardKB, #etiquetas)','text','');note.maxLength=96;
     const send=elt('button',{class:'btn btn-secondary grid-button',type:'button'},'Enviar nota');
     send.addEventListener('click',()=>{if(note.value.trim())command({type:'panel.note',uuid:s.uuid,text:note.value.trim()});});grid.append(send);
     if(s.source!=='USB'){

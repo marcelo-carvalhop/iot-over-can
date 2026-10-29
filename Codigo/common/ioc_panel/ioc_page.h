@@ -118,6 +118,10 @@ const char *ioc_page_level_title(uint8_t level);
 int  ioc_page_header(ioc_dl *dl, uint8_t level, const char *title, const char *right);
 int  ioc_page_footer(ioc_dl *dl, const ioc_page_ctx *ctx);
 
+/* Marca IoT-over-CAN (barramento com terminações, três Nodes e o enlace sem
+ * fio) centrada em [x, x + w); devolve a altura usada. */
+int  ioc_page_logo(ioc_dl *dl, int x, int y, int w);
+
 void ioc_page_situation(ioc_dl *dl, const ioc_view *v, const ioc_page_ctx *ctx,
                         const ioc_page_item *items, int n);
 void ioc_page_network(ioc_dl *dl, const ioc_view *v, const ioc_page_ctx *ctx,

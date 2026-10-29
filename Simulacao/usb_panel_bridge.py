@@ -11,8 +11,9 @@ Simulation Studio.
 Protocolo de linha com o painel (115200, USB CDC):
   painel -> ponte   #IOC HELLO|READY uuid=0x... profile=PANEL ...
                     #IOC JOIN <node> | #IOC LEAVE | #IOC UP <hex> | #IOC LOG <texto>
+                    #IOC OFF (desligado pelo operador)
   ponte -> painel   #IOC BRIDGE 1 | #IOC TIME <epoch> | #IOC LINK 0|1
-                    #IOC OFFER <hex> | #IOC DOWN <hex> | #IOC KEY <n> | #IOC BUTTON A|B|C|P|PP
+                    #IOC OFFER <hex> | #IOC DOWN <hex> | #IOC KEY <n> | #IOC BUTTON A|B|C|P|PP|H
 
 Uso, com o Studio aberto (python3 Simulacao/studio/server.py ...):
   Front/.venv/bin/python Simulacao/usb_panel_bridge.py --port /dev/ttyACM0 --node 2 --rssi -52
@@ -48,6 +49,7 @@ class PanelBridge:
         self.uuid: str | None = None
         self.pending = bytearray()
         self.stats = {"up": 0, "down": 0, "offers": 0, "errors": 0}
+        self.powered = False
 
     # ---------------------------------------------------------------- serial
     def write(self, line: str) -> None:
@@ -97,6 +99,7 @@ class PanelBridge:
         for node, rssi in [(self.node, self.rssi), *self.extra]:
             self.ask(f"SENSOR RSSI {uuid} {node} {rssi}")
         self.write(f"#IOC TIME {int(time.time())}")
+        self.powered = True
         self.log(f"[painel] {uuid} na bancada, alcance do Node {self.node} ({self.rssi} dBm)")
         return uuid
 
@@ -121,6 +124,17 @@ class PanelBridge:
         elif line.startswith("#IOC HELLO") and "mode=WIFI" in line:
             # O painel reiniciou: volta ao modo USB.
             self.write("#IOC BRIDGE 1")
+        elif line.startswith("#IOC OFF"):
+            # Desligado pelo operador: a bancada também o vê desligado (o Node registra STATE=OFF).
+            self.ask(f"SENSOR POWER {self.uuid} OFF")
+            self.powered = False
+            self.log("[painel] desligado pelo botão de energia")
+        elif line.startswith("#IOC READY") and not self.powered:
+            # Religado pelo operador e de volta ao modo USB.
+            self.ask(f"SENSOR POWER {self.uuid} ON")
+            self.write(f"#IOC TIME {int(time.time())}")
+            self.powered = True
+            self.log("[painel] religado")
         elif line.startswith("#IOC LOG "):
             self.log("[painel] " + line[9:])
 

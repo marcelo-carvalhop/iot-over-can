@@ -109,6 +109,7 @@ int    ioc_panel_hello_decode(const uint8_t *buf, size_t len, ioc_panel_hello *o
 #define IOC_PANEL_ST_POWER_OFF   0x04  /* desligado pelo operador */
 #define IOC_PANEL_ST_CLOCK       0x08  /* relógio ajustado */
 #define IOC_PANEL_ST_KEYBOARD    0x10  /* teclado CardKB presente */
+#define IOC_PANEL_ST_ALERT       0x20  /* alerta anunciado ainda sem ciência do operador */
 
 #define IOC_PANEL_STATUS_BODY    23
 #define IOC_PANEL_NA_I16         ((int16_t)-32768)
@@ -140,7 +141,9 @@ typedef enum {
     IOC_PANEL_MARK_BUTTON  = 1,  /* intervenção física, sem texto */
     IOC_PANEL_MARK_NOTE    = 2,  /* nota digitada no teclado */
     IOC_PANEL_MARK_STEP    = 3,  /* passo de roteiro de bancada */
-    IOC_PANEL_MARK_RESULT  = 4   /* resultado medido de um passo */
+    IOC_PANEL_MARK_RESULT  = 4,  /* resultado medido de um passo */
+    IOC_PANEL_MARK_FLAG    = 5,  /* marca do operador pelo teclado (Enter), sem texto */
+    IOC_PANEL_MARK_ACK     = 6   /* operador ciente de um alerta; step = nível reconhecido */
 } ioc_panel_mark_kind;
 
 typedef struct {
