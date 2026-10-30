@@ -30,6 +30,7 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <esp_heap_caps.h>
 #include <esp_sleep.h>
 #include <esp_task_wdt.h>
 #include <time.h>
@@ -180,6 +181,20 @@ void drawPage(const ioc_dl& dl) {
   M5.Display.waitDisplay();
 }
 
+/* Diagnóstico do papel na serial (#IOC LOG papel: ...): a M5.begin limpa o
+ * papel com uma atualização completa (20 a 50 s, a tela pisca em todas as
+ * cores e fica branca); cada página leva outra atualização. Um desenho que
+ * termina em poucos segundos indica que o papel não respondeu (BUSY). */
+uint32_t beginMs = 0;
+uint32_t paperDraws = 0;
+
+void logPaperStatus() {
+  Serial.printf("#IOC LOG papel: placa=%d tela=%dx%d epd=%d partida=%lu ms (inclui a limpeza do papel) dma_livre=%u\n",
+                static_cast<int>(M5.getBoard()), static_cast<int>(M5.Display.width()),
+                static_cast<int>(M5.Display.height()), M5.Display.isEPD() ? 1 : 0, static_cast<unsigned long>(beginMs),
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL)));
+}
+
 void waitRender() {
   while (renderActive) {
     esp_task_wdt_reset();
@@ -193,7 +208,18 @@ void renderTask(void*) {
   for (;;) {
     if (renderPending) {
       renderPending = false;
+      // A serial da USB só aparece depois que o computador abre a porta: o
+      // estado da partida vai junto do primeiro desenho.
+      if (paperDraws == 0) logPaperStatus();
+      Serial.printf("#IOC LOG papel: desenhando %u itens\n", static_cast<unsigned>(renderDl.count));
+      const uint32_t t0 = millis();
       drawPage(renderDl);
+      const uint32_t ms = millis() - t0;
+      ++paperDraws;
+      Serial.printf("#IOC LOG papel: desenho %lu pronto em %lu ms%s\n", static_cast<unsigned long>(paperDraws),
+                    static_cast<unsigned long>(ms),
+                    ms < 3000 ? " (rapido demais: o papel nao respondeu)"
+                              : (ms > 45000 ? " (lento demais: o papel ficou ocupado)" : ""));
       renderActive = false;
     }
     vTaskDelay(pdMS_TO_TICKS(20));
@@ -659,7 +685,9 @@ void setup() {
   cfg.serial_baudrate = 115200;
   cfg.output_power = true;    // 5 V na porta HY2.0 para o CardKB
   cfg.internal_spk = true;
+  const uint32_t beginStart = millis();
   M5.begin(cfg);
+  beginMs = millis() - beginStart;
   // O firmware trata o botão de energia: sem reinício por um toque e sem
   // desligamento direto por dois toques no M5PM1 (o desligamento passa pela
   // página "Painel desligado" e pelo aviso ao Node).
