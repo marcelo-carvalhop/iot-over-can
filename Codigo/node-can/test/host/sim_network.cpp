@@ -304,6 +304,9 @@ constexpr uint8_t ACOUSTIC_EVENT_CLASSES[] = {ACOUSTIC_EVENT_IMPACT, ACOUSTIC_EV
 
 // RSSI e uma observacao; perdas sao parametros independentes.
 std::map<std::pair<uint64_t,uint8_t>,uint8_t> g_radio_loss_pct;
+// Atraso do Node para o sensor (rádio disputado com o BLE, retransmissões):
+// os datagramas chegam ao sensor esse tempo depois de saírem do Node.
+std::map<std::pair<uint64_t,uint8_t>,uint32_t> g_radio_delay_ms;
 bool simRadioDrop(uint64_t uuid,uint8_t id) {
   if (!g_interactive_runtime) return false;
   auto it=g_radio_loss_pct.find({uuid,id});
@@ -383,6 +386,11 @@ struct Sensor {
   uint64_t nextTelemetryUs = 0;
   uint8_t sessionKey[IOC_LINK_KEY_LEN] = {0};
   uint8_t nonce[IOC_LINK_NONCE_LEN] = {0};
+  bool nonceValid = false;      // como no Pico W: um nonce por tentativa de autenticação
+  uint8_t nonceUses = 0;
+  struct Delayed { uint64_t atUs; uint8_t node; ::SimDatagram d; };
+  std::vector<Delayed> inbox;   // datagramas do Node ainda no ar (g_radio_delay_ms)
+  uint32_t challengesStale = 0; // CHALLENGE autêntico com o eco de um nonce já trocado
   uint32_t tx = 0;
   uint32_t rxLast = 0;
   uint16_t seq = 0;
@@ -445,7 +453,15 @@ struct Sensor {
   }
 
   void hello() {
-    for (int i = 0; i < IOC_LINK_NONCE_LEN; ++i) nonce[i] = static_cast<uint8_t>(sim_random32() >> 24);
+    // O nonce vale para a tentativa inteira (edge_network_driver.c): só é
+    // trocado numa nova associação, depois de uma sessão ou a cada
+    // NET_HELLO_NONCE_MAX_USES HELLOs sem resposta.
+    if (!nonceValid || nonceUses >= NET_HELLO_NONCE_MAX_USES) {
+      for (int i = 0; i < IOC_LINK_NONCE_LEN; ++i) nonce[i] = static_cast<uint8_t>(sim_random32() >> 24);
+      nonceValid = true;
+      nonceUses = 0;
+    }
+    ++nonceUses;
     ioc_hello_t h;
     h.uuid = uuid;
     h.profile = profile;
@@ -710,6 +726,20 @@ struct Sensor {
     discoverySinceUs = g_now_us;
     nextHelloUs = g_now_us;
     memset(sessionKey, 0, sizeof(sessionKey));
+    nonceValid = false;
+    nonceUses = 0;
+  }
+
+  // Entrega o que o rádio atrasou, se o sensor ainda está no mesmo ponto de acesso.
+  void deliverDelayed() {
+    if (inbox.empty()) return;
+    std::vector<Delayed> due;
+    for (auto it = inbox.begin(); it != inbox.end();) {
+      if (it->atUs <= g_now_us) { due.push_back(*it); it = inbox.erase(it); } else { ++it; }
+    }
+    for (const Delayed& x : due) {
+      if (poweredOn && parent == x.node && linkUp()) onDatagram(x.d);
+    }
   }
 
   void joinAccessPoint(uint8_t nodeId) {
@@ -739,7 +769,7 @@ struct Sensor {
       if (!ioc_env_verify(devKey, d.data.data(), d.data.size())) return;
       ioc_challenge_t ch;
       if (!ioc_challenge_decode(view.payload, view.payload_len, &ch)) return;
-      if (memcmp(ch.sensor_nonce, nonce, IOC_LINK_NONCE_LEN) != 0) return;
+      if (memcmp(ch.sensor_nonce, nonce, IOC_LINK_NONCE_LEN) != 0) { ++challengesStale; return; }
       ioc_link_derive_session_key(devKey, uuid, ch.node_id, nonce, ch.node_nonce, sessionKey);
       child = ch.child_id;
       mode = Mode::Bound;
@@ -927,6 +957,7 @@ void routeStations() {
 }
 
 void routeWifi() {
+  for (Sensor& s : g_sensors) s.deliverDelayed();
   for (Node& n : g_nodes) {
     if (n.id == 0 || !n.powered || !n.inst) continue;
     int stations = 0;
@@ -941,7 +972,14 @@ void routeWifi() {
     ::SimDatagram d;
     while (n.inst->udpTake(d)) {
       for (Sensor& s : g_sensors) {
-        if (s.poweredOn && s.parent == n.id && s.port == d.port && s.linkUp() && !simRadioDrop(s.uuid,n.id)) s.onDatagram(d);
+        if (s.poweredOn && s.parent == n.id && s.port == d.port && s.linkUp() && !simRadioDrop(s.uuid,n.id)) {
+          const auto delay = g_radio_delay_ms.find({s.uuid, n.id});
+          if (delay != g_radio_delay_ms.end() && delay->second > 0) {
+            s.inbox.push_back({g_now_us + static_cast<uint64_t>(delay->second) * 1000u, n.id, d});
+          } else {
+            s.onDatagram(d);
+          }
+        }
       }
     }
   }
@@ -2066,6 +2104,51 @@ int scenarioPanel() {
   return g_failures ? 1 : 0;
 }
 
+// Rádio disputado (BLE e ponto de acesso no mesmo rádio do ESP32): cada
+// datagrama do Node chega ao sensor 3,6 s depois de sair, mais que o maior
+// intervalo entre dois HELLOs (3,5 s). Com um nonce novo a cada HELLO, todo
+// CHALLENGE chegava com o eco de um nonce já trocado e a sessão não abria
+// nunca, com um sensor ou com vários. Com o nonce mantido durante a tentativa,
+// o primeiro CHALLENGE que chega vale.
+int scenarioHandshakeSlowRadio() {
+  formNetwork();
+  Sensor& a = addSensor(SENSOR_A, 4242, 2);
+  a.rssi[1] = -50;
+  Sensor& b = addSensor(SENSOR_B, 4243, 3);
+  b.rssi[1] = -55;
+  g_radio_delay_ms[{SENSOR_A, 1}] = 3600;
+  g_radio_delay_ms[{SENSOR_B, 1}] = 3600;
+  CHECK(runUntilTrue([] { return logHas(probe(), "WIRELESS_CANDIDATE reporter=1 uuid=0xE6616408432B6F39") &&
+                                 logHas(probe(), "WIRELESS_CANDIDATE reporter=1 uuid=0xE66164084327A12C"); },
+                     8000));
+  CHECK(node(1).inst->bleScanWindow() == 80);  // varredura normal: 50 ms a cada 100 ms
+  const uint32_t t0 = nowMs();
+  probeCommand("WIRELESS BIND 1 0xE6616408432B6F39 AUTO");
+  // Com um sensor esperando, a oferta fica no ar sem reinícios, e a varredura
+  // BLE do Node usa a janela menor enquanto ele entra no ponto de acesso.
+  CHECK(runUntilTrue([] { return node(1).inst->bleScanWindow() == 40; }, 3000));
+  const uint32_t startsOne = node(1).inst->bleAdvertisingStarts();
+  runFor(3000);
+  CHECK(node(1).inst->bleAdvertisingStarts() <= startsOne + 1);
+  CHECK(runUntilTrue([t0] { return logHas(probe(), "[GW] WIRELESS_LINK node=1 child=1 state=SECURE", t0); }, 20000));
+  note("handshake com 3,6 s de atraso: sessao do sensor A em %u ms", nowMs() - t0);
+
+  // Segundo sensor no mesmo Node, com o primeiro já em sessão.
+  const uint32_t t1 = nowMs();
+  probeCommand("WIRELESS BIND 1 0xE66164084327A12C AUTO");
+  CHECK(runUntilTrue([t1] { return logHas(probe(), "[GW] WIRELESS_LINK node=1 child=2 state=SECURE", t1); }, 20000));
+  note("handshake com 3,6 s de atraso: sessao do sensor B em %u ms", nowMs() - t1);
+  CHECK(runUntilTrue([] { return logHas(probe(), "TEL NODE=1 CHILD=1 ") && logHas(probe(), "TEL NODE=1 CHILD=2 "); },
+                     10000));
+  // Nenhum CHALLENGE chegou com o eco de um nonce já trocado.
+  for (const Sensor& s : g_sensors) CHECK(s.challengesStale == 0);
+  // Todos com sessão: a oferta sai do ar e a varredura volta à janela normal.
+  CHECK(runUntilTrue([] { return node(1).inst->bleScanWindow() == 80; }, 3000));
+  std::string offer;
+  CHECK(!node(1).inst->bleOffer(offer));
+  return 0;
+}
+
 struct Scenario {
   const char* name;
   int (*run)();
@@ -2091,6 +2174,7 @@ const Scenario SCENARIOS[] = {
   {"acoustic_sensor", scenarioAcousticSensor, "sensor acustico INMP441: niveis, maquina, eventos e espectro"},
   {"restart_keeps_binding", scenarioRestartKeepsBinding, "Node reinicia e retoma o vinculo gravado na NVS"},
   {"panel_papercolor", scenarioPanel, "painel em papel eletronico: retrato, nota, queda de Node e sono na bateria"},
+  {"handshake_slow_radio", scenarioHandshakeSlowRadio, "dois sensores no mesmo Node com 3,6 s de atraso no radio"},
 };
 
 #include "sim_interactive.inc"

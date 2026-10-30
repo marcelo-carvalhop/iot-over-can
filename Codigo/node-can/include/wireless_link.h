@@ -49,6 +49,12 @@ bool wirelessLinkIsSecure(uint64_t uuid);
  * BLE que o painel deixa de emitir enquanto dorme.
  */
 bool wirelessLinkIsPresent(uint64_t uuid);
+/*
+ * Há sensor vinculado tentando entrar no ponto de acesso (sem sessão). Enquanto
+ * isso a varredura BLE do Node usa uma janela menor, para deixar o rádio com o
+ * Wi-Fi durante a associação, o DHCP e o handshake.
+ */
+bool wirelessLinkSensorWaiting();
 
 /*
  * Painel em papel eletrônico: todo quadro observado pelo Node passa por aqui

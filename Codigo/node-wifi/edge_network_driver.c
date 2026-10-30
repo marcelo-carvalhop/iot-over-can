@@ -65,6 +65,12 @@ static uint32_t        g_beacon_prng_state = 0x6D2B79F5u;
 static uint8_t  g_session_key[IOC_LINK_KEY_LEN];
 static uint8_t  g_sensor_nonce[IOC_LINK_NONCE_LEN];
 static bool     g_hello_outstanding = false; // há um HELLO aguardando CHALLENGE
+// Um nonce por tentativa de autenticação, não por retransmissão do HELLO: o Node
+// responde ao mesmo HELLO com o mesmo CHALLENGE, e um CHALLENGE que chega depois
+// da retransmissão seguinte continua valendo. Trocar o nonce a cada HELLO fazia
+// todo CHALLENGE atrasado (rádio disputado com o BLE) ser descartado como antigo.
+static bool     g_hello_nonce_valid = false;
+static uint8_t  g_hello_nonce_uses = 0;
 static uint32_t g_tx_counter = 0;            // último contador enviado na sessão
 static uint32_t g_rx_last_counter = 0;       // último contador aceito do Node
 static uint8_t  g_parent_node_id = 0;        // Node informado pela oferta/CHALLENGE
@@ -177,6 +183,8 @@ static void link_reset_session(void) {
     g_tx_counter = 0;
     g_rx_last_counter = 0;
     g_hello_outstanding = false;
+    g_hello_nonce_valid = false;               // nova tentativa, novo nonce
+    g_hello_nonce_uses = 0;
     g_parent_node_port = 0;
     g_child_id = 0;
     g_seq_cnt = 0;
@@ -819,26 +827,34 @@ void edge_net_send_discovery_beacon(uint8_t bite_status) {
 
     ioc_hello_t hello;
     uint8_t raw[IOC_HELLO_LEN];
-    uint8_t nonce[IOC_LINK_NONCE_LEN];
-    uint64_t r = get_rand_64();
-    memcpy(nonce, &r, IOC_LINK_NONCE_LEN);
-    hello.uuid = edge_device_uuid64();
-    hello.profile = edge_app_profile_id();
-    hello.protocol = NET_PROTOCOL_VERSION;
-    memcpy(hello.sensor_nonce, nonce, IOC_LINK_NONCE_LEN);
-    ioc_hello_encode(&hello, raw);
+    const uint64_t candidate = get_rand_64();  // usado só se a tentativa pedir nonce novo
 
     // Chamada feita a partir do loop principal (fora do contexto do lwIP);
     // com pico_cyw43_arch_lwip_threadsafe_background é obrigatório envolver
     // qualquer chamada lwIP feita fora dos próprios callbacks do lwIP. O
-    // nonce em uso só é trocado com o lock adquirido, e o estado é conferido
-    // de novo: um CHALLENGE pode ter sido aceito enquanto o HELLO era montado.
+    // nonce em uso só é lido e trocado com o lock adquirido, e o estado é
+    // conferido de novo: um CHALLENGE pode ter sido aceito (ou a sessão
+    // reiniciada) enquanto o HELLO era montado.
     cyw43_arch_lwip_begin();
     if (g_net_mode != NET_STATE_DISCOVERY || !g_pcb) {
         cyw43_arch_lwip_end();
         return;
     }
-    memcpy(g_sensor_nonce, nonce, IOC_LINK_NONCE_LEN);
+    // O nonce vale para a tentativa inteira. Só é trocado numa nova associação,
+    // depois de uma sessão, ou se o Node não responder a NET_HELLO_NONCE_MAX_USES
+    // HELLOs seguidos (ele pode ter descartado o handshake pendente).
+    const bool fresh = !g_hello_nonce_valid || g_hello_nonce_uses >= NET_HELLO_NONCE_MAX_USES;
+    if (fresh) {
+        memcpy(g_sensor_nonce, &candidate, IOC_LINK_NONCE_LEN);
+        g_hello_nonce_valid = true;
+        g_hello_nonce_uses = 0;
+    }
+    g_hello_nonce_uses++;
+    hello.uuid = edge_device_uuid64();
+    hello.profile = edge_app_profile_id();
+    hello.protocol = NET_PROTOCOL_VERSION;
+    memcpy(hello.sensor_nonce, g_sensor_nonce, IOC_LINK_NONCE_LEN);
+    ioc_hello_encode(&hello, raw);
     g_hello_outstanding = true;
     ip_addr_t dst;
     const ip4_addr_t *gw = netif_default ? netif_ip4_gw(netif_default) : NULL;
@@ -857,8 +873,9 @@ void edge_net_send_discovery_beacon(uint8_t bite_status) {
     if (g_diag_hello_count <= 3u || g_diag_hello_count % 10u == 0u) {
         char addr[IPADDR_STRLEN_MAX];
         ipaddr_ntoa_r(&dst, addr, sizeof(addr));
-        printf("[NET] HELLO %lu enviado ao Node em %s:%u (%s)\n", (unsigned long)g_diag_hello_count, addr,
-               (unsigned)NET_UDP_PORT_DISCOVERY, result == ERR_OK ? "ok" : "erro de envio");
+        printf("[NET] HELLO %lu enviado ao Node em %s:%u (%s, %s)\n", (unsigned long)g_diag_hello_count, addr,
+               (unsigned)NET_UDP_PORT_DISCOVERY, result == ERR_OK ? "ok" : "erro de envio",
+               fresh ? "nonce novo" : "mesmo nonce");
     }
 }
 

@@ -39,6 +39,14 @@ constexpr uint32_t ASSOCIATING_MIN_MS = 250;
 constexpr uint32_t ONLINE_STALE_MS = 15000;
 constexpr uint32_t STALE_LOST_MS = 45000;
 constexpr uint32_t SCAN_WATCHDOG_MS = 2000;
+// Varredura passiva: janela de 50 ms a cada 100 ms. Enquanto um sensor tenta
+// entrar no ponto de acesso, a janela cai para 25 ms: o rádio do ESP32 é
+// dividido entre BLE e Wi-Fi, e a Espressif classifica ponto de acesso com
+// estação conectando + BLE como instável. Com o sensor anunciando a cada
+// 500 ms, 25% ainda o ouve a cada 2 s em média (15 s sem ouvi-lo: 0,02%).
+constexpr uint16_t SCAN_INTERVAL = 160;      // 100 ms em unidades de 0,625 ms
+constexpr uint16_t SCAN_WINDOW_NORMAL = 80;  // 50 ms
+constexpr uint16_t SCAN_WINDOW_QUIET = 40;   // 25 ms
 // O estado do vínculo é republicado periodicamente para que uma TUI aberta
 // depois da associação reconstrua a topologia sem depender de uma transição.
 constexpr uint32_t ASSOC_REFRESH_MS = 10000;
@@ -117,7 +125,21 @@ uint8_t reportSeq = 0;
 uint8_t assocCommandSeq = 0;
 uint8_t assocStatusSeq = 0;
 bool scannerStarted = false;
+bool scanQuiet = false;
 uint32_t lastScanWatchdogMs = 0;
+
+// Troca a janela da varredura (a NimBLE só aplica parâmetros ao reiniciar).
+void applyScanWindow(bool quiet) {
+  NimBLEScan* scan = NimBLEDevice::getScan();
+  if (scan->isScanning()) scan->stop();
+  scan->setInterval(SCAN_INTERVAL);
+  scan->setWindow(quiet ? SCAN_WINDOW_QUIET : SCAN_WINDOW_NORMAL);
+  scannerStarted = scan->start(0, false, true);
+  scanQuiet = quiet;
+  Serial.printf("[NODE %u] BLE_SCAN janela=%u%%%s%s\n", NODE_ID,
+                static_cast<unsigned>((quiet ? SCAN_WINDOW_QUIET : SCAN_WINDOW_NORMAL) * 100u / SCAN_INTERVAL),
+                quiet ? " (sensor entrando no ponto de acesso)" : "", scannerStarted ? "" : " ERROR");
+}
 // Visão da rede usada na reassociação automática. Todos os Nodes a mantêm;
 // apenas o líder decide (ver ioc_failover.h).
 ioc_fo_table failoverTable;
@@ -918,8 +940,8 @@ void wirelessDiscoveryInit() {
   scan->setScanCallbacks(&scanCallbacks, true);
   scan->setDuplicateFilter(0);
   scan->setActiveScan(false);
-  scan->setInterval(160);
-  scan->setWindow(80);
+  scan->setInterval(SCAN_INTERVAL);
+  scan->setWindow(SCAN_WINDOW_NORMAL);
   scan->setMaxResults(0);
   scannerStarted = scan->start(0, false, true);
   Serial.printf("[NODE %u] BLE_SCAN=%s\n", NODE_ID, scannerStarted ? "ACTIVE" : "ERROR");
@@ -942,6 +964,9 @@ void wirelessDiscoveryPoll() {
         scannerStarted = true;
       }
     }
+    // Janela menor enquanto um sensor entra no ponto de acesso (ver SCAN_WINDOW_QUIET).
+    const bool quiet = wirelessLinkSensorWaiting();
+    if (quiet != scanQuiet) applyScanWindow(quiet);
 
     if (scannerStarted) {
       Candidate ready;
