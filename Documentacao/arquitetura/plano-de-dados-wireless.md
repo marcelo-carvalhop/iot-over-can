@@ -308,8 +308,18 @@ Pontos a observar e registrar:
 - estabilidade da varredura BLE do Node com o ponto de acesso ativo (50 % do tempo de rádio com todos os sensores em sessão, 25 % enquanto algum entra no ponto de acesso; se a associação Wi-Fi ou o DHCP ainda falharem, reduzir `SCAN_WINDOW_QUIET` em `wireless_discovery.cpp`), e da eleição/liveness CAN durante um espectro de 256 faixas;
 - espectro de 256 faixas completo na TUI (quatro blocos); se faltarem blocos, aumentar a pausa entre eles em `wireless_link.cpp`;
 - retorno do sensor após reiniciar o Node e refazer o `BIND`;
-- tempo entre o `BIND` e a sessão autenticada;
+- tempo entre o `BIND` e a sessão autenticada, com um e com dois sensores no mesmo Node: a seção **Criação do canal de dados**, na tela do sensor, mostra cada etapa com os segundos desde o vínculo e o motivo de uma recusa ou de um CHALLENGE sem resposta;
 - perdas Wi-Fi (`lost`) e CAN em função da distância e do período de telemetria;
 - comportamento com dois sensores no mesmo Node e com sensores em Nodes diferentes.
 
 Divergências devem ser registradas em `Documentacao/desafios_e_resolucoes.md`.
+
+## 11. Dificuldade de implementação: abertura do canal
+
+Na primeira bancada física, o vínculo pelo BLE se completava em segundos, mas a sessão levava mais de 20 minutos em muitos casos e, com mais de um sensor no mesmo Node, podia não abrir. Três causas se somavam:
+
+- o sensor trocava o nonce a cada HELLO repetido, e todo CHALLENGE atrasado chegava com o eco de um nonce já trocado;
+- a varredura BLE do Node ocupava metade do rádio durante a associação Wi-Fi;
+- a oferta era reiniciada a cada 400 ms.
+
+Isoladas, nenhuma falhava numa bancada silenciosa. As regras que resultaram estão nas seções 3 (rádio do Node e oferta) e 4 (um nonce por tentativa). O acompanhamento das etapas na TUI está na seção 7. O histórico, as hipóteses descartadas e o que falta medir estão em [`desafios_e_resolucoes.md`](../desafios_e_resolucoes.md), seção "Abertura do canal de dados wireless".
