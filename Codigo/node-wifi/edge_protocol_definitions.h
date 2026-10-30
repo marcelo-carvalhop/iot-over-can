@@ -64,6 +64,11 @@
 #define NET_OFFER_SWITCH_HOLD_MS 15000
 // Intervalo alvo em que o nó CAN pai deveria mandar CMD_PING.
 #define NET_LIVENESS_INTERVAL_MS 3000
+// HELLOs com o mesmo nonce antes de trocá-lo (1,5 a 3,5 s entre eles: ~20 s).
+// O Node guarda o handshake pendente por 5 s e o refaz com o mesmo nonce.
+#ifndef NET_HELLO_NONCE_MAX_USES
+#define NET_HELLO_NONCE_MAX_USES 8u
+#endif
 
 // ============================================================================
 // ITEM 13: MAPEAMENTO ELÉTRICO E PINOUT (RP2350 - PICO 2W)

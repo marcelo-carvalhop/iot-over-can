@@ -224,6 +224,7 @@ bool radioOff = false;
 uint32_t lastApAttemptMs = 0;
 uint32_t txNextTransferAtMs = 0;
 bool offerAdvertising = false;
+uint64_t offerUuid = 0;          // sensor cuja oferta está no ar (0: nenhuma)
 uint8_t offerCursor = 0;
 uint32_t lastOfferRotateMs = 0;
 WiFiUDP udp;
@@ -540,12 +541,22 @@ void stopOfferAdvertising() {
   if (!offerAdvertising) return;
   NimBLEDevice::getAdvertising()->stop();
   offerAdvertising = false;
+  offerUuid = 0;
   diagOfferUuid = 0;
   Serial.printf("[NODE %u] [WLINK] OFERTA encerrada\n", NODE_ID);
 }
 
+// O sensor precisa da oferta enquanto não tem sessão. Depois do HELLO ele já
+// está no ponto de acesso: durante a autenticação o anúncio só ocuparia o
+// rádio, que o ESP32 divide entre o BLE e o ponto de acesso (a Espressif
+// classifica ponto de acesso com estação conectando + BLE como instável).
+bool wantsOffer(const Link& link, uint32_t now) {
+  if (!link.used || link.secure) return false;
+  return !(link.pending.active && now - link.pending.startedMs <= HANDSHAKE_TIMEOUT_MS);
+}
+
 // Anuncia a oferta de um sensor que ainda não tem sessão. Havendo mais de um,
-// alterna entre eles.
+// alterna entre eles; com um só, o anúncio fica no ar sem ser reiniciado.
 void updateOfferAdvertising() {
   if (!haveKey) return;
   if (apOutageActive || radioOff) {
@@ -553,20 +564,25 @@ void updateOfferAdvertising() {
     return;
   }
   const uint32_t now = millis();
-  bool anyWaiting = false;
+  uint8_t waiting = 0;
+  bool currentWanted = false;
   for (uint8_t i = 0; i < MAX_LINKS; ++i) {
-    if (links[i].used && !links[i].secure) anyWaiting = true;
+    if (!wantsOffer(links[i], now)) continue;
+    ++waiting;
+    if (links[i].uuid == offerUuid) currentWanted = true;
   }
-  if (!anyWaiting) {
+  if (waiting == 0) {
     stopOfferAdvertising();
     return;
   }
-  if (offerAdvertising && now - lastOfferRotateMs < OFFER_ROTATE_MS) return;
+  // Cada troca para e religa o anúncio BLE. Com um só sensor esperando não há
+  // o que alternar; com vários, cada oferta fica no ar OFFER_ROTATE_MS.
+  if (offerAdvertising && currentWanted && (waiting == 1 || now - lastOfferRotateMs < OFFER_ROTATE_MS)) return;
 
   Link* target = nullptr;
   for (uint8_t step = 0; step < MAX_LINKS; ++step) {
     Link& candidate = links[(offerCursor + step) % MAX_LINKS];
-    if (candidate.used && !candidate.secure) {
+    if (wantsOffer(candidate, now)) {
       target = &candidate;
       offerCursor = static_cast<uint8_t>((offerCursor + step + 1u) % MAX_LINKS);
       break;
@@ -594,6 +610,7 @@ void updateOfferAdvertising() {
   adv->setMaxInterval(OFFER_ADV_INTERVAL);
   adv->setAdvertisementData(data);
   offerAdvertising = adv->start();
+  offerUuid = offerAdvertising ? target->uuid : 0;
   lastOfferRotateMs = now;
   if (target->uuid != diagOfferUuid || offerAdvertising != diagOfferOk) {
     diagOfferUuid = target->uuid;
@@ -2317,6 +2334,16 @@ void wirelessLinkRadioOff() {
   stopOfferAdvertising();
   stopAccessPoint();
   radioOff = true;
+}
+
+bool wirelessLinkSensorWaiting() {
+  if (NODE_ID == 0 || !haveKey || !apRunning || apOutageActive || radioOff) return false;
+  for (uint8_t i = 0; i < MAX_LINKS; ++i) {
+    const Link& link = links[i];
+    // O painel dormindo não está tentando entrar no ponto de acesso.
+    if (link.used && !link.secure && !(link.profile == IOC_PANEL_PROFILE && link.panelAsleep)) return true;
+  }
+  return false;
 }
 
 void wirelessLinkPoll() {

@@ -49,6 +49,9 @@ class SimInstance {
   /* Rádio BLE: anúncio recebido pelo scanner e oferta anunciada pelo Node. */
   virtual void bleDeliver(const std::string& manufacturer, int rssi) = 0;
   virtual bool bleOffer(std::string& manufacturer) const = 0;
+  /* Janela da varredura (unidades de 0,625 ms) e inícios do anúncio, para as verificações. */
+  virtual uint16_t bleScanWindow() const = 0;
+  virtual uint32_t bleAdvertisingStarts() const = 0;
 
   /* Ponto de acesso Wi-Fi e datagramas UDP. */
   virtual bool apInfo(std::string& ssid, std::string& psk, int& channel) const = 0;

@@ -135,6 +135,11 @@ class Instance : public ::SimInstance {
     manufacturer = adv->manufacturer;
     return true;
   }
+  uint16_t bleScanWindow() const override {
+    NimBLEScan* scan = NimBLEDevice::getScan();
+    return scan->scanning ? scan->window : 0;
+  }
+  uint32_t bleAdvertisingStarts() const override { return NimBLEDevice::getAdvertising()->starts; }
 
   bool apInfo(std::string& ssid, std::string& psk, int& channel) const override {
     if (!WiFi.apUp) return false;

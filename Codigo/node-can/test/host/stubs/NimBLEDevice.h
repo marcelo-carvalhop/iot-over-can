@@ -19,7 +19,8 @@ class NimBLEAdvertising {
   void setMinInterval(uint16_t) {}
   void setMaxInterval(uint16_t) {}
   bool setAdvertisementData(const NimBLEAdvertisementData& data) { manufacturer = data.manufacturer; return true; }
-  bool start() { advertising = true; return true; }
+  uint16_t starts = 0;       // inícios do anúncio, para os cenários
+  bool start() { advertising = true; ++starts; return true; }
   bool stop() { advertising = false; return true; }
 };
 
@@ -45,10 +46,14 @@ class NimBLEScan {
   void setScanCallbacks(NimBLEScanCallbacks* cb, bool) { callbacks = cb; }
   void setDuplicateFilter(int) {}
   void setActiveScan(bool) {}
-  void setInterval(uint16_t) {}
-  void setWindow(uint16_t) {}
+  uint16_t interval = 0;
+  uint16_t window = 0;     // janela pedida (unidades de 0,625 ms), para os cenários
+  uint16_t starts = 0;     // reinícios da varredura
+  void setInterval(uint16_t v) { interval = v; }
+  void setWindow(uint16_t v) { window = v; }
   void setMaxResults(uint8_t) {}
-  bool start(uint32_t, bool, bool) { scanning = true; return true; }
+  bool start(uint32_t, bool, bool) { scanning = true; ++starts; return true; }
+  bool stop() { scanning = false; return true; }
   bool isScanning() const { return scanning; }
 };
 

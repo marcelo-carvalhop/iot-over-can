@@ -60,7 +60,9 @@ tag = HMAC(K_dev, "ioc-offer-v1" || bytes[2..18])[0..7]
 
 O sensor mantém varredura passiva (60 ms a cada 500 ms) enquanto não tem sessão. Ele só processa ofertas com o próprio UUID e tag válida. Uma oferta válida informa o número do Node; SSID (`IOC-NN`) e senha são derivados localmente e nunca trafegam pelo ar.
 
-Havendo mais de um sensor aguardando sessão, o Node alterna as ofertas a cada 400 ms. A oferta deixa de ser anunciada quando a sessão é estabelecida.
+Havendo mais de um sensor aguardando sessão, o Node alterna as ofertas a cada 400 ms; com um só, o anúncio fica no ar sem ser reiniciado (cada troca para e religa o anúncio BLE). A oferta de um sensor sai do ar quando o HELLO dele chega (ele já está no ponto de acesso; volta se a autenticação não terminar em 5 s) e deixa de ser anunciada quando a sessão é estabelecida.
+
+**Rádio do Node.** O ESP32 divide um rádio entre BLE e Wi-Fi, e a Espressif classifica ponto de acesso com estação conectando ou conectada + BLE como "suportado, desempenho instável". Enquanto houver sensor vinculado sem sessão (fora o painel dormindo), a varredura BLE do Node cai de 50 % para 25 % do tempo (janela de 25 ms a cada 100 ms), deixando mais rádio para a associação, o DHCP e o handshake; volta a 50 % quando todos têm sessão. Com o sensor anunciando a cada 500 ms, 25 % ainda o ouve a cada 2 s em média. O monitor do Node registra a troca (`BLE_SCAN janela=25% (sensor entrando no ponto de acesso)`).
 
 O nonce da oferta não é conferido pelo sensor: uma oferta capturada continua autêntica. Para limitar o efeito de uma repetição, o sensor ignora ofertas enquanto tem sessão e, depois de entrar no ponto de acesso de um Node, só segue a oferta de outro Node após 15 s.
 
@@ -85,7 +87,7 @@ tag = HMAC(chave, cabeçalho || payload)[0..7]
 O que cada passo prova:
 
 1. **HELLO.** O Node lê o UUID, verifica que há vínculo para ele e deriva `K_dev`. Um HELLO de UUID sem vínculo não recebe resposta.
-2. **CHALLENGE.** A tag prova ao sensor que o Node conhece `K_dev`; o eco do nonce prova que a resposta é ao HELLO mais recente.
+2. **CHALLENGE.** A tag prova ao sensor que o Node conhece `K_dev`; o eco do nonce prova que a resposta é à tentativa em curso.
 3. **CONFIRM.** A tag com `K_sess` prova ao Node que o sensor conhece `K_dev` e respondeu ao nonce recém-gerado. Só então a sessão passa a valer.
 
 Um HELLO recebido durante uma sessão ativa cria um handshake *pendente* e não derruba a sessão em vigor; a troca só ocorre quando um CONFIRM, ou um dado autenticado com a chave pendente, é aceito. Isso cobre o sensor que reiniciou e o CONFIRM que se perdeu.
@@ -95,6 +97,8 @@ O HELLO não contém nada que o Node possa conferir quanto à atualidade, então
 - o HELLO que originou a sessão em vigor é ignorado e contado em `replay`;
 - o mesmo HELLO recebido de novo reenvia o mesmo CHALLENGE, sem reiniciar a troca;
 - um handshake iniciado há menos de 1 s não é substituído por outro HELLO.
+
+**Um nonce por tentativa.** O sensor repete o HELLO a cada 1,5 a 3,5 s até receber o CHALLENGE, sempre com o mesmo `nonce_sensor`; o nonce só é trocado numa nova associação ao ponto de acesso, depois de uma sessão ou a cada 8 HELLOs sem resposta (`NET_HELLO_NONCE_MAX_USES`). Assim o Node responde às repetições com o mesmo CHALLENGE, e um CHALLENGE que chega depois da repetição seguinte continua valendo. Com um nonce novo a cada HELLO, todo CHALLENGE atrasado mais que o intervalo entre HELLOs (rádio disputado, retransmissões) chegava com o eco de um nonce já trocado e era descartado; com o atraso acima de 3,5 s a sessão não abria nunca (cenário `handshake_slow_radio`).
 
 ## 5. Sessão
 
@@ -276,7 +280,7 @@ Ordem sugerida, do menor risco ao maior:
 Pontos a observar e registrar:
 
 - primeira compilação do firmware do ESP32 (job `esp32-platformio` da integração contínua ou `build_esp32_can_node.sh`): tamanho (a partição passou a `min_spiffs.csv`) e memória livre;
-- estabilidade da varredura BLE do Node com o ponto de acesso ativo (a varredura ocupa 50% do tempo de rádio; reduzir a janela se a associação Wi-Fi ou o DHCP falharem), e da eleição/liveness CAN durante um espectro de 256 faixas;
+- estabilidade da varredura BLE do Node com o ponto de acesso ativo (50 % do tempo de rádio com todos os sensores em sessão, 25 % enquanto algum entra no ponto de acesso; se a associação Wi-Fi ou o DHCP ainda falharem, reduzir `SCAN_WINDOW_QUIET` em `wireless_discovery.cpp`), e da eleição/liveness CAN durante um espectro de 256 faixas;
 - espectro de 256 faixas completo na TUI (quatro blocos); se faltarem blocos, aumentar a pausa entre eles em `wireless_link.cpp`;
 - retorno do sensor após reiniciar o Node e refazer o `BIND`;
 - tempo entre o `BIND` e a sessão autenticada;

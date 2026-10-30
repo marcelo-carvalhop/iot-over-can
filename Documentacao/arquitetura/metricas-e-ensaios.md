@@ -308,6 +308,7 @@ Um ensaio iniciado fora da tela (comando digitado, reprodução de gravação) �
 | `failover_retry` | o Node escolhido perde o sensor antes de assumir; o vínculo passa a `STALE` e o líder escolhe outro depois do intervalo mínimo |
 | `failover_dead_target` | o Node escolhido sai do ar antes de receber o pedido; o responsável anterior mantém o vínculo até a nova decisão |
 | `silence_leader_with_sensor` | o líder fica 43 s parado e retoma; não reassocia um sensor que continuou funcionando |
+| `handshake_slow_radio` | dois sensores no mesmo Node com 3,6 s de atraso do Node para o sensor (rádio disputado); cada sessão abre em cerca de 5 s, a oferta não é reiniciada com um sensor esperando e a varredura BLE usa a janela menor até as sessões abrirem |
 
 A saída padrão são as linhas que a Probe 00 enviaria à TUI, com o instante simulado. `Codigo/scripts/record_network_scenarios.sh` as grava em `Front/replays/`, e os testes da TUI as entregam ao decodificador, ao domínio, às métricas e ao registrador de ensaios. Um teste refaz a gravação e a compara com a versionada: se o firmware mudar o que a Probe escreve, o teste acusa. As gravações são versionadas por uma exceção em `.gitignore`, que ignora os demais arquivos `.log`.
 
@@ -317,7 +318,7 @@ A TUI reproduz uma gravação sem hardware:
 cd Front && python -m pico_tui --replay replays/owner_failover.log --replay-speed 4
 ```
 
-**O que a bancada virtual não reproduz:** temporização de rádio, coexistência BLE/Wi-Fi, perda de quadros por ruído, a temporização real do MCP2515 por SPI, a latência da serial. Ela verifica a lógica do firmware e a integração com a TUI. Tempos de rádio e de reinício são parâmetros da simulação.
+**O que a bancada virtual não reproduz:** temporização de rádio (além do atraso fixo por sensor e Node, `g_radio_delay_ms`), coexistência BLE/Wi-Fi, perda de quadros por ruído, a temporização real do MCP2515 por SPI, a latência da serial. Ela verifica a lógica do firmware e a integração com a TUI. Tempos de rádio e de reinício são parâmetros da simulação.
 
 ### 8.1 Ferramentas de simulação (futuro, prioridade muito baixa)
 
