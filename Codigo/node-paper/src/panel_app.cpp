@@ -146,8 +146,10 @@ void PanelApp::begin(PanelHal* hal, const PanelConfig& cfg) {
   off_ = Off::None;
   powerPressed_ = false;
   powerReleasedSeen_ = false;
-  // A tela mostra "Painel desligado": troca pela página de partida já.
-  splash_ = hal_->loadU32("offpg", 0) != 0;
+  // Ligado pelo operador (ou a tela mostra "Painel desligado"): a página de
+  // partida sai já. Sem ela, o papel ficaria em branco depois da limpeza da
+  // partida até o retrato da rede chegar (ou até o prazo de 60 s sem dados).
+  splash_ = cfg_.userBoot || hal_->loadU32("offpg", 0) != 0;
   if (cfg_.userBoot) {
     scene_ = LedScene::Boot;
     sceneStart_ = now;
@@ -1054,7 +1056,7 @@ void PanelApp::composeShutdown(const ioc_page_ctx& ctx) {
 }
 
 void PanelApp::composeSplash(const ioc_page_ctx& ctx) {
-  // Ligado pelo operador sobre a tela "desligado": troca por esta, já.
+  // Ligado pelo operador: diz que ligou e o que vem a seguir, já.
   ioc_dl_clear(&dl_);
   int y = 28 + ioc_page_logo(&dl_, 8, 28, 384) + 16;
   ioc_dl_fill(&dl_, 0, y, IOC_DL_W, 60, IOC_INK_GREEN, 0);
@@ -1088,7 +1090,9 @@ void PanelApp::compose(uint32_t now) {
     ctx.normal_since_ms = normalSinceEpoch_ ? msFromEpoch(normalSinceEpoch_, now) : 0;
   }
   ioc_dl_clear(&dl_);
-  const bool noData = mode_ != Mode::Bound && (lastDataMs_ ? now - lastDataMs_ > NO_DATA_MS : now - bootMs_ > BOOT_NO_DATA_MS);
+  // Mesmo limite da espera pelo retrato em maybeRender (>=): no instante exato
+  // dos 60 s a página da rede seria composta vazia, como "Rede normal".
+  const bool noData = mode_ != Mode::Bound && (lastDataMs_ ? now - lastDataMs_ > NO_DATA_MS : now - bootMs_ >= BOOT_NO_DATA_MS);
   if (composing_) {
     composeDraft(ctx);
   } else if (noData && (page_ == PAGE_SITUATION || page_ == PAGE_NETWORK)) {
