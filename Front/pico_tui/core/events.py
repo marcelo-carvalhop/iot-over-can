@@ -252,6 +252,22 @@ class LegacyHeartbeatReceived(Event):
     active_sensors: int
     mode: int
     period_ms: int
+    # Relógio monotônico da Probe 00 (µs), quando o firmware o informa (pesquisa).
+    t_us: int | None = None
+
+
+@dataclass(slots=True)
+class ResearchLineReceived(Event):
+    """Linha da instrumentação de pesquisa da Probe 00.
+
+    ``kind`` é CONFIG, ECHO_START, ECHO, ECHO_DONE, ECHO_ERROR,
+    WIRELESS_STATS, BENCH, BENCH_DONE ou BENCH_ERROR; ``fields`` traz os pares
+    chave=valor com as chaves em maiúsculas.
+    """
+
+    kind: str
+    fields: dict[str, str] = field(default_factory=dict)
+    raw: str = ""
 
 
 @dataclass(slots=True)

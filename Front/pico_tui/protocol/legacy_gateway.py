@@ -17,6 +17,7 @@ from pico_tui.core.events import (
     PhysicalNodeReceived,
     WirelessCandidateReceived,
     WirelessAssociationReceived,
+    ResearchLineReceived,
     WirelessConfigReceived,
     WirelessEventReceived,
     WirelessFailoverReceived,
@@ -32,6 +33,7 @@ class LegacyGatewayDecoder:
         r"(?:\[GW\]|\[NODE\s+(?P<leader_node>\d+)\]\s+\[HEARTBEAT TX\])\s*"
         r"(?:HEARTBEAT\s+)?(?:lider=(?P<leader>\d+)\s+)?rodada=(?P<round>\d+)\s+"
         r"sensores_ativos=(?P<active>\d+)\s+modo=(?P<mode>\d+)\s+periodo=(?P<period>\d+)\s+ms"
+        r"(?:\s+t_us=(?P<t_us>\d+))?"
     )
     GW_SENSOR = re.compile(
         r"\[GW\]\s+SENSOR\s+sensor=(?P<node>\d+)\s+rodada=(?P<round>\d+)\s+"
@@ -82,6 +84,12 @@ class LegacyGatewayDecoder:
         r"auth_fail=(?P<auth>\d+)\s+replay=(?P<replay>\d+)\s+lost=(?P<lost>\d+)\s+"
         r"stream=(?P<stream>ON|OFF)\s+period_ms=(?P<period>\d+)"
         r"(?:\s+rtt_ms=(?P<rtt>-?[0-9.]+)\s+rtt_max_ms=(?P<rtt_max>-?[0-9.]+))?"
+    )
+    # Instrumentação de pesquisa (Pesquisa/README.md): parâmetros, eco, custo
+    # da criptografia e da ponte no Node e BENCH CRYPTO da Probe.
+    RESEARCH = re.compile(
+        r"\[GW\]\s+(?P<kind>CONFIG|ECHO_START|ECHO_DONE|ECHO_ERROR|ECHO|WIRELESS_STATS|BENCH_DONE|BENCH_ERROR|BENCH)"
+        r"(?:\s+(?P<rest>.*))?$"
     )
     # Etapas da criação do canal de dados (v0.22); child=0 é um fato do módulo.
     WIRELESS_EVENT = re.compile(
@@ -147,6 +155,7 @@ class LegacyGatewayDecoder:
                     active_sensors=int(match.group("active")),
                     mode=int(match.group("mode")),
                     period_ms=int(match.group("period")),
+                    t_us=int(match.group("t_us")) if match.group("t_us") else None,
                 )
             )
             return True
@@ -261,6 +270,16 @@ class LegacyGatewayDecoder:
                     stream_period_ms=int(match.group("period")) or None,
                     rtt_ms=rtt if rtt >= 0 else None,
                     rtt_max_ms=rtt_max if rtt_max >= 0 else None,
+                )
+            )
+            return True
+        if match := self.RESEARCH.search(line):
+            rest = match.group("rest") or ""
+            await self.bus.publish(
+                ResearchLineReceived(
+                    kind=match.group("kind"),
+                    fields=parse_key_values(f"- {rest}") if "=" in rest else {},
+                    raw=line.strip(),
                 )
             )
             return True

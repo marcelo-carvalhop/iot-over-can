@@ -371,6 +371,26 @@ ConnectScreen, ConfirmScreen, ParameterScreen, ConfigScreen, TargetScreen, Wirel
     background: rgba(10, 12, 14, 0.75);
 }
 
+/* Lançador de comandos (k): uma linha de entrada no alto da tela, como um lançador de aplicativos. */
+CommandLauncher {
+    align: center top;
+    background: rgba(10, 12, 14, 0.6);
+}
+
+#launcher-dialog {
+    width: 76;
+    margin-top: 3;
+    padding: 0 1;
+}
+
+#launcher-dialog Input {
+    margin-top: 0;
+}
+
+.bp-short #launcher-dialog {
+    margin-top: 1;
+}
+
 .dialog {
     width: 72;
     max-width: 100%;

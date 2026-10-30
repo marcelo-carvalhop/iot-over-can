@@ -21,7 +21,7 @@ from pico_tui.widgets import StableOptionList, WrappedLines
 from tests.conftest import settle
 
 SIZES = [(48, 18), (60, 24), (80, 24), (100, 30), (160, 48)]
-SCREENS = ["home", "sensor", "node", "commands", "network", "messages", "wireless", "help", "metrics", "experiments"]
+SCREENS = ["home", "sensor", "node", "commands", "network", "messages", "wireless", "help", "metrics", "experiments", "research"]
 
 
 def _words(text: str) -> list[str]:
@@ -47,6 +47,8 @@ async def _open(app: PicoTuiApp, name: str) -> None:
         app.action_show_metrics()
     elif name == "experiments":
         app.action_show_experiments()
+    elif name == "research":
+        app.action_show_research()
 
 
 @pytest.mark.parametrize("size", SIZES, ids=lambda size: f"{size[0]}x{size[1]}")

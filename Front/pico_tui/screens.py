@@ -1521,6 +1521,8 @@ class HelpScreen(BaseScreen):
                         ("F8 ou b", "Métricas da rede: ocupação, períodos, tempos de resposta e enlaces"),
                         ("F9 ou e", "Ensaios: injeção de falhas com medição do resultado"),
                         ("F12 ou v", "Supervisório: até 5 painéis (rede e sensores, cada um uma vez) na mesma tela"),
+                        ("k", "Lançador: digite um comando (22 20 FF 00, ECHO ..., :tel on) e Enter envia à rede"),
+                        ("/", "Pesquisa: eco, sinal de presença, custo da criptografia e parâmetros (TCC)"),
                         ("F1 ou ?", "Esta ajuda"),
                         ("F10 ou q", "Sair"),
                         ("Tab", "Passar para a próxima lista ou campo"),
@@ -1563,7 +1565,7 @@ class HelpScreen(BaseScreen):
         )
         self.query_one("#help-internal", Paragraphs).set_items(
             [
-                Text("Na tela de comandos, a abre o campo de comando manual. Texto sem : vai direto ao equipamento."),
+                Text("Na tela de comandos, a abre o campo de comando manual; em qualquer tela, k abre o lançador. Texto sem : vai direto ao equipamento."),
                 Text(":status   :node 04   :node 04.01   :can   :can 22 20 FF 00   :election   :canstatus"),
                 Text(":tel on|off|once|fast|slow|period <ms>   :fft [sensor] bins=64   :acq polling"),
                 Text(":dtc list [sensor]   :dtc clear [sensor] all|0xCÓDIGO   :wifi on|off|status"),

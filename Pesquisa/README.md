@@ -82,6 +82,10 @@ O relatório inteiro sai dos registros brutos: apagar `relatorio/` e rodar `anal
 | `alvo`, `alvo_uuid` | sensor de referência (padrão: filho 1 do Node 1, o sensor A da bancada virtual) |
 | `fw_assoc_stale_ms`, `fw_assoc_lost_ms`, `fw_assoc_hysteresis_ms`, `fw_stream_period_ms` | parâmetros de compilação: a bancada virtual é compilada para cada combinação; na física, a coleta confere a linha `CONFIG` da Probe |
 
+## Na TUI
+
+A tecla `/` abre a tela **Pesquisa**, fora da barra de teclas: eco LOCAL e SENSOR com média, IC 95 %, mediana, p95 e p99, variação do sinal de presença, ocupação e carga de fundo, custo da criptografia e da ponte nos Nodes, `BENCH CRYPTO` da Probe e os parâmetros da compilação. A tecla `k` abre o lançador de comandos, para enviar `ECHO`, `FAULT LOAD`, `CONFIG` ou `BENCH CRYPTO` sem sair da tela. Os números são da sessão e servem para acompanhar um experimento na bancada; a análise da campanha continua aqui. Detalhes em [`Documentacao/interface/tui.md`](../Documentacao/interface/tui.md).
+
 ## Comandos novos do firmware
 
 | Placa | Comando | Saída |

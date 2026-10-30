@@ -69,6 +69,7 @@ Início
 ├── Sensores sem fio
 ├── Métricas da rede
 ├── Ensaios
+├── Pesquisa (/, fora da barra de teclas)
 └── Ajuda
 ```
 
@@ -89,12 +90,20 @@ Início
 | `F9` / `e` | Ensaios | `action_show_experiments` |
 | `F12` / `v` | Supervisório | `action_show_supervisor` |
 | `F10` / `q` | Sair com confirmação | `action_exit_confirm` |
+| `k` | Lançador de comandos (fora da barra de teclas) | `action_command_launcher` |
+| `/` | Pesquisa (fora da barra de teclas) | `action_show_research` |
 | `Esc` | Voltar | `BaseScreen.action_back` |
 | `Ctrl+C` | interromper stream no sensor USB direto | tratamento em `on_key` |
 
 `Ctrl+A` continua aceito como alias compatível para abrir Sensores sem fio, mas não faz parte do fluxo que o operador precisa memorizar. O caminho oficial é `F7`/`w`, exibido na barra de teclas e na Ajuda.
 
 Quando um `Input` possui foco, letras são entrada de texto e não atalhos globais.
+
+`k` e `/` não aparecem na barra de teclas, para não poluir a operação normal; estão na Ajuda.
+
+### Lançador de comandos — `CommandLauncher` (`k`)
+
+Uma linha de entrada no alto da tela, como um lançador de aplicativos. O operador digita o comando, por exemplo `22 00 FF 11`, e `Enter` o envia à rede e fecha a janela; `Esc` fecha sem enviar. Abaixo da linha, a janela diz o que vai acontecer: comando CAN de quatro bytes (com a ação do catálogo correspondente, se houver), texto para a Probe 00 (`ECHO`, `FAULT`, `CONFIG`, `BENCH`, `CMD`, `WIRELESS`), comando interno da TUI (`:tel on`) ou texto enviado sem alteração. As setas para cima e para baixo percorrem os últimos 50 comandos da sessão. O texto segue o mesmo caminho do comando manual da tela de comandos, com as mesmas regras de autorização (`22 00`, `22 10`, `22 30` e `FAULT` exigem a chave física no modo `presence`).
 
 ## Barra de teclas
 
@@ -429,6 +438,22 @@ Durante o ensaio, a tela mostra o tempo decorrido, as medidas já obtidas e os a
 O resultado é medido a partir das mensagens da rede. Uma medida que não pôde ser obtida aparece como "não observado", e não como zero. O maior intervalo sem telemetria conta a partir da última amostra recebida antes da falha, de sensores que vinham enviando nos 10 s anteriores ao ensaio. Um ensaio iniciado fora da tela (comando digitado no campo manual, reprodução de uma gravação) é reconhecido pelas linhas `FAULT_TX` e `FAULT_EVENT` e medido da mesma forma.
 
 No modo demonstração a rede simulada não reage à falha; apenas o início, o fim e a carga no barramento são representados. Para ver um ensaio completo sem hardware, use a reprodução de uma gravação.
+
+## Pesquisa — `ResearchScreen` (`/`)
+
+Medições da instrumentação de pesquisa para o TCC, fora da entrega da disciplina e da operação normal: por isso a tela não está na barra de teclas. Só lê; os comandos que geram as medições são enviados pelo lançador (`k`), e a própria tela lista exemplos.
+
+| Seção | Origem | O que mostra |
+|---|---|---|
+| Eco LOCAL e Eco SENSOR | `[GW] ECHO_START`, `ECHO`, `ECHO_DONE` | último trem de cada caminho: alvo, amostragem e semente, andamento, ecos sem resposta com IC 95 % de Wilson, média com IC 95 % (t), desvio, mediana, p95, p99, extremos e a série; no SENSOR, a parte Wi-Fi medida pelo Node e o restante (CAN e Node) |
+| Sinal de presença do líder | `HEARTBEAT ... t_us=` | intervalos no relógio da Probe, desvio padrão (variação), desvio do período (p99 e máximo); uma troca de líder recomeça a série |
+| Ocupação e carga de fundo | `BUS_STATS`, `FAULT_EVENT kind=BUS_LOAD` | ocupação média com IC, mediana, p95, máximo; carga pedida, prioridade, ocupação gerada, semente e hash da sequência |
+| Custo da segurança e da ponte | `[GW] WIRELESS_STATS` | por sensor: HMAC na recepção e selo no envio, pior datagrama, CPU do handshake, ponte Wi-Fi → CAN |
+| Custo da criptografia na Probe | `[GW] BENCH`, `BENCH_DONE` | média, mediana, p95, p99 e máximo de cada operação |
+| Parâmetros da compilação | `[GW] CONFIG` | taxa do barramento, sinal de presença, L, H, T, PING, fim de sessão, IDs de carga |
+| Trens de eco desta sessão | idem | os 12 últimos trens, com respostas, mediana, p99 e máximo |
+
+As estatísticas usam as mesmas definições de `Pesquisa/iocpesquisa/estatistica.py` (percentil tipo 7, IC da média pela distribuição t, Wilson), conferidas por teste. Os números são da sessão; campanhas com repetições, comparações e proveniência continuam com `python -m iocpesquisa` (`Pesquisa/README.md`). `z` zera as medições; uma nova conexão ou uma gravação também zeram.
 
 ## Supervisório — `SupervisorScreen`
 

@@ -48,6 +48,7 @@ from pico_tui.core.models import (
 from pico_tui.core.state_store import StateStore
 from pico_tui.dialogs import (
     ChoiceScreen,
+    CommandLauncher,
     ConfigRequest,
     ConfigScreen,
     ConfirmScreen,
@@ -60,6 +61,8 @@ from pico_tui.metrics.experiments import EXPERIMENTS_BY_KEY, ExperimentRecorder
 from pico_tui.metrics.export import export_metrics
 from pico_tui.metrics.service import MetricsService
 from pico_tui.metrics_screens import ExperimentsScreen, MetricsScreen
+from pico_tui.research.service import ResearchService
+from pico_tui.research_screen import ResearchScreen
 from pico_tui.history.storage import HistoryStore
 from pico_tui.history.service import HistoryService
 from pico_tui.history.captures import CaptureManager
@@ -180,6 +183,10 @@ class PicoTuiApp(App[None]):
         Binding("v", "show_supervisor", "Supervisório", show=False),
         Binding("f10", "exit_confirm", "Sair", show=False),
         Binding("q", "exit_confirm", "Sair", show=False),
+        # Fora da barra de teclas (listadas na Ajuda): lançador de comandos e
+        # medições de pesquisa para o TCC.
+        Binding("k", "command_launcher", "Enviar comando", show=False),
+        Binding("slash", "show_research", "Pesquisa", show=False),
     ]
 
     def __init__(
@@ -227,6 +234,10 @@ class PicoTuiApp(App[None]):
         self.controller = DomainController(self.bus, self.state_store)
         self.metrics = MetricsService(self.bus, self.clock)
         self.experiments = ExperimentRecorder(self.bus, self.clock)
+        # Instrumentação de pesquisa (tela "/"), fora da operação normal.
+        self.research = ResearchService(self.bus)
+        # Comandos enviados pelo lançador (k), do mais antigo ao mais recente.
+        self.command_history: list[str] = []
         self.decoder = DecoderRouter(self.bus, requested_mode=mode)
         self.session_id = uuid.uuid4().hex[:12]
         self.state_store.set_session_id(self.session_id)
@@ -447,6 +458,7 @@ class PicoTuiApp(App[None]):
         self.clock.replay_time = _first_replay_instant(lines)
         self.metrics.reset()
         self.experiments.reset()
+        self.research.reset()
         connection_mode = {
             "gateway": ConnectionMode.GATEWAY_CAN,
             "gateway_can": ConnectionMode.GATEWAY_CAN,
@@ -1851,6 +1863,31 @@ class PicoTuiApp(App[None]):
     def action_show_history(self) -> None:
         if not self._modal_open() and not isinstance(self.screen, HistoryScreen):
             self._replace_top(HistoryScreen())
+
+    def action_show_research(self) -> None:
+        if not self._modal_open() and not isinstance(self.screen, ResearchScreen):
+            self._replace_top(ResearchScreen())
+
+    @work
+    async def action_command_launcher(self) -> None:
+        """Lançador (k): digita um comando, Enter envia à rede e a janela fecha."""
+
+        if self._modal_open():
+            return
+        text = await self.push_screen_wait(CommandLauncher(self.command_history[-50:]))
+        if not text:
+            return
+        if not self.command_history or self.command_history[-1] != text:
+            self.command_history.append(text)
+            del self.command_history[:-50]
+        if text.startswith(":"):
+            await self._execute_internal_command(text[1:])
+            return
+        if self._send_raw(text):
+            self.state_store.set_last_action(f"Comando: {text}")
+            self.notify(text, title="Enviado", timeout=3)
+        elif self.serial_client is None or not self.serial_client.is_open:
+            self.notify("Conecte-se a uma porta serial (F3) para enviar comandos.", severity="warning", timeout=5)
 
     def action_show_supervisor(self) -> None:
         if not self._modal_open() and not isinstance(self.screen, SupervisorScreen):

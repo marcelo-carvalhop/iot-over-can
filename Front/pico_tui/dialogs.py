@@ -19,7 +19,7 @@ from textual.widgets import Button, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
 from pico_tui import alarms, commands, palette
-from pico_tui.command_catalog import CommandAction
+from pico_tui.command_catalog import CommandAction, describe_raw_command
 from pico_tui.core.models import SensorNode
 from pico_tui.serial_client import list_available_ports
 
@@ -155,6 +155,69 @@ class ConnectScreen(ModalScreen[ConnectionChoice | None]):
     @on(Input.Submitted, "#manual-port")
     def _manual_submit(self) -> None:
         self._connect()
+
+
+class CommandLauncher(ModalScreen[str | None]):
+    """Janela pequena para digitar um comando e enviá-lo à rede (tecla k).
+
+    Enter envia e fecha; Esc fecha sem enviar; seta para cima e para baixo
+    percorrem os comandos já enviados nesta sessão. O texto segue o mesmo
+    caminho do comando manual da tela de comandos, com as mesmas regras de
+    autorização.
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Fechar", show=False),
+        Binding("up", "older", "Anterior", show=False),
+        Binding("down", "newer", "Seguinte", show=False),
+    ]
+
+    def __init__(self, history: list[str] | None = None) -> None:
+        super().__init__()
+        self.history = list(history or [])
+        self._position = len(self.history)
+        self._draft = ""
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="launcher-dialog", classes="dialog"):
+            yield Input(placeholder="22 20 FF 00, ECHO 01.01 40 500 LOCAL 7 ou :tel on", id="launcher-input")
+            yield Static(describe_raw_command(""), id="launcher-hint", classes="dialog-hint")
+            yield Static("Enter envia · ↑ ↓ comandos anteriores · Esc fecha", classes="dialog-hint")
+
+    def on_mount(self) -> None:
+        self.query_one("#launcher-input", Input).focus()
+
+    @on(Input.Changed, "#launcher-input")
+    def _changed(self, event: Input.Changed) -> None:
+        self.query_one("#launcher-hint", Static).update(describe_raw_command(event.value))
+
+    @on(Input.Submitted, "#launcher-input")
+    def _submitted(self, event: Input.Submitted) -> None:
+        text = event.value.strip()
+        if text:
+            self.dismiss(text)
+
+    def _show(self, text: str) -> None:
+        widget = self.query_one("#launcher-input", Input)
+        widget.value = text
+        widget.cursor_position = len(text)
+
+    def action_older(self) -> None:
+        if not self.history or self._position == 0:
+            return
+        if self._position == len(self.history):
+            self._draft = self.query_one("#launcher-input", Input).value
+        self._position -= 1
+        self._show(self.history[self._position])
+
+    def action_newer(self) -> None:
+        if self._position >= len(self.history):
+            return
+        self._position += 1
+        self._show(self.history[self._position] if self._position < len(self.history) else self._draft)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class ConfirmScreen(ModalScreen[bool]):

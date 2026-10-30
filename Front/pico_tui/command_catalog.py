@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from pico_tui.security import _canonical_can_command
+
 # Mapeamento do firmware (Codigo/node-can/include/protocolo.h e main.ino):
 #   01 = 2000 ms (HB_RATE_VERY_SLOW) ... 05 = 500 ms (HB_RATE_VERY_FAST)
 LIVENESS_PERIODS_MS: tuple[tuple[int, int], ...] = (
@@ -341,3 +343,58 @@ def can_command(action_key: str, node_id: int | None = None, value: str | None =
     if action_key == "node.clear_fault":
         return f"22 10 {node_id:02X} 44"
     raise ValueError(f"A ação {action_key} não gera comando CAN")
+
+
+def describe_can_command(canonical: str) -> str | None:
+    """Ação do catálogo que corresponde a um comando CAN de quatro bytes ("22 00 FF 01")."""
+
+    parts = canonical.split()
+    if len(parts) != 4:
+        return None
+    for key in ("network.status", "network.election"):
+        if can_command(key) == canonical:
+            return ACTIONS_BY_KEY[key].title
+    if parts[:3] == ["22", "30", "FF"]:
+        code = int(parts[3], 16)
+        periods = [period for period, value in LIVENESS_PERIODS_MS if value == code]
+        title = ACTIONS_BY_KEY["network.liveness"].title
+        return f"{title}: {periods[0]} ms" if periods else f"{title} (código 0x{code:02X} desconhecido)"
+    node_id = int(parts[2], 16)
+    if 0 < node_id < 0xFF:
+        for key in ("node.status", "node.sensor_off", "node.sensor_on", "node.clear_fault"):
+            if can_command(key, node_id) == canonical:
+                return f"{ACTIONS_BY_KEY[key].title}, Módulo {node_id:02d}"
+    return None
+
+
+# Primeira palavra dos comandos de texto que a Probe 00 entende.
+PROBE_TEXT_COMMANDS = {
+    "CMD": "comando de dados a um sensor sem fio",
+    "WIRELESS": "associação de sensores sem fio",
+    "PROBE_STATUS": "estado da Probe 00",
+    "PROBE_VERSION": "versão da Probe 00",
+    "FAULT": "ensaio de falha ou carga de fundo (exige autorização)",
+    "ECHO": "trem de eco no plano de dados (pesquisa)",
+    "CONFIG": "parâmetros da compilação (pesquisa)",
+    "BENCH": "custo da criptografia na placa (pesquisa)",
+}
+
+
+def describe_raw_command(text: str) -> str:
+    """O que o lançador de comandos ("k") vai fazer com o texto digitado."""
+
+    stripped = " ".join(text.strip().split())
+    if not stripped:
+        return "Digite o comando e tecle Enter. Comandos CAN em quatro bytes (22 20 FF 00), texto para a Probe ou :comando da TUI."
+    if stripped.startswith(":"):
+        return "Comando interno da TUI (por exemplo :tel on ou :node 04)."
+    upper = stripped.upper()
+    canonical = _canonical_can_command(upper)
+    if canonical is not None:
+        meaning = describe_can_command(canonical)
+        suffix = f": {meaning}" if meaning else ", sem ação correspondente no catálogo"
+        return f"Comando CAN {canonical}, enviado pela Probe 00 ao barramento{suffix}."
+    word = upper.split()[0]
+    if word in PROBE_TEXT_COMMANDS:
+        return f"Texto para a Probe 00: {PROBE_TEXT_COMMANDS[word]}."
+    return "Texto enviado sem alteração ao equipamento conectado."

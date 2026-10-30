@@ -75,6 +75,8 @@ Material para o TCC, fora do escopo da entrega da disciplina de IoT. A instrumen
 - **Máquina de estados parametrizável**: `L`, `H` e `T` ajustáveis na compilação, publicados pela Probe (`[GW] CONFIG`) e conferidos pela coleta.
 - **Desenho fatorial** com 30 repetições, sementes e ordem sorteada; análise com IC 95 %, Wilson, g de Hedges, delta de Cliff e Mann-Whitney com Holm; relatório, CSV e figuras regenerados dos registros brutos.
 
+Na TUI, `/` abre a tela de pesquisa (fora da barra de teclas) e `k` abre o lançador de comandos para enviar `ECHO`, `FAULT LOAD`, `CONFIG` ou `BENCH CRYPTO`.
+
 ```bash
 cd Pesquisa
 ../Codigo/scripts/build_network_sim.sh /tmp/sim_network
