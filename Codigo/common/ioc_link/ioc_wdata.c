@@ -538,6 +538,53 @@ int ioc_wd_config_decode(const uint8_t *buf, size_t len, ioc_wd_config *out) {
     return 1;
 }
 
+/* ------------------------------------------- etapas do canal de dados */
+
+size_t ioc_wd_link_event_encode(const ioc_wd_link_event *in, uint8_t out[IOC_WD_LINK_EVENT_UUID_LEN]) {
+    out[0] = in->event;
+    out[1] = in->reason;
+    put_u16(&out[2], in->count);
+    out[4] = in->value;
+    out[5] = in->stations;
+    put_u16(&out[6], in->since_s);
+    if (in->reason != IOC_WD_EVR_NOT_BOUND) return IOC_WD_LINK_EVENT_LEN;
+    put_u32(&out[8], (uint32_t)in->uuid);
+    put_u32(&out[12], (uint32_t)(in->uuid >> 32));
+    return IOC_WD_LINK_EVENT_UUID_LEN;
+}
+
+int ioc_wd_link_event_decode(const uint8_t *buf, size_t len, ioc_wd_link_event *out) {
+    if (!buf || !out || (len != IOC_WD_LINK_EVENT_LEN && len != IOC_WD_LINK_EVENT_UUID_LEN)) return 0;
+    if (buf[0] == 0) return 0;
+    out->event = buf[0];
+    out->reason = buf[1];
+    out->count = get_u16(&buf[2]);
+    out->value = buf[4];
+    out->stations = buf[5];
+    out->since_s = get_u16(&buf[6]);
+    out->uuid = len == IOC_WD_LINK_EVENT_UUID_LEN
+                    ? (uint64_t)get_u32(&buf[8]) | ((uint64_t)get_u32(&buf[12]) << 32)
+                    : 0u;
+    return 1;
+}
+
+const char *ioc_wd_event_name(uint8_t event) {
+    static const char *const names[] = {
+        "UNKNOWN", "AP_UP", "AP_DOWN", "AP_ERROR", "NO_KEY", "OFFER", "OFFER_ERROR",
+        "STATION_JOIN", "STATION_IP", "STATION_LEAVE", "HELLO_OK", "HELLO_REJECT",
+        "HANDSHAKE_TIMEOUT", "SESSION_UP", "SESSION_DOWN",
+    };
+    return event < sizeof(names) / sizeof(names[0]) ? names[event] : "UNKNOWN";
+}
+
+const char *ioc_wd_event_reason_name(uint8_t reason) {
+    static const char *const names[] = {
+        "NONE", "FORMAT", "NOT_BOUND", "KEY", "PROTOCOL", "REPLAY", "BUSY",
+        "SEND", "TIMEOUT", "UNBOUND", "SLEEP", "TEST", "RADIO_OFF", "IDLE",
+    };
+    return reason < sizeof(names) / sizeof(names[0]) ? names[reason] : "UNKNOWN";
+}
+
 /* ----------------------------------------------------------------- comandos */
 
 void ioc_wd_command_encode(const ioc_wd_command *in, uint8_t frame[IOC_WD_FRAME_LEN]) {

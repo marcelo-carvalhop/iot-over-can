@@ -27,10 +27,10 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Input, Label, OptionList, Sparkline, Static
 
-from pico_tui import acoustic_view, alarms, palette
+from pico_tui import acoustic_view, alarms, data_channel, palette
 from pico_tui import presentation as pres
 from pico_tui.command_catalog import ACTIONS_BY_KEY, GROUP_ORDER, actions_for, can_command
-from pico_tui.core.models import AppState, ConnectionMode, SensorNode
+from pico_tui.core.models import AppState, ConnectionMode, PhysicalNode, SensorNode
 from pico_tui.spectrum import (  # noqa: F401 - reexportados por compatibilidade
     _spectrum_chart,
     _spectrum_metadata,
@@ -53,6 +53,8 @@ from pico_tui.widgets import (
     Paragraphs,
     StableOptionList,
     StatusBand,
+    channel_event_items,
+    channel_stage_items,
     hanging_lines,
     incident_items,
     level_text,
@@ -343,6 +345,15 @@ class SensorScreen(BaseScreen):
             with Vertical(classes="column"):
                 with section("Situação"):
                     yield Fields(id="sensor-status")
+                with section("Criação do canal de dados", id="sec-channel"):
+                    yield Paragraphs(id="channel-stages")
+                    yield Paragraphs(id="channel-hint", classes="channel-hint")
+                    yield Label("Relatos do módulo", classes="trend-label")
+                    yield Paragraphs(
+                        id="channel-events",
+                        empty="Nenhum relato do módulo ainda. Módulos com firmware anterior à 0.22 não relatam as "
+                        "etapas; elas são deduzidas do estado do enlace.",
+                    )
                 with section("Métricas de vibração", id="sec-metrics"):
                     yield Fields(id="sensor-metrics")
                     yield Label("Tendência do RMS", classes="trend-label")
@@ -413,6 +424,7 @@ class SensorScreen(BaseScreen):
         self.query_one("#sec-events").display = is_acoustic and (mode == "EVENTS" or bool(sensor.acoustic_events))
 
         self.query_one("#sensor-status", Fields).set_fields(self._status_fields(sensor))
+        self._update_channel(state, node, sensor)
         if is_vibration:
             self._update_vibration(sensor)
         elif is_acoustic:
@@ -426,14 +438,10 @@ class SensorScreen(BaseScreen):
 
         self.query_one("#sensor-incidents", Paragraphs).set_items(incident_items(sensor.incidents, sensor.active_dtcs))
         if control_only and state.connection_mode == ConnectionMode.GATEWAY_CAN:
+            # Vínculo, RSSI e plano de dados já estão em Situação, e as etapas
+            # do canal, na seção própria.
             self.query_one("#sensor-link", Fields).set_fields(
-                [
-                    ("Vínculo wireless", sensor.association_state.upper()),
-                    ("Módulo responsável", f"Módulo {sensor.parent_node_id:02d}"),
-                    ("RSSI do vínculo", f"{sensor.association_rssi_dbm} dBm" if sensor.association_rssi_dbm is not None else pres.MISSING),
-                    ("Plano de dados", pres.data_link_label(sensor.data_link_state).capitalize()),
-                    ("Reassociação", pres.failover_label(sensor.failover_policy).capitalize()),
-                ]
+                [("Reassociação", pres.failover_label(sensor.failover_policy).capitalize())]
             )
             self.query_one("#sensor-config", Fields).set_fields(
                 [
@@ -474,6 +482,31 @@ class SensorScreen(BaseScreen):
                 ]
             )
             self.query_one("#sensor-config", Fields).set_fields(self._config_fields(sensor))
+
+    def _update_channel(self, state: AppState, node: PhysicalNode, sensor: SensorNode) -> None:
+        """Etapas entre o vínculo e a primeira leitura, enquanto o canal não está completo."""
+
+        section_widget = self.query_one("#sec-channel")
+        if state.connection_mode != ConnectionMode.GATEWAY_CAN or not sensor.wireless_associated:
+            section_widget.display = False
+            return
+        view = data_channel.channel_view(sensor, node.data_link_events)
+        section_widget.display = not view.complete
+        if view.complete:
+            return
+        self.query_one("#channel-stages", Paragraphs).set_items(channel_stage_items(view), indent=4)
+        hint: list[Text] = []
+        if view.hint:
+            line = Text()
+            line.append("O que verificar: ", style=f"bold {palette.TEXT_PRIMARY}")
+            line.append(view.hint, style=palette.TEXT_SECONDARY)
+            hint.append(line)
+        if view.previous_drop:
+            hint.append(Text(view.previous_drop[:1].upper() + view.previous_drop[1:] + ".", style=palette.TEXT_MUTED))
+        hint_widget = self.query_one("#channel-hint", Paragraphs)
+        hint_widget.set_items(hint, indent=0)
+        hint_widget.display = bool(hint)
+        self.query_one("#channel-events", Paragraphs).set_items(channel_event_items(sensor, node.data_link_events))
 
     @staticmethod
     def _config_fields(sensor: SensorNode) -> list[tuple[str, Text | str]]:
@@ -764,8 +797,15 @@ class NodeScreen(BaseScreen):
             )
         sensor_list = self.query_one("#node-sensors", StableOptionList)
         width = sensor_list.prompt_width
+        gateway = state.connection_mode == ConnectionMode.GATEWAY_CAN
         sensor_list.set_items(
-            [(f"sensor:{sensor.logical_id}", sensor_prompt(sensor, width, indent=0)) for _cid, sensor in sorted(node.sensors.items())]
+            [
+                (
+                    f"sensor:{sensor.logical_id}",
+                    sensor_prompt(sensor, width, indent=0, node_events=node.data_link_events, gateway=gateway),
+                )
+                for _cid, sensor in sorted(node.sensors.items())
+            ]
         )
         self.query_one("#node-discovery", Fields).set_fields(
             [
@@ -996,7 +1036,9 @@ class CommandScreen(BaseScreen):
     def _selected(self, event: OptionList.OptionSelected) -> None:
         action_key = str(event.option.id or "")
         if action_key in ACTIONS_BY_KEY:
-            self.tui.start_action(action_key, self.target)
+            # Depois do parâmetro e da confirmação, a tela de comandos fecha e
+            # o operador volta para onde estava, para acompanhar a reação.
+            self.tui.start_action(action_key, self.target, close=self)
 
     @on(Input.Submitted, "#cmd-manual")
     def _manual(self, event: Input.Submitted) -> None:

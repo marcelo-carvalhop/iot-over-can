@@ -75,6 +75,12 @@ def symbol(level: Level) -> str:
     return _symbols[level]
 
 
+def current_symbol() -> str:
+    """Marca da etapa em andamento numa sequência (canal de dados)."""
+
+    return ">" if _symbols[Level.NORMAL] == ASCII_SYMBOLS[Level.NORMAL] else "▶"
+
+
 def level_label(level: Level) -> str:
     return LEVEL_LABELS[level]
 

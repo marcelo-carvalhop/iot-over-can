@@ -295,6 +295,29 @@ class Incident:
 
 INCIDENT_HISTORY = 60
 ACOUSTIC_EVENT_HISTORY = 200
+DATA_LINK_EVENT_HISTORY = 40
+
+
+@dataclass(slots=True)
+class DataLinkEvent:
+    """Etapa da criação do canal de dados relatada pelo módulo (WIRELESS_EVENT, v0.22).
+
+    ``event`` e ``reason`` são os nomes do firmware (``HELLO_REJECT``, ``KEY``).
+    ``count`` soma repetições agrupadas pelo módulo; ``since_s`` conta do
+    vínculo do sensor naquele módulo. ``node_level`` marca um fato do módulo
+    (ponto de acesso, estações), mostrado junto dos sensores que aguardam.
+    """
+
+    event: str
+    reason: str = "NONE"
+    count: int = 1
+    value: int = 0
+    stations: int = 0
+    since_s: int = 0
+    parent_node_id: int = 0
+    node_level: bool = False
+    wireless_uuid: str = ""
+    received_wall_time: float = field(default_factory=time.time)
 
 
 @dataclass(slots=True)
@@ -349,6 +372,11 @@ class SensorNode:
     data_link_lost_datagrams: int = 0
     data_link_rtt_ms: float | None = None
     data_link_rtt_max_ms: float | None = None
+    # Etapas da criação do canal de dados (mais antiga primeiro) e o instante
+    # estimado do vínculo no módulo; 0 enquanto nenhum relato chegou.
+    data_link_events: deque[DataLinkEvent] = field(default_factory=lambda: deque(maxlen=DATA_LINK_EVENT_HISTORY))
+    data_link_bound_wall: float = 0.0
+    data_link_state_wall: float = 0.0  # quando chegou o último WIRELESS_LINK
     # Reassociação automática: AUTO (o líder pode mover o sensor para outro
     # módulo), MANUAL ou UNKNOWN (firmware que não informa a política).
     failover_policy: str = "UNKNOWN"
@@ -459,6 +487,8 @@ class PhysicalNode:
 
     # Intercorrências do próprio módulo (comunicação, DTC de módulo, comandos).
     incidents: deque[Incident] = field(default_factory=lambda: deque(maxlen=INCIDENT_HISTORY))
+    # Fatos do ponto de acesso deste módulo (estações que entram e saem).
+    data_link_events: deque[DataLinkEvent] = field(default_factory=lambda: deque(maxlen=DATA_LINK_EVENT_HISTORY))
 
     # Campos legados mantidos para compatibilidade de logs antigos.
     legacy_last_value: str = "-"

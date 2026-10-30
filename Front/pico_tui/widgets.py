@@ -16,7 +16,7 @@ from textual.widget import Widget
 from textual.widgets import OptionList, RichLog
 from textual.widgets.option_list import Option
 
-from pico_tui import palette
+from pico_tui import data_channel, palette
 from pico_tui import presentation as pres
 from pico_tui.core.models import AppState, ConnectionMode, Incident, PhysicalNode, SensorNode, Severity
 from pico_tui.dtc_catalog import dtc_description
@@ -410,6 +410,75 @@ def incident_items(
     return items
 
 
+_STAGE_LOOK = {
+    data_channel.DONE: (pres.Level.NORMAL, palette.STATE_OK, palette.TEXT_PRIMARY),
+    data_channel.FAILED: (pres.Level.ATTENTION, palette.STATE_WARNING, palette.TEXT_PRIMARY),
+    data_channel.PENDING: (pres.Level.NO_DATA, palette.TEXT_DIM, palette.TEXT_DIM),
+}
+
+
+def channel_stage_items(view: data_channel.ChannelView) -> list[Text]:
+    """Uma linha por etapa: marca, nome e quando (ou por que parou)."""
+
+    items: list[Text] = []
+    for stage in view.stages:
+        if stage.state == data_channel.CURRENT:
+            line = Text()
+            line.append(f"{pres.current_symbol()} ", style=f"bold {palette.ACCENT_FOCUS}")
+            line.append(stage.label, style=f"bold {palette.TEXT_PRIMARY}")
+            waiting = "em andamento"
+            if view.waiting_s is not None:
+                waiting = f"aguardando {data_channel.duration(view.waiting_s)}"
+            line.append(f"  {waiting}", style=palette.ACCENT_FOCUS)
+            if stage.detail:
+                line.append(f"  ({stage.detail})", style=palette.TEXT_MUTED)
+            items.append(line)
+            continue
+        level, mark_color, text_color = _STAGE_LOOK[stage.state]
+        line = Text()
+        line.append(f"{pres.symbol(level)} ", style=mark_color)
+        line.append(stage.label, style=text_color)
+        if stage.state == data_channel.PENDING:
+            items.append(line)
+            continue
+        when: list[str] = []
+        if stage.wall_time:
+            when.append(pres.fmt_clock(stage.wall_time))
+        if stage.since_bind_s is not None and stage.key != "bind":
+            when.append(f"+{stage.since_bind_s} s")
+        if when:
+            line.append("  " + " ".join(when), style=palette.TEXT_DIM)
+        if stage.state == data_channel.FAILED:
+            line.append(f"  {stage.detail or 'falhou'}", style=palette.STATE_WARNING)
+        elif stage.detail:
+            line.append(f"  {stage.detail}", style=palette.TEXT_MUTED)
+        items.append(line)
+    return items
+
+
+def channel_event_items(
+    sensor: SensorNode,
+    node_events: Iterable = (),
+    *,
+    limit: int = 8,
+) -> list[Text]:
+    """Relatos do módulo sobre este sensor (e as estações do ponto de acesso), do mais novo ao mais antigo."""
+
+    events = list(sensor.data_link_events)
+    events.extend(event for event in node_events if event.event.upper().startswith("STATION_"))
+    events.sort(key=lambda event: event.received_wall_time, reverse=True)
+    items: list[Text] = []
+    for event in events[:limit]:
+        level = data_channel.event_level(event)
+        color = palette.STATE_WARNING if level == "WARNING" else palette.TEXT_PRIMARY
+        line = Text()
+        line.append(pres.fmt_clock(event.received_wall_time), style=palette.TEXT_DIM)
+        source = "Módulo: " if event.node_level else ""
+        line.append(f"  {source}{data_channel.event_text(event)}", style=color)
+        items.append(line)
+    return items
+
+
 def node_title(node: PhysicalNode) -> str:
     if node.node_type == "DIRECT_SENSOR_HOST":
         return "Conexão direta USB"
@@ -451,14 +520,11 @@ def node_prompt(node: PhysicalNode, width: int = 80) -> Text:
         head.append(Text(pres.role_label(node.role), style=palette.TEXT_SECONDARY))
     head.append(Text(pres.level_label(condition.level), style=color))
     lines = hanging_lines(head, width, indent=0)
-    detail = condition.reasons[0] if condition.reasons else ""
-    if not detail and node.node_type != "DIRECT_SENSOR_HOST":
-        count = len(node.sensors)
-        sensors = "sem sensores sem fio" if count == 0 else ("1 sensor sem fio" if count == 1 else f"{count} sensores sem fio")
-        detail_segments = [Text(sensors + ",", style=palette.TEXT_MUTED), Text(f"último contato {pres.fmt_age(pres.node_age(node))}", style=palette.TEXT_MUTED)]
-        lines += hanging_lines(detail_segments, width, indent=2, gap=1)
-    elif detail:
-        lines += hanging_lines([Text(detail, style=palette.TEXT_MUTED)], width, indent=2)
+    # Em operação normal o módulo ocupa uma linha: os sensores aparecem logo
+    # abaixo e o contato recente é o próprio estado. Só um problema ganha a
+    # segunda linha, com o motivo.
+    if condition.reasons:
+        lines += hanging_lines([Text(condition.reasons[0], style=palette.TEXT_MUTED)], width, indent=2)
     return _join_lines(lines)
 
 
@@ -486,7 +552,14 @@ def _sensor_metric_segments(sensor: SensorNode) -> list[Text]:
     return [Text(part, style=palette.TEXT_MUTED) for part in parts]
 
 
-def sensor_prompt(sensor: SensorNode, width: int = 80, *, indent: int = 2) -> Text:
+def sensor_prompt(
+    sensor: SensorNode,
+    width: int = 80,
+    *,
+    indent: int = 2,
+    node_events: Sequence = (),
+    gateway: bool = True,
+) -> Text:
     condition = pres.sensor_condition(sensor)
     color = LEVEL_COLORS[condition.level]
     head = [
@@ -495,7 +568,15 @@ def sensor_prompt(sensor: SensorNode, width: int = 80, *, indent: int = 2) -> Te
         Text(pres.level_label(condition.level), style=color),
     ]
     lines = hanging_lines(head, width, indent=indent)
-    if condition.reasons:
+    # Associado e ainda sem canal de dados: a segunda linha diz em que etapa
+    # a criação está, para o operador acompanhar sem abrir o sensor.
+    waiting = ""
+    if gateway and sensor.wireless_associated and condition.level < pres.Level.ATTENTION:
+        if not sensor.has_data_plane or sensor.latest_telemetry is None:
+            waiting = data_channel.waiting_summary(sensor, node_events)
+    if waiting:
+        lines += hanging_lines([Text(waiting, style=palette.TEXT_MUTED)], width, indent=indent + 2)
+    elif condition.reasons:
         lines += hanging_lines([Text(condition.reasons[0], style=palette.TEXT_MUTED)], width, indent=indent + 2)
     else:
         metrics = _sensor_metric_segments(sensor)
@@ -566,11 +647,13 @@ class EquipmentList(StableOptionList):
 
     def show(self, state: AppState) -> None:
         width = self.prompt_width
+        gateway = state.connection_mode == ConnectionMode.GATEWAY_CAN
         items: list[tuple[str, Text]] = []
         for node_id, node in sorted(state.nodes.items()):
             items.append((f"node:{node_id:02d}", node_prompt(node, width)))
             for _child_id, sensor in sorted(node.sensors.items()):
-                items.append((f"sensor:{sensor.logical_id}", sensor_prompt(sensor, width)))
+                prompt = sensor_prompt(sensor, width, node_events=node.data_link_events, gateway=gateway)
+                items.append((f"sensor:{sensor.logical_id}", prompt))
         self.set_items(items)
 
 

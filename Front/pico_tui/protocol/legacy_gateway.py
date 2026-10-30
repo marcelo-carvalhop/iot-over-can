@@ -18,6 +18,7 @@ from pico_tui.core.events import (
     WirelessCandidateReceived,
     WirelessAssociationReceived,
     WirelessConfigReceived,
+    WirelessEventReceived,
     WirelessFailoverReceived,
     WirelessLinkReceived,
 )
@@ -81,6 +82,13 @@ class LegacyGatewayDecoder:
         r"auth_fail=(?P<auth>\d+)\s+replay=(?P<replay>\d+)\s+lost=(?P<lost>\d+)\s+"
         r"stream=(?P<stream>ON|OFF)\s+period_ms=(?P<period>\d+)"
         r"(?:\s+rtt_ms=(?P<rtt>-?[0-9.]+)\s+rtt_max_ms=(?P<rtt_max>-?[0-9.]+))?"
+    )
+    # Etapas da criação do canal de dados (v0.22); child=0 é um fato do módulo.
+    WIRELESS_EVENT = re.compile(
+        r"\[GW\]\s+WIRELESS_EVENT\s+node=(?P<node>\d+)\s+child=(?P<child>\d+)\s+"
+        r"event=(?P<event>[A-Z_]+)\s+reason=(?P<reason>[A-Z_]+)\s+count=(?P<count>\d+)\s+"
+        r"value=(?P<value>\d+)\s+stations=(?P<stations>\d+)\s+since_s=(?P<since>\d+)"
+        r"(?:\s+uuid=(?P<uuid>0x[0-9A-Fa-f]{16}))?"
     )
     WIRELESS_CONFIG = re.compile(
         r"\[GW\]\s+WIRELESS_CONFIG\s+node=(?P<node>\d+)\s+child=(?P<child>\d+)\s+"
@@ -253,6 +261,22 @@ class LegacyGatewayDecoder:
                     stream_period_ms=int(match.group("period")) or None,
                     rtt_ms=rtt if rtt >= 0 else None,
                     rtt_max_ms=rtt_max if rtt_max >= 0 else None,
+                )
+            )
+            return True
+        if match := self.WIRELESS_EVENT.search(line):
+            uuid = match.group("uuid")
+            await self.bus.publish(
+                WirelessEventReceived(
+                    parent_node_id=int(match.group("node")),
+                    child_id=int(match.group("child")),
+                    event=match.group("event").upper(),
+                    reason=match.group("reason").upper(),
+                    count=int(match.group("count")),
+                    value=int(match.group("value")),
+                    stations=int(match.group("stations")),
+                    since_s=int(match.group("since")),
+                    wireless_uuid=uuid.upper().replace("0X", "0x") if uuid else "",
                 )
             )
             return True

@@ -170,6 +170,11 @@ Screen {
     height: auto;
 }
 
+/* O que verificar na etapa em que a criação do canal de dados parou. */
+.channel-hint {
+    margin-top: 1;
+}
+
 /* Seções marcadas com .grow ocupam o espaço que sobra na coluna (só em telas largas). */
 .bp-wide .grow {
     height: 1fr;

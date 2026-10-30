@@ -108,6 +108,9 @@ struct Node {
   uint8_t tec = 0;
   uint32_t restarts = 0;
   uint8_t cpuBudgetPct = 100;  // fração de passos do loop atendidos (modelo)
+  // Sensores no ponto de acesso desta instância, para os eventos de estação.
+  ::SimInstance* stationsOf = nullptr;
+  std::vector<uint64_t> stations;
 };
 
 std::vector<Node> g_nodes;
@@ -874,6 +877,55 @@ Sensor& addSensor(uint64_t uuid, uint16_t port, uint8_t lastOctet) {
   return g_sensors.back();
 }
 
+// Endereço físico fictício e estável de cada sensor, derivado do UUID.
+void stationMac(uint64_t uuid, uint8_t mac[6]) {
+  mac[0] = 0x28;
+  for (int i = 1; i < 6; ++i) mac[i] = static_cast<uint8_t>(uuid >> (8 * (5 - i)));
+}
+
+// O driver Wi-Fi do ESP32 avisa quando uma estação entra, recebe endereço ou
+// sai do ponto de acesso; aqui o aviso sai quando o enlace de um sensor muda.
+void reportStations(Node& n, const std::vector<uint64_t>& now) {
+  if (n.stationsOf != n.inst) {   // instância nova (reinício): começa vazia
+    n.stationsOf = n.inst;
+    n.stations.clear();
+  }
+  uint8_t mac[6];
+  const uint8_t none[4] = {0, 0, 0, 0};
+  for (uint64_t uuid : n.stations) {
+    if (std::find(now.begin(), now.end(), uuid) != now.end()) continue;
+    stationMac(uuid, mac);
+    n.inst->wifiStationEvent(2, mac, none);
+  }
+  for (uint64_t uuid : now) {
+    if (std::find(n.stations.begin(), n.stations.end(), uuid) != n.stations.end()) continue;
+    stationMac(uuid, mac);
+    n.inst->wifiStationEvent(1, mac, none);
+    for (const Sensor& s : g_sensors) {
+      if (s.uuid == uuid) n.inst->wifiStationEvent(3, mac, s.ip);
+    }
+  }
+  n.stations = now;
+}
+
+// Antes de os sensores agirem no passo: no ESP32 a entrada da estação e o
+// endereço chegam antes do primeiro datagrama do sensor.
+void routeStations() {
+  for (Node& n : g_nodes) {
+    if (n.id == 0 || !n.powered || !n.inst) continue;
+    std::vector<uint64_t> joined;
+    int stationRssi = 0;
+    for (const Sensor& s : g_sensors) {
+      if (s.poweredOn && s.parent == n.id && s.linkUp()) {
+        joined.push_back(s.uuid);
+        stationRssi = s.rssi.at(n.id);
+      }
+    }
+    n.inst->wifiStations(static_cast<int>(joined.size()), stationRssi);
+    reportStations(n, joined);
+  }
+}
+
 void routeWifi() {
   for (Node& n : g_nodes) {
     if (n.id == 0 || !n.powered || !n.inst) continue;
@@ -1174,6 +1226,7 @@ void tick() {
   for (Node& n : g_nodes) {
     if (n.bootScheduled && g_now_us >= n.bootAtUs) powerOn(n);
   }
+  routeStations();
   for (Sensor& s : g_sensors) s.step();
   for (Node& n : g_nodes) {
     if (!n.powered || !n.inst) continue;

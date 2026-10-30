@@ -17,9 +17,7 @@
 #include <esp_system.h>
 #endif
 
-#ifdef ESP_PLATFORM
-#include <atomic>   // fila de eventos do Wi-Fi (só no hardware; ver diagnóstico)
-#endif
+#include <atomic>   // fila de eventos do ponto de acesso (ver diagnóstico)
 
 #include "can_ids.h"
 #include "net_metrics.h"
@@ -111,10 +109,28 @@ struct SensorConfig {
   float gain = 0.0f;
 };
 
+// Agrupamento de um fato repetido nos relatos de criação do canal de dados
+// (IOC_WD_KIND_LINK_EVENT): o primeiro sai na hora, os seguintes no máximo
+// uma vez por EVENT_REPEAT_MS, com a quantidade acumulada.
+struct EventGate {
+  uint8_t event = 0;     // 0 = livre
+  uint8_t reason = 0;
+  uint8_t value = 0;
+  uint16_t pending = 0;  // ocorrências ainda não relatadas
+  uint32_t lastMs = 0;   // último relato deste fato
+  // Distingue fatos do mesmo tipo: a estação (MAC ou endereço) ou o UUID de
+  // um sensor não associado. Só o UUID vai no relato (IOC_WD_EVR_NOT_BOUND).
+  uint64_t key = 0;
+};
+constexpr uint8_t EVENT_GATES = 3;
+
 struct Link {
   bool used = false;
   uint64_t uuid = 0;
   uint8_t childId = 0;
+  uint32_t boundMs = 0;        // instante do vínculo neste Node
+  bool offerReported = false;  // a oferta deste sensor já foi relatada nesta espera
+  EventGate gates[EVENT_GATES];
   // Perfil do sensor (0x01 vibração, 0x02 acústico), conhecido pelo HELLO da
   // sessão em vigor; 0 enquanto não houve sessão.
   uint8_t profile = 0;
@@ -224,6 +240,8 @@ bool radioOff = false;
 uint32_t lastApAttemptMs = 0;
 uint32_t txNextTransferAtMs = 0;
 bool offerAdvertising = false;
+uint32_t apUpMs = 0;
+EventGate nodeGates[EVENT_GATES];   // fatos do Node (filho 0)
 uint8_t offerCursor = 0;
 uint32_t lastOfferRotateMs = 0;
 WiFiUDP udp;
@@ -397,6 +415,137 @@ void publishConfig(const Link& link, uint8_t status) {
   queueTransfer(link.childId, IOC_WD_KIND_CONFIG, raw, sizeof(raw));
 }
 
+/* ----------------------------------- etapas da criação do canal de dados */
+
+// Relatos ao CAN do que acontece entre o vínculo e a sessão autenticada, para
+// a TUI mostrar em que etapa o sensor está e por que parou. Os mesmos fatos
+// saem na serial do Node como linhas [WLINK].
+constexpr uint32_t EVENT_REPEAT_MS = 5000;
+// Os relatos não tomam a fila dos dados: só entram com esta folga.
+constexpr uint8_t EVENT_QUEUE_RESERVE = 3;
+
+uint8_t apStationCount() {
+  if (!apRunning) return 0;
+  wifi_sta_list_t list;
+  memset(&list, 0, sizeof(list));
+  if (esp_wifi_ap_get_sta_list(&list) != ESP_OK || list.num <= 0) return 0;
+  return static_cast<uint8_t>(list.num);
+}
+
+uint16_t secondsSince(uint32_t originMs) {
+  const uint32_t s = (millis() - originMs) / 1000u;
+  return s > 0xFFFFu ? 0xFFFFu : static_cast<uint16_t>(s);
+}
+
+bool sendLinkEvent(uint8_t child, uint32_t originMs, uint8_t event, uint8_t reason, uint16_t count,
+                   uint8_t value, uint64_t uuid) {
+  if (txCount + EVENT_QUEUE_RESERVE > TX_QUEUE_LEN) return false;
+  ioc_wd_link_event ev;
+  ev.event = event;
+  ev.reason = reason;
+  ev.count = count;
+  ev.value = value;
+  ev.stations = apStationCount();
+  ev.since_s = secondsSince(originMs);
+  ev.uuid = uuid;
+  uint8_t raw[IOC_WD_LINK_EVENT_UUID_LEN];
+  const size_t len = ioc_wd_link_event_encode(&ev, raw);
+  return queueTransfer(child, IOC_WD_KIND_LINK_EVENT, raw, len);
+}
+
+void flushGate(uint8_t child, uint32_t originMs, EventGate& gate) {
+  if (gate.pending == 0) return;
+  if (!sendLinkEvent(child, originMs, gate.event, gate.reason, gate.pending, gate.value, gate.key)) return;
+  gate.pending = 0;
+  gate.lastMs = millis();
+}
+
+void flushGates(uint8_t child, uint32_t originMs, EventGate* gates, bool force) {
+  const uint32_t now = millis();
+  for (uint8_t i = 0; i < EVENT_GATES; ++i) {
+    if (gates[i].pending && (force || now - gates[i].lastMs >= EVENT_REPEAT_MS)) flushGate(child, originMs, gates[i]);
+  }
+}
+
+void noteRepeatable(uint8_t child, uint32_t originMs, EventGate* gates, uint8_t event, uint8_t reason,
+                    uint8_t value, uint64_t key) {
+  const uint32_t now = millis();
+  EventGate* gate = nullptr;
+  for (uint8_t i = 0; i < EVENT_GATES && !gate; ++i) {
+    if (gates[i].event == event && gates[i].reason == reason && gates[i].key == key) gate = &gates[i];
+  }
+  if (!gate) {
+    // Um fato novo ocupa um espaço livre ou o do fato relatado há mais tempo,
+    // depois de relatar o que este ainda tinha acumulado.
+    gate = &gates[0];
+    for (uint8_t i = 0; i < EVENT_GATES; ++i) {
+      if (gates[i].event == 0) {
+        gate = &gates[i];
+        break;
+      }
+      if (now - gates[i].lastMs > now - gate->lastMs) gate = &gates[i];
+    }
+    flushGate(child, originMs, *gate);
+    *gate = EventGate{};
+    gate->event = event;
+    gate->reason = reason;
+    gate->key = key;
+    gate->value = value;
+    if (sendLinkEvent(child, originMs, event, reason, 1, value, key)) {
+      gate->lastMs = now;
+    } else {
+      gate->pending = 1;                      // fila cheia: sai no próximo ciclo
+      gate->lastMs = now - EVENT_REPEAT_MS;
+    }
+    return;
+  }
+  gate->value = value;
+  if (gate->pending == 0 && now - gate->lastMs >= EVENT_REPEAT_MS &&
+      sendLinkEvent(child, originMs, event, reason, 1, value, key)) {
+    gate->lastMs = now;
+    return;
+  }
+  if (gate->pending < 0xFFFF) ++gate->pending;
+}
+
+// Fatos que ocorrem uma vez por etapa saem na hora, depois do que estava
+// agrupado, para chegarem na ordem em que aconteceram.
+void linkEvent(Link& link, uint8_t event, uint8_t reason = IOC_WD_EVR_NONE, uint8_t value = 0) {
+  flushGates(link.childId, link.boundMs, link.gates, true);
+  sendLinkEvent(link.childId, link.boundMs, event, reason, 1, value, 0);
+}
+
+void linkRepeatable(Link& link, uint8_t event, uint8_t reason, uint8_t value) {
+  noteRepeatable(link.childId, link.boundMs, link.gates, event, reason, value, 0);
+}
+
+void nodeEvent(uint8_t event, uint8_t reason = IOC_WD_EVR_NONE, uint8_t value = 0) {
+  flushGates(0, apUpMs, nodeGates, true);
+  sendLinkEvent(0, apUpMs, event, reason, 1, value, 0);
+}
+
+void nodeRepeatable(uint8_t event, uint8_t reason, uint8_t value, uint64_t key = 0) {
+  noteRepeatable(0, apUpMs, nodeGates, event, reason, value, key);
+}
+
+// Fato do ponto de acesso: vale para todo sensor associado; sem nenhum, é do Node.
+void apEvent(uint8_t event, uint8_t reason, uint8_t value) {
+  bool any = false;
+  for (uint8_t i = 0; i < MAX_LINKS; ++i) {
+    if (!links[i].used) continue;
+    any = true;
+    linkEvent(links[i], event, reason, value);
+  }
+  if (!any) nodeEvent(event, reason, value);
+}
+
+void flushLinkEvents() {
+  flushGates(0, apUpMs, nodeGates, false);
+  for (uint8_t i = 0; i < MAX_LINKS; ++i) {
+    if (links[i].used) flushGates(links[i].childId, links[i].boundMs, links[i].gates, false);
+  }
+}
+
 /* ------------------------------------------------------- rádio do Node */
 
 /* -------------------------------------------------------- diagnóstico */
@@ -432,10 +581,10 @@ void diagDatagram(const char* kind, const IPAddress& ip, uint16_t port, uint64_t
                 static_cast<unsigned>(port), static_cast<unsigned long long>(uuid), outcome);
 }
 
-#ifdef ESP_PLATFORM
-// Os eventos do ponto de acesso chegam na tarefa do driver Wi-Fi. São
-// guardados nesta fila (um produtor, um consumidor) e impressos pelo laço
-// principal, que é quem escreve na serial.
+// Os eventos do ponto de acesso chegam na tarefa do driver Wi-Fi (na bancada
+// virtual, do ambiente). São guardados nesta fila (um produtor, um
+// consumidor) e tratados pelo laço principal, que é quem escreve na serial e
+// no CAN.
 struct StationEvent {
   uint8_t kind;      // 1 conectada, 2 desconectada, 3 endereço atribuído
   uint8_t mac[6];
@@ -445,26 +594,12 @@ constexpr uint8_t STATION_EVENTS = 8;
 StationEvent stationEvents[STATION_EVENTS];
 std::atomic<uint8_t> stationHead{0};
 std::atomic<uint8_t> stationTail{0};
-bool stationEventsRegistered = false;
 
-void onWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
+void queueStationEvent(uint8_t kind, const uint8_t* mac, uint32_t ip) {
   StationEvent e{};
-  switch (event) {
-    case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
-      e.kind = 1;
-      memcpy(e.mac, info.wifi_ap_staconnected.mac, sizeof(e.mac));
-      break;
-    case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
-      e.kind = 2;
-      memcpy(e.mac, info.wifi_ap_stadisconnected.mac, sizeof(e.mac));
-      break;
-    case ARDUINO_EVENT_WIFI_AP_STAIPASSIGNED:
-      e.kind = 3;
-      e.ip = info.wifi_ap_staipassigned.ip.addr;
-      break;
-    default:
-      return;
-  }
+  e.kind = kind;
+  if (mac) memcpy(e.mac, mac, sizeof(e.mac));
+  e.ip = ip;
   const uint8_t head = stationHead.load(std::memory_order_relaxed);
   const uint8_t next = static_cast<uint8_t>((head + 1u) % STATION_EVENTS);
   if (next == stationTail.load(std::memory_order_acquire)) return;   // fila cheia: descarta
@@ -472,13 +607,37 @@ void onWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
   stationHead.store(next, std::memory_order_release);
 }
 
+#ifdef ESP_PLATFORM
+bool stationEventsRegistered = false;
+
+void onWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+      queueStationEvent(1, info.wifi_ap_staconnected.mac, 0);
+      break;
+    case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+      queueStationEvent(2, info.wifi_ap_stadisconnected.mac, 0);
+      break;
+    case ARDUINO_EVENT_WIFI_AP_STAIPASSIGNED:
+      queueStationEvent(3, nullptr, info.wifi_ap_staipassigned.ip.addr);
+      break;
+    default:
+      break;
+  }
+}
+
 void registerStationEvents() {
   if (stationEventsRegistered) return;
   WiFi.onEvent(onWiFiEvent);
   stationEventsRegistered = true;
 }
+#else
+void registerStationEvents() {}
+#endif
 
-void printStationEvents() {
+// O Node ainda não sabe qual sensor entrou: os fatos das estações são do
+// Node (filho 0) até o HELLO identificar o sensor.
+void handleStationEvents() {
   uint8_t tail = stationTail.load(std::memory_order_relaxed);
   while (tail != stationHead.load(std::memory_order_acquire)) {
     const StationEvent& e = stationEvents[tail];
@@ -486,19 +645,19 @@ void printStationEvents() {
       Serial.printf("[NODE %u] [WLINK] estacao recebeu ip=%u.%u.%u.%u\n", NODE_ID,
                     static_cast<unsigned>(e.ip & 0xFFu), static_cast<unsigned>((e.ip >> 8) & 0xFFu),
                     static_cast<unsigned>((e.ip >> 16) & 0xFFu), static_cast<unsigned>((e.ip >> 24) & 0xFFu));
+      nodeRepeatable(IOC_WD_EV_STATION_IP, IOC_WD_EVR_NONE, static_cast<uint8_t>((e.ip >> 24) & 0xFFu), e.ip);
     } else {
       Serial.printf("[NODE %u] [WLINK] estacao %s mac=%02X:%02X:%02X:%02X:%02X:%02X\n", NODE_ID,
                     e.kind == 1 ? "conectada" : "desconectada", e.mac[0], e.mac[1], e.mac[2], e.mac[3],
                     e.mac[4], e.mac[5]);
+      uint64_t mac = 0;
+      for (uint8_t i = 0; i < 6; ++i) mac = (mac << 8) | e.mac[i];
+      nodeRepeatable(e.kind == 1 ? IOC_WD_EV_STATION_JOIN : IOC_WD_EV_STATION_LEAVE, IOC_WD_EVR_NONE, 0, mac);
     }
     tail = static_cast<uint8_t>((tail + 1u) % STATION_EVENTS);
     stationTail.store(tail, std::memory_order_release);
   }
 }
-#else
-void registerStationEvents() {}
-void printStationEvents() {}
-#endif
 
 void startAccessPoint() {
   apStopPending = false; // um novo vínculo cancela o desligamento agendado
@@ -515,10 +674,13 @@ void startAccessPoint() {
   ioc_secure_zero(psk, sizeof(psk));
   if (!ok) {
     Serial.printf("[NODE %u] [WLINK] AP=ERROR\n", NODE_ID);
+    apEvent(IOC_WD_EV_AP_ERROR, IOC_WD_EVR_NONE, 0);
     return;
   }
   const bool listening = udp.begin(IOC_LINK_UDP_PORT);
   apRunning = true;
+  apUpMs = millis();
+  apEvent(IOC_WD_EV_AP_UP, IOC_WD_EVR_NONE, static_cast<uint8_t>(ioc_link_wifi_channel(NODE_ID)));
   char addr[16];
   formatIp(WiFi.softAPIP(), addr, sizeof(addr));
   Serial.printf("[NODE %u] [WLINK] AP=ON ssid=%s channel=%u ip=%s udp=%u%s\n", NODE_ID, ssid,
@@ -526,7 +688,7 @@ void startAccessPoint() {
                 static_cast<unsigned>(IOC_LINK_UDP_PORT), listening ? "" : " (falha ao abrir a porta)");
 }
 
-void stopAccessPoint() {
+void stopAccessPoint(uint8_t reason) {
   apStopPending = false;
   if (!apRunning) return;
   udp.stop();
@@ -534,6 +696,10 @@ void stopAccessPoint() {
   WiFi.mode(WIFI_OFF);
   apRunning = false;
   Serial.printf("[NODE %u] [WLINK] AP=OFF\n", NODE_ID);
+  apEvent(IOC_WD_EV_AP_DOWN, reason, 0);
+  // Sem ponto de acesso a oferta não vale; quando ele voltar, a oferta de
+  // cada sensor é relatada de novo.
+  for (uint8_t i = 0; i < MAX_LINKS; ++i) links[i].offerReported = false;
 }
 
 void stopOfferAdvertising() {
@@ -595,6 +761,12 @@ void updateOfferAdvertising() {
   adv->setAdvertisementData(data);
   offerAdvertising = adv->start();
   lastOfferRotateMs = now;
+  if (offerAdvertising && !target->offerReported) {
+    target->offerReported = true;
+    linkEvent(*target, IOC_WD_EV_OFFER, IOC_WD_EVR_NONE, offer.channel);
+  } else if (!offerAdvertising) {
+    linkRepeatable(*target, IOC_WD_EV_OFFER_ERROR, IOC_WD_EVR_NONE, offer.channel);
+  }
   if (target->uuid != diagOfferUuid || offerAdvertising != diagOfferOk) {
     diagOfferUuid = target->uuid;
     diagOfferOk = offerAdvertising;
@@ -660,6 +832,7 @@ void sendSimpleCommand(Link& link, uint8_t cmdType) {
 void dropSession(Link& link) {
   ioc_secure_zero(link.sessionKey, sizeof(link.sessionKey));
   link.secure = false;
+  link.offerReported = false;  // a próxima oferta deste sensor volta a ser relatada
   link.txCounter = 0;
   link.rxLastCounter = 0;
   link.peerPort = 0;
@@ -1170,6 +1343,7 @@ void handleHello(const uint8_t* datagram, size_t len, const ioc_env_view& view,
   ioc_hello_t hello;
   if (!ioc_hello_decode(view.payload, view.payload_len, &hello)) {
     diagDatagram("HELLO", ip, port, 0, "formato invalido", true);
+    nodeRepeatable(IOC_WD_EV_HELLO_REJECT, IOC_WD_EVR_FORMAT, ip[3]);
     return;
   }
 
@@ -1177,16 +1351,21 @@ void handleHello(const uint8_t* datagram, size_t len, const ioc_env_view& view,
   // HELLO de UUID desconhecido é ignorado sem resposta.
   Link* link = findLinkByUuid(hello.uuid);
   if (!link) {
+    // O sensor atendeu a oferta de outro Node, ou guardou um vínculo antigo:
+    // o relato leva o UUID para a TUI localizar o sensor.
     diagDatagram("HELLO", ip, port, hello.uuid, "sensor nao associado a este Node", true);
+    nodeRepeatable(IOC_WD_EV_HELLO_REJECT, IOC_WD_EVR_NOT_BOUND, ip[3], hello.uuid);
     return;
   }
   if (!ioc_env_verify(link->devKey, datagram, len)) {
     if (link->authFailures < 0xFFFF) ++link->authFailures;
     diagDatagram("HELLO", ip, port, hello.uuid, "chave nao confere", true);
+    linkRepeatable(*link, IOC_WD_EV_HELLO_REJECT, IOC_WD_EVR_KEY, ip[3]);
     return;
   }
   if (hello.protocol != IOC_LINK_VERSION) {
     diagDatagram("HELLO", ip, port, hello.uuid, "versao de protocolo diferente", true);
+    linkRepeatable(*link, IOC_WD_EV_HELLO_REJECT, IOC_WD_EVR_PROTOCOL, ip[3]);
     return;
   }
 
@@ -1200,12 +1379,14 @@ void handleHello(const uint8_t* datagram, size_t len, const ioc_env_view& view,
   if (link->secure && ioc_ct_equal(hello.sensor_nonce, link->sessionSensorNonce, IOC_LINK_NONCE_LEN)) {
     if (link->replayDrops < 0xFFFF) ++link->replayDrops;
     diagDatagram("HELLO", ip, port, hello.uuid, "repeticao do HELLO da sessao em vigor, ignorado", true);
+    linkRepeatable(*link, IOC_WD_EV_HELLO_REJECT, IOC_WD_EVR_REPLAY, ip[3]);
     return;
   }
   const bool sameHello = pending.active &&
                          ioc_ct_equal(hello.sensor_nonce, pending.sensorNonce, IOC_LINK_NONCE_LEN);
   if (pending.active && !sameHello && millis() - pending.startedMs < HELLO_GUARD_MS) {
     diagDatagram("HELLO", ip, port, hello.uuid, "autenticacao anterior em andamento, ignorado", true);
+    linkRepeatable(*link, IOC_WD_EV_HELLO_REJECT, IOC_WD_EVR_BUSY, ip[3]);
     return;
   }
 
@@ -1231,6 +1412,11 @@ void handleHello(const uint8_t* datagram, size_t len, const ioc_env_view& view,
   const bool sent = sendEnvelope(link->devKey, IOC_MSG_CHALLENGE, 0, raw, sizeof(raw), ip, port);
   diagDatagram("HELLO", ip, port, hello.uuid, sent ? "conferido, CHALLENGE enviado" : "conferido, falha ao enviar o CHALLENGE",
                false);
+  if (sent) {
+    linkRepeatable(*link, IOC_WD_EV_HELLO_OK, IOC_WD_EVR_NONE, ip[3]);
+  } else {
+    linkRepeatable(*link, IOC_WD_EV_HELLO_REJECT, IOC_WD_EVR_SEND, ip[3]);
+  }
   publishLink(*link);
 }
 
@@ -1272,6 +1458,7 @@ void promotePending(Link& link, const IPAddress& ip, uint16_t port, uint32_t cou
   if (!isPanel(link)) sendSimpleCommand(link, CMD_GET_CONFIG_MENU);
   Serial.printf("[NODE %u] [WLINK] child=%u uuid=0x%016llX SECURE\n", NODE_ID,
                 static_cast<unsigned>(link.childId), static_cast<unsigned long long>(link.uuid));
+  linkEvent(link, IOC_WD_EV_SESSION_UP, IOC_WD_EVR_NONE, ip[3]);
   publishLink(link, true);
 }
 
@@ -1370,6 +1557,11 @@ void maintainLinks() {
     if (link.pending.active && now - link.pending.startedMs > HANDSHAKE_TIMEOUT_MS) {
       ioc_secure_zero(link.pending.sessionKey, IOC_LINK_KEY_LEN);
       link.pending.active = false;
+      // O CHALLENGE saiu e o CONFIRM não voltou: o sensor não o recebeu, ou a
+      // resposta se perdeu no rádio. O sensor repete o HELLO.
+      Serial.printf("[NODE %u] [WLINK] child=%u CHALLENGE sem resposta em %lu ms\n", NODE_ID,
+                    static_cast<unsigned>(link.childId), static_cast<unsigned long>(HANDSHAKE_TIMEOUT_MS));
+      linkRepeatable(link, IOC_WD_EV_HANDSHAKE_TIMEOUT, IOC_WD_EVR_NONE, link.pending.peerIp[3]);
     }
 
     if (link.panelAsleep && !link.secure && static_cast<int32_t>(now - link.panelPresentUntilMs) > 0) {
@@ -1381,6 +1573,7 @@ void maintainLinks() {
         Serial.printf("[NODE %u] [WLINK] child=%u sessao %s\n", NODE_ID,
                       static_cast<unsigned>(link.childId), link.panelAsleep ? "encerrada (painel dormindo)" : "expirada");
         dropSession(link);
+        linkEvent(link, IOC_WD_EV_SESSION_DOWN, link.panelAsleep ? IOC_WD_EVR_SLEEP : IOC_WD_EVR_TIMEOUT);
         updatePanelMailbox();
         publishLink(link, true);
       } else if (now - link.lastPingMs >= PING_INTERVAL_MS) {
@@ -1946,6 +2139,20 @@ void probeHandleTransfer(uint8_t node, const ioc_wd_rx_slot& slot) {
       }
       break;
     }
+    case IOC_WD_KIND_LINK_EVENT: {
+      ioc_wd_link_event ev;
+      if (ioc_wd_link_event_decode(slot.data, slot.total_len, &ev)) {
+        char uuid[32] = "";
+        if (ev.uuid) snprintf(uuid, sizeof(uuid), " uuid=0x%016llX", static_cast<unsigned long long>(ev.uuid));
+        Serial.printf("[GW] WIRELESS_EVENT node=%u child=%u event=%s reason=%s count=%u value=%u stations=%u "
+                      "since_s=%u%s\n",
+                      static_cast<unsigned>(node), static_cast<unsigned>(child), ioc_wd_event_name(ev.event),
+                      ioc_wd_event_reason_name(ev.reason), static_cast<unsigned>(ev.count),
+                      static_cast<unsigned>(ev.value), static_cast<unsigned>(ev.stations),
+                      static_cast<unsigned>(ev.since_s), uuid);
+      }
+      break;
+    }
     case IOC_WD_KIND_CONFIG: {
       ioc_wd_config cfg;
       if (ioc_wd_config_decode(slot.data, slot.total_len, &cfg)) {
@@ -2206,12 +2413,19 @@ void wirelessLinkOnBound(uint64_t uuid, uint8_t childId) {
   link->used = true;
   link->uuid = uuid;
   link->childId = childId;
+  link->boundMs = millis();
   if (haveKey) {
     ioc_link_derive_device_key(masterKey, uuid, link->devKey);
     uint32_t seed;
     fillRandom(reinterpret_cast<uint8_t*>(&seed), sizeof(seed));
     link->offerNonce = seed;
+    // Com o ponto de acesso já no ar (outro sensor associado), o relato de
+    // que ele está pronto vai só para este sensor.
+    const bool alreadyUp = apRunning;
     startAccessPoint();
+    if (alreadyUp) linkEvent(*link, IOC_WD_EV_AP_UP, IOC_WD_EVR_NONE, ioc_link_wifi_channel(NODE_ID));
+  } else {
+    linkEvent(*link, IOC_WD_EV_NO_KEY);
   }
   publishLink(*link, true);
 }
@@ -2267,6 +2481,11 @@ bool canSend(const CANMessage& msg) {
   return true;
 }
 
+void wirelessLinkStationEvent(uint8_t kind, const uint8_t* mac, uint32_t ip) {
+  if (NODE_ID == 0 || kind < 1 || kind > 3) return;
+  queueStationEvent(kind, mac, ip);
+}
+
 bool wirelessLinkIsSecure(uint64_t uuid) {
   if (NODE_ID == 0) return false;
   const Link* link = findLinkByUuid(uuid);
@@ -2288,6 +2507,7 @@ void wirelessLinkInjectDropSessions() {
     Serial.printf("[NODE %u] [WLINK] child=%u sessao descartada (ensaio)\n", NODE_ID,
                   static_cast<unsigned>(link.childId));
     dropSession(link);
+    linkEvent(link, IOC_WD_EV_SESSION_DOWN, IOC_WD_EVR_TEST);
     publishLink(link, true);
   }
 }
@@ -2303,7 +2523,7 @@ void wirelessLinkInjectApOutage(uint32_t durationMs) {
   }
   wirelessLinkInjectDropSessions();
   stopOfferAdvertising();
-  stopAccessPoint();
+  stopAccessPoint(IOC_WD_EVR_TEST);
   apOutageActive = true;
   apOutageStartMs = millis();
   apOutageDurationMs = durationMs;
@@ -2312,10 +2532,13 @@ void wirelessLinkInjectApOutage(uint32_t durationMs) {
 void wirelessLinkRadioOff() {
   if (NODE_ID == 0) return;
   for (uint8_t i = 0; i < MAX_LINKS; ++i) {
-    if (links[i].used && links[i].secure) dropSession(links[i]);
+    if (links[i].used && links[i].secure) {
+      dropSession(links[i]);
+      linkEvent(links[i], IOC_WD_EV_SESSION_DOWN, IOC_WD_EVR_RADIO_OFF);
+    }
   }
   stopOfferAdvertising();
-  stopAccessPoint();
+  stopAccessPoint(IOC_WD_EVR_RADIO_OFF);
   radioOff = true;
 }
 
@@ -2330,16 +2553,17 @@ void wirelessLinkPoll() {
       millis() - lastApAttemptMs >= AP_RETRY_MS) {
     startAccessPoint();
   }
-  printStationEvents();
+  handleStationEvents();
   receiveDatagrams();
   maintainLinks();
   for (uint8_t i = 0; i < MAX_LINKS; ++i) {
     if (links[i].used) tapFlush(links[i], false);
   }
   updateOfferAdvertising();
+  flushLinkEvents();
   drainTxQueue();
   if (apStopPending && static_cast<int32_t>(millis() - apStopAtMs) >= 0) {
-    if (usedLinkCount() == 0) stopAccessPoint();
+    if (usedLinkCount() == 0) stopAccessPoint(IOC_WD_EVR_IDLE);
     apStopPending = false;
   }
 }

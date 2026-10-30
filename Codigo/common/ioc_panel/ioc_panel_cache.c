@@ -40,7 +40,11 @@ ioc_pclass ioc_pcache_classify(uint16_t id, const uint8_t *data, uint8_t len, ui
         cls = IOC_PCLASS_STATE;
         k = len > 1 ? data[1] : 0;
     } else if (is_data(id)) {
-        cls = (len == 8 && (data[0] & 0x1Fu) != IOC_WD_KIND_SPECTRUM) ? IOC_PCLASS_XFER : IOC_PCLASS_DROP;
+        /* Espectro é volumoso demais para o painel; as etapas da criação do
+           canal de dados são diagnóstico para a TUI e não estado de página. */
+        const uint8_t kind = len > 0 ? (uint8_t)(data[0] & 0x1Fu) : 0u;
+        cls = (len == 8 && kind != IOC_WD_KIND_SPECTRUM && kind != IOC_WD_KIND_LINK_EVENT) ? IOC_PCLASS_XFER
+                                                                                       : IOC_PCLASS_DROP;
     }
     if (key) *key = k;
     return cls;

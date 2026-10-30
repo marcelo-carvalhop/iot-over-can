@@ -124,11 +124,30 @@ async def test_election_requires_confirmation_and_sends_frame(prefs_file) -> Non
         await pilot.press("n")
         await settle(pilot, 2)
         assert "22 00 FF 01" not in (app.state_store.snapshot().last_action or "")
+        assert isinstance(app.screen, CommandScreen)  # desistiu: a tela de comandos continua aberta
         await pilot.press("enter")
         await settle(pilot, 2)
         await pilot.press("s")
         await settle(pilot, 3)
         assert "22 00 FF 01" in app.state_store.snapshot().last_action
+        # Confirmada, a ação fecha a tela de comandos e devolve a tela inicial.
+        assert isinstance(app.screen, HomeScreen)
+
+
+async def test_command_from_sensor_screen_returns_to_the_sensor(prefs_file) -> None:
+    app = demo_app(prefs_file)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot, 5)
+        app.open_target("sensor:20.02")
+        await settle(pilot, 3)
+        await pilot.press("c")
+        await settle(pilot, 3)
+        actions = app.screen.query_one("#cmd-actions")
+        actions.highlighted = actions._ids.index("sensor.status")
+        await pilot.press("enter")
+        await settle(pilot, 3)
+        assert isinstance(app.screen, SensorScreen) and app.screen.logical_id == "20.02"
+        assert "sensor 20.02" in app.state_store.snapshot().last_action
 
 
 async def test_liveness_parameter_uses_firmware_mapping(prefs_file) -> None:

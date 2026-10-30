@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from pico_tui import commands
+from pico_tui import commands, data_channel
 from pico_tui.command_catalog import actions_for
 from pico_tui.core.event_bus import EventBus
 from pico_tui.core.events import (
@@ -33,6 +33,7 @@ from pico_tui.core.events import (
     SpectrumReceived,
     TelemetryReceived,
     WirelessConfigReceived,
+    WirelessEventReceived,
     WirelessLinkReceived,
 )
 from pico_tui.core.models import SensorMode, SensorNode
@@ -229,6 +230,7 @@ def _new_domain() -> tuple[EventBus, StateStore, DecoderRouter, dict[type, list]
     seen: dict[type, list] = {}
     for event_type in (
         TelemetryReceived, SpectrumReceived, CommandAck, DtcReceived, WirelessLinkReceived, WirelessConfigReceived,
+        WirelessEventReceived,
     ):
         seen[event_type] = []
 
@@ -337,9 +339,15 @@ def test_end_to_end_probe_output_drives_tui_state(probe_lines: list[str]) -> Non
 
         secure_seen = False
         checked_config = False
+        stages_before_secure: list[str] = []
         for line in probe_lines:
             await router.decode(line)
-            sensor = state.snapshot().nodes[1].sensors[1]
+            snapshot = state.snapshot()
+            sensor = snapshot.nodes[1].sensors[1]
+            if "event=SESSION_UP" in line and not secure_seen:
+                # Etapas relatadas pelo Node (v0.22) até a sessão, antes mesmo do WIRELESS_LINK SECURE.
+                view = data_channel.channel_view(sensor, snapshot.nodes[1].data_link_events)
+                stages_before_secure = [stage.state for stage in view.stages]
             if "state=SECURE" in line and not secure_seen:
                 secure_seen = True
                 assert sensor.has_data_plane
@@ -352,6 +360,14 @@ def test_end_to_end_probe_output_drives_tui_state(probe_lines: list[str]) -> Non
                 assert cfg.stalta_threshold == 3.5 and cfg.calibration_gain == 1.25
                 assert cfg.transaction_state == "APPLIED"
         assert secure_seen and checked_config
+        assert stages_before_secure == ["done"] * 6 + ["current"]   # falta só a primeira leitura
+        events = [(e.child_id, e.event, e.reason) for e in seen[WirelessEventReceived]]
+        assert events[:2] == [(1, "AP_UP", "NONE"), (1, "OFFER", "NONE")]
+        assert (0, "STATION_JOIN", "NONE") in events and (1, "HELLO_OK", "NONE") in events
+        assert (1, "HELLO_REJECT", "KEY") in events                  # o intruso com outra chave
+        assert (1, "SESSION_DOWN", "TIMEOUT") in events
+        stranger = [e for e in seen[WirelessEventReceived] if e.reason == "NOT_BOUND"]
+        assert stranger and stranger[0].wireless_uuid == "0xE6616408432B0FFF"
 
         # Telemetria com os valores enviados pelo sensor simulado.
         samples = [event.sample for event in seen[TelemetryReceived]]
@@ -389,7 +405,7 @@ def test_end_to_end_probe_output_drives_tui_state(probe_lines: list[str]) -> Non
 
         # DTC urgente e estatísticas de segurança.
         assert [(e.parent_node_id, e.child_id, e.record.code) for e in seen[DtcReceived]] == [(1, 1, 0x2002)]
-        links = seen[WirelessLinkReceived]
+        links = [event for event in seen[WirelessLinkReceived] if event.child_id == 1]
         assert max(event.auth_failures for event in links) == 2
         assert max(event.replay_drops for event in links) == 1
         assert links[-1].state == "DOWN"

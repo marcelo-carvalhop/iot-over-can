@@ -53,6 +53,8 @@ class SimInstance {
   /* Ponto de acesso Wi-Fi e datagramas UDP. */
   virtual bool apInfo(std::string& ssid, std::string& psk, int& channel) const = 0;
   virtual void wifiStations(int count, int rssi) = 0;
+  /* Estação entrou (1), saiu (2) ou recebeu endereço (3) no ponto de acesso. */
+  virtual void wifiStationEvent(int kind, const uint8_t mac[6], const uint8_t ip[4]) = 0;
   virtual void udpDeliver(const SimDatagram& datagram) = 0;
   virtual bool udpTake(SimDatagram& datagram) = 0;
 

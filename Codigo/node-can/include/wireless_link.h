@@ -18,7 +18,7 @@
  * Probe 00 (NODE_ID == 0)
  *   - converte "CMD TARGET=NN.CC ACTION=..." em quadros de comando;
  *   - remonta as transferências dos Nodes e emite as linhas TEL, FRAG, DTC,
- *     ACK e WIRELESS_LINK/WIRELESS_CONFIG para a TUI.
+ *     ACK e WIRELESS_LINK/WIRELESS_CONFIG/WIRELESS_EVENT para a TUI.
  */
 
 void wirelessLinkInit();
@@ -32,6 +32,13 @@ void wirelessLinkOnUnbound(uint64_t uuid, uint8_t childId);
 
 /* true quando o Node possui a chave de enlace e pode oferecer o plano de dados. */
 bool wirelessLinkHasKey();
+
+/*
+ * Fato do ponto de acesso: 1 estação entrou, 2 saiu, 3 recebeu endereço (ip
+ * em ordem de rede; mac pode ser nulo). No ESP32 vem da tarefa do driver
+ * Wi-Fi; na bancada virtual, do ambiente. Pode ser chamado de outra tarefa.
+ */
+void wirelessLinkStationEvent(uint8_t kind, const uint8_t* mac, uint32_t ip);
 
 /* true quando há sessão de dados autenticada com o sensor. */
 bool wirelessLinkIsSecure(uint64_t uuid);

@@ -383,6 +383,26 @@ static void test_codecs(void) {
     CHECK(cfg2.window_size == 512 && cfg2.stalta == 4.0f && cfg2.status == 1 && cfg2.profile == 0x02);
     /* Node da v0.18: 21 bytes, sem perfil. */
     CHECK(ioc_wd_config_decode(buf, IOC_WD_CONFIG_LEN_V018, &cfg2) && cfg2.profile == 0 && cfg2.gain == 1.0f);
+
+    /* Etapas do canal de dados (v0.22): 8 bytes; 16 com o UUID de um sensor não associado. */
+    ioc_wd_link_event ev = {IOC_WD_EV_HELLO_REJECT, IOC_WD_EVR_KEY, 3, 0, 1, 42, 0}, ev2;
+    CHECK(ioc_wd_link_event_encode(&ev, buf) == IOC_WD_LINK_EVENT_LEN);
+    CHECK(ioc_wd_link_event_decode(buf, IOC_WD_LINK_EVENT_LEN, &ev2));
+    CHECK(ev2.event == IOC_WD_EV_HELLO_REJECT && ev2.reason == IOC_WD_EVR_KEY && ev2.count == 3);
+    CHECK(ev2.stations == 1 && ev2.since_s == 42 && ev2.uuid == 0);
+    CHECK(ioc_wd_segment_count(IOC_WD_LINK_EVENT_LEN) == 2);
+    ev.reason = IOC_WD_EVR_NOT_BOUND;
+    ev.uuid = 0x504304EA43858428ULL;
+    CHECK(ioc_wd_link_event_encode(&ev, buf) == IOC_WD_LINK_EVENT_UUID_LEN);
+    CHECK(ioc_wd_link_event_decode(buf, IOC_WD_LINK_EVENT_UUID_LEN, &ev2) && ev2.uuid == 0x504304EA43858428ULL);
+    CHECK(!ioc_wd_link_event_decode(buf, IOC_WD_LINK_EVENT_LEN + 1, &ev2));
+    buf[0] = 0; /* evento 0 não existe */
+    CHECK(!ioc_wd_link_event_decode(buf, IOC_WD_LINK_EVENT_LEN, &ev2));
+    CHECK(strcmp(ioc_wd_event_name(IOC_WD_EV_SESSION_DOWN), "SESSION_DOWN") == 0);
+    CHECK(strcmp(ioc_wd_event_name(200), "UNKNOWN") == 0);
+    CHECK(strcmp(ioc_wd_event_reason_name(IOC_WD_EVR_IDLE), "IDLE") == 0);
+    CHECK(strcmp(ioc_wd_event_reason_name(IOC_WD_EVR_NONE), "NONE") == 0);
+    CHECK(strcmp(ioc_wd_event_reason_name(99), "UNKNOWN") == 0);
     CHECK(!ioc_wd_config_decode(buf, IOC_WD_CONFIG_LEN + 1, &cfg2));
 
     /* Relatório acústico: 108 bytes em 19 quadros, sentinela de nível preservada. */
