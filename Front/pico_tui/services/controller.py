@@ -3,6 +3,7 @@ from __future__ import annotations
 import struct
 import time
 
+from pico_tui import data_channel
 from pico_tui.acoustics import event_label
 from pico_tui.core.event_bus import EventBus
 from pico_tui.core.events import (
@@ -33,6 +34,7 @@ from pico_tui.core.events import (
     WirelessAssociationReceived,
     WirelessCandidateReceived,
     WirelessConfigReceived,
+    WirelessEventReceived,
     WirelessFailoverReceived,
     WirelessLinkReceived,
 )
@@ -42,6 +44,7 @@ from pico_tui.core.models import (
     AcquisitionMode,
     CanFrameRecord,
     ConnectionState,
+    DataLinkEvent,
     DataQuality,
     DtcRecord,
     NodeStatus,
@@ -87,6 +90,7 @@ class DomainController:
             (WirelessCandidateReceived, self._wireless_candidate),
             (WirelessAssociationReceived, self._wireless_association),
             (WirelessLinkReceived, self._wireless_link),
+            (WirelessEventReceived, self._wireless_event),
             (WirelessFailoverReceived, self._wireless_failover),
             (BusStatsReceived, self._bus_stats),
             (WirelessConfigReceived, self._wireless_config),
@@ -301,6 +305,10 @@ class DomainController:
             failover_policy=policy,
             status=status_map.get(state, NodeStatus.UNKNOWN),
         )
+        if state in {"BOUND", "ONLINE"} and not sensor.data_link_bound_wall:
+            # Sem relato do módulo (firmware anterior à v0.22), o vínculo
+            # conta de quando a TUI o viu.
+            self.state.update_sensor(event.parent_node_id, event.child_id, data_link_bound_wall=time.time())
         if previous_assoc != state:
             await self.bus.publish(
                 LogEvent(
@@ -337,6 +345,7 @@ class DomainController:
             data_link_lost_datagrams=event.lost_datagrams,
             data_link_rtt_ms=event.rtt_ms,
             data_link_rtt_max_ms=event.rtt_max_ms,
+            data_link_state_wall=time.time(),
         )
         self.state.update_sensor_health(
             event.parent_node_id,
@@ -386,6 +395,61 @@ class DomainController:
                 key="link:rejected",
             )
             await self.bus.publish(LogEvent("WARNING", f"{ident}: {message}", "SECURITY"))
+
+    async def _wireless_event(self, event: WirelessEventReceived) -> None:
+        """Etapa da criação do canal de dados: guarda para a tela do sensor e registra."""
+
+        record = DataLinkEvent(
+            event=event.event,
+            reason=event.reason,
+            count=event.count,
+            value=event.value,
+            stations=event.stations,
+            since_s=event.since_s,
+            parent_node_id=event.parent_node_id,
+            node_level=event.child_id == 0,
+            wireless_uuid=event.wireless_uuid,
+        )
+        text = data_channel.event_text(record)
+        level = data_channel.event_level(record)
+        module = f"Módulo {event.parent_node_id:02d}"
+        if event.child_id > 0:
+            if not self.state.add_data_link_event(event.parent_node_id, event.child_id, record):
+                return
+            await self.bus.publish(LogEvent(level, f"{event.parent_node_id:02d}.{event.child_id:02d}: {text}", "LINK"))
+            return
+
+        if event.reason == "NOT_BOUND" and event.wireless_uuid:
+            # Um sensor chamou um módulo que não o tem associado. Se a TUI o
+            # conhece associado a outro módulo, o fato vai para a tela dele.
+            owner = self.state.find_sensor_by_uuid(event.wireless_uuid)
+            if owner is not None:
+                parent_id, child_id = owner
+                copy = DataLinkEvent(
+                    event=record.event,
+                    reason=record.reason,
+                    count=record.count,
+                    value=record.value,
+                    stations=record.stations,
+                    since_s=record.since_s,
+                    parent_node_id=event.parent_node_id,
+                    wireless_uuid=event.wireless_uuid,
+                )
+                self.state.add_data_link_event(parent_id, child_id, copy)
+                where = f"; o sensor {parent_id:02d}.{child_id:02d} está associado ao Módulo {parent_id:02d}"
+            else:
+                where = ""
+            count = f" ({event.count} vezes)" if event.count > 1 else ""
+            await self.bus.publish(
+                LogEvent(
+                    "WARNING",
+                    f"{module}: HELLO de {event.wireless_uuid}, que não está associado a ele{count}{where}",
+                    "LINK",
+                )
+            )
+            return
+        self.state.add_node_data_link_event(event.parent_node_id, record)
+        await self.bus.publish(LogEvent(level, f"{module}: {text}", "LINK"))
 
     async def _bus_stats(self, event: BusStatsReceived) -> None:
         """Medição da Probe 00: ocupação e estado de erro do barramento."""

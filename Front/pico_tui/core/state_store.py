@@ -12,6 +12,7 @@ from pico_tui.core.models import (
     CanFrameRecord,
     ConnectionMode,
     ConnectionState,
+    DataLinkEvent,
     DtcRecord,
     Incident,
     NodeStatus,
@@ -418,6 +419,42 @@ class StateStore:
         with self._lock:
             transitions, self._alarm_transitions = self._alarm_transitions, []
             return transitions
+
+    def add_data_link_event(self, parent_node_id: int, child_id: int, event: DataLinkEvent) -> bool:
+        """Guarda uma etapa do canal de dados de um sensor existente; False se ele não existe.
+
+        Como WIRELESS_LINK, o relato não cria o sensor: um relato atrasado
+        depois do UNBOUND não deve ressuscitar o filho.
+        """
+
+        with self._lock:
+            node = self._state.nodes.get(parent_node_id)
+            sensor = node.sensors.get(child_id) if node else None
+            if sensor is None:
+                return False
+            first = not any(not item.node_level for item in sensor.data_link_events)
+            sensor.data_link_events.append(event)
+            if not event.node_level:
+                # O módulo conta o tempo desde o vínculo; daí sai o instante
+                # dele, mais exato que o momento em que a TUI viu o BOUND.
+                bound = event.received_wall_time - event.since_s
+                if first or bound > sensor.data_link_bound_wall + 5.0:
+                    sensor.data_link_bound_wall = bound
+            return True
+
+    def add_node_data_link_event(self, parent_node_id: int, event: DataLinkEvent) -> None:
+        with self._lock:
+            node = self.ensure_node(parent_node_id)
+            node.data_link_events.append(event)
+
+    def find_sensor_by_uuid(self, wireless_uuid: str) -> tuple[int, int] | None:
+        wanted = wireless_uuid.lower()
+        with self._lock:
+            for parent_id, node in self._state.nodes.items():
+                for child_id, sensor in node.sensors.items():
+                    if sensor.wireless_uuid and sensor.wireless_uuid.lower() == wanted:
+                        return parent_id, child_id
+        return None
 
     def add_acoustic_event(self, parent_node_id: int, child_id: int, event: AcousticEvent) -> None:
         with self._lock:

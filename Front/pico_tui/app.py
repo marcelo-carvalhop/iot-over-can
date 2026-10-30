@@ -2150,15 +2150,27 @@ class PicoTuiApp(App[None]):
             )
             self.notify("Desassociação solicitada; aguardando UNBOUND do módulo.", timeout=4)
 
-    def start_action(self, action_key: str, target: str, value: str | None = None) -> None:
-        """Executa uma ação do catálogo, pedindo parâmetro e confirmação se preciso."""
+    def start_action(
+        self,
+        action_key: str,
+        target: str,
+        value: str | None = None,
+        *,
+        close: Screen | None = None,
+    ) -> None:
+        """Executa uma ação do catálogo, pedindo parâmetro e confirmação se preciso.
+
+        ``close`` é a tela que pediu a ação (a de comandos): ela é fechada assim
+        que o operador aceita o parâmetro e a confirmação, antes do envio. Se ele
+        desistir num dos diálogos, ela continua aberta.
+        """
 
         if self._action_running:
             self.notify("Aguarde a ação anterior terminar.", severity="warning", timeout=3)
             return
-        self.run_worker(self._action_flow(action_key, target, value), group="command-flow")
+        self.run_worker(self._action_flow(action_key, target, value, close), group="command-flow")
 
-    async def _action_flow(self, action_key: str, target: str, value: str | None) -> None:
+    async def _action_flow(self, action_key: str, target: str, value: str | None, close: Screen | None = None) -> None:
         action = ACTIONS_BY_KEY.get(action_key)
         if action is None:
             return
@@ -2175,6 +2187,9 @@ class PicoTuiApp(App[None]):
                 )
                 if not confirmed:
                     return
+            if close is not None and self.screen is close:
+                self.pop_screen()
+                self.notify(f"{action.title}: {target_label}", title="Comando", timeout=3)
             await self.execute_action(action_key, target, value)
         finally:
             self._action_running = False

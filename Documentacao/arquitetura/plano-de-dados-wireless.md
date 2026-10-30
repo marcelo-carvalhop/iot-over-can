@@ -217,6 +217,30 @@ ACK COMMAND=CONFIG STATE=APPLIED TX=A1B2C3 NODE=1 CHILD=1 DETAIL=1
 
 Na TUI, o sensor associado ganha o campo `data_link_state` (`NONE`, `DOWN`, `OFFERING`, `HANDSHAKE`, `SECURE`, `NO_KEY`). Telemetria, FFT e configuração só são oferecidas em `SECURE`. Queda de sessão e crescimento dos contadores de rejeição geram intercorrências (`ENLACE`, `SEGURANCA`).
 
+### Acompanhamento da criação do canal (v0.22)
+
+O estado do enlace diz onde a criação está, mas não por que ela parou. Desde a v0.22 o Node relata cada fato entre o vínculo e a sessão (transferência do tipo `10`, linha `[GW] WIRELESS_EVENT`; formato em [`protocolo.md`](../protocolo/protocolo.md)): ponto de acesso no ar, oferta anunciada, estação que entra no ponto de acesso e recebe endereço, HELLO conferido ou recusado (com o motivo), CHALLENGE sem resposta, sessão aberta ou encerrada (com o motivo). O Node agrupa os fatos repetidos, no máximo um relato a cada 5 s por fato, e não deixa os relatos ocuparem a fila da telemetria.
+
+A tela do sensor mostra a seção **Criação do canal de dados** enquanto o canal não está completo:
+
+```text
+● Vínculo confirmado pelo módulo          10:33:24
+● Ponto de acesso Wi-Fi do módulo no ar   10:33:24 +0 s  canal 6
+● Oferta anunciada por BLE                10:33:24 +0 s  canal 6
+▶ Sensor na rede Wi-Fi do módulo          aguardando há 2 min 10 s
+○ HELLO do sensor conferido
+○ Sessão autenticada
+○ Primeira leitura no CAN
+
+O que verificar: o Módulo 01 anuncia a oferta, mas o sensor ainda não entrou na rede IOC-01 ...
+```
+
+com a etapa em espera e há quanto tempo, a etapa que falhou e o motivo, o que verificar e os últimos relatos do módulo. Na tela inicial, o sensor associado que ainda não tem canal mostra uma linha com a etapa atual. Os relatos também vão para Mensagens (origem `LINK`); as recusas que não indicam problema (`REPLAY`, `BUSY`) ficam no nível de depuração.
+
+Um HELLO recusado com `NOT_BOUND` vem de um sensor que chamou um módulo que não o tem associado. Se a TUI conhece o sensor associado a outro módulo, o fato aparece na tela dele: o sensor guardou um vínculo antigo ou atendeu a oferta errada.
+
+Com um Node de firmware anterior, sem relatos, as etapas são deduzidas do estado do enlace. O estado do enlace não informa o ponto de acesso (continua `OFFERING` durante uma queda do AP), por isso uma queda relatada não é desfeita por ele.
+
 O Node republica o estado da associação a cada 10 s, de modo que uma TUI aberta depois do `BIND` reconstrói a topologia.
 
 ## 8. Modelo de ameaças
@@ -253,6 +277,7 @@ Limites conhecidos:
 | Script de provisionamento | chaves derivadas, permissões, ausência de segredos na saída | idem |
 | Simulação sensor ↔ Node ↔ Probe | código real de `wireless_link.cpp` com rádio, UDP e CAN substituídos; sessão, telemetria, espectro, limite de ocupação do buffer CAN, configuração, CONFIRM e menu perdidos, ataques, expiração e desassociação | `Codigo/node-can/test/host/` |
 | Ponta a ponta até a TUI | a saída da Probe simulada alimenta o decodificador e o domínio reais da TUI | `Front/tests/test_wireless_data_plane_v017.py` |
+| Etapas da criação do canal | relatos do Node (agrupamento, `NOT_BOUND` com UUID), etapas e dicas na TUI, dedução pelo estado do enlace | `sim_wireless_link.cpp`, `Front/tests/test_data_channel_v022.py` |
 
 ```bash
 ./Codigo/scripts/test_native_firmware.sh

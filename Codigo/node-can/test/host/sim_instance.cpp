@@ -17,6 +17,7 @@ extern NodeState state;
 extern uint8_t leaderId;
 void setup();
 void loop();
+void wirelessLinkStationEvent(uint8_t kind, const uint8_t* mac, uint32_t ip);
 
 /* Objetos que o núcleo Arduino forneceria. */
 HostSerial Serial;
@@ -151,6 +152,12 @@ class Instance : public ::SimInstance {
   void wifiStations(int count, int rssi) override {
     g_station_count = count;
     g_station_rssi = rssi;
+  }
+  void wifiStationEvent(int kind, const uint8_t mac[6], const uint8_t ip[4]) override {
+    // Ordem de rede, como lwIP entrega no ESP32.
+    const uint32_t addr = static_cast<uint32_t>(ip[0]) | (static_cast<uint32_t>(ip[1]) << 8) |
+                          (static_cast<uint32_t>(ip[2]) << 16) | (static_cast<uint32_t>(ip[3]) << 24);
+    wirelessLinkStationEvent(static_cast<uint8_t>(kind), mac, addr);
   }
   void udpDeliver(const ::SimDatagram& datagram) override {
     HostDatagram d;

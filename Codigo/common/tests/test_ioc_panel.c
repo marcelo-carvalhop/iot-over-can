@@ -198,6 +198,12 @@ static void test_cache_and_view(void) {
 
     CHECK(ioc_pcache_forward_live(0x010, (const uint8_t *)"\0\0\0\0\0\0\0\0", 8) == 0);
     CHECK(ioc_pcache_forward_live(0x100, (const uint8_t *)"\1\3\0\0\0", 5) == 1);
+    {   /* etapas do canal de dados (v0.22): diagnóstico para a TUI, fora do painel */
+        const uint8_t ev[8] = {(uint8_t)((1u << 5) | IOC_WD_KIND_LINK_EVENT), 0, IOC_WD_LINK_EVENT_LEN, 0, 1, 0, 1, 0};
+        const uint8_t tel[8] = {(uint8_t)((1u << 5) | IOC_WD_KIND_TELEMETRY), 0, IOC_WD_TELEMETRY_LEN, 0, 0, 0, 0, 0};
+        CHECK(ioc_pcache_forward_live(0x382, ev, 8) == 0);
+        CHECK(ioc_pcache_forward_live(0x382, tel, 8) == 1);
+    }
 
     /* O painel dorme: a caixa postal abre e guarda a eleição e o vínculo que muda. */
     ioc_pcache_mailbox_open(&cache, 1);

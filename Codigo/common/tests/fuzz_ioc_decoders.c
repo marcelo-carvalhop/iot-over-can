@@ -113,6 +113,8 @@ static void decode_all(const uint8_t *src, size_t len, const uint8_t key[IOC_LIN
     ioc_wd_dtc dtc;
     ioc_wd_link link;
     ioc_wd_config config;
+    ioc_wd_link_event link_event;
+    sink += (uint32_t)ioc_wd_link_event_decode(buf, len, &link_event);
     sink += (uint32_t)ioc_wd_telemetry_decode(buf, len, &tel);
     sink += (uint32_t)ioc_wd_acoustic_decode(buf, len, &acoustic);
     sink += (uint32_t)ioc_wd_ack_decode(buf, len, &ack);

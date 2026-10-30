@@ -117,6 +117,8 @@ Seções:
 
 O item de equipamento é navegável com `Enter`. Um sensor associado aparece abaixo do Node responsável somente depois da confirmação de associação publicada pelo Node.
 
+Em operação normal cada módulo ocupa uma linha (condição, papel e estado); a segunda linha só aparece com um problema e diz o motivo. A contagem de sensores e o último contato do módulo saíram da lista: os sensores aparecem logo abaixo, e o estado já indica contato recente. Um sensor associado que ainda não tem canal de dados mostra em que etapa a criação está (`canal de dados: aguardando o sensor entrar na rede Wi-Fi do módulo, há 2 min 10 s`).
+
 O resumo de sensores sem fio distingue **disponíveis** e **associados**. Um UUID disponível é contado uma vez mesmo que vários Nodes o observem.
 
 ## Tela Módulo — `NodeScreen`
@@ -163,9 +165,11 @@ A demonstração (`--demo`) inclui um sensor acústico no Módulo 22 que reage a
 
 ### Sensor wireless associado via Node CAN
 
-A tela acompanha o estado do plano de dados informado pelo Node responsável (`WIRELESS_LINK`).
+A tela acompanha o estado do plano de dados informado pelo Node responsável (`WIRELESS_LINK`) e, desde a v0.22, as etapas da criação do canal (`WIRELESS_EVENT`).
 
-Sem sessão autenticada, mostra o vínculo e o motivo:
+Enquanto o canal não está completo, a seção **Criação do canal de dados** lista as etapas do vínculo à primeira leitura no CAN: vínculo confirmado, ponto de acesso no ar, oferta anunciada por BLE, sensor na rede Wi-Fi do módulo, HELLO conferido, sessão autenticada e primeira leitura (o painel não tem esta última). Cada etapa concluída traz a hora e os segundos desde o vínculo; a etapa atual diz há quanto tempo espera; a que falhou diz o motivo (chave que não confere, CHALLENGE sem resposta, ponto de acesso desligado, sensor chamando outro módulo). Abaixo vêm **O que verificar**, com a ação para aquela etapa, e os últimos relatos do módulo. Com um módulo de firmware anterior as etapas são deduzidas do estado do enlace, sem os motivos. Detalhes em [`../arquitetura/plano-de-dados-wireless.md`](../arquitetura/plano-de-dados-wireless.md), seção 7.
+
+Sem sessão autenticada, a seção Situação mostra o vínculo e o motivo:
 
 ```text
 Vínculo wireless     ONLINE via Módulo 04
@@ -322,6 +326,8 @@ A tela mostra:
 - último envio.
 
 `t` troca o alvo. `Enter` executa a ação realçada. `a` abre o campo **Comando manual (avançado)**.
+
+Depois que o operador informa o parâmetro e confirma (quando a ação pede), a tela de comandos fecha e volta para a tela de onde foi aberta (a inicial, a do módulo ou a do sensor), para o operador acompanhar a reação; um aviso curto repete a ação enviada. Se ele desiste no parâmetro ou na confirmação, a tela continua aberta. O comando manual não fecha a tela.
 
 Para um sensor wireless associado no modo Probe/CAN sem sessão autenticada, a lista de ações de dados fica vazia e a explicação informa o estado do plano de dados, indicando `F7/w` para gerenciar o vínculo. Com a sessão ativa, as ações são enviadas à Probe como `CMD TARGET=NN.CC ACTION=...` e o resultado chega em `ACK`.
 

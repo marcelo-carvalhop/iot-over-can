@@ -495,17 +495,32 @@ int main() {
                          adv->manufacturer.size(), &offer));
   CHECK(offer.uuid == SENSOR_UUID && offer.node_id == 1 && offer.channel == 6);
   deliverFrames(true);
+  asNode();
+  wirelessLinkPoll();   // o driver CAN aceita 4 quadros por vez
+  deliverFrames(true);
   CHECK(probeSaw("[GW] WIRELESS_LINK node=1 child=1 state=OFFERING"));
+  // Etapas da criação do canal de dados (v0.22), relatadas ao CAN.
+  CHECK(probeSaw("[GW] WIRELESS_EVENT node=1 child=1 event=AP_UP reason=NONE count=1 value=6"));
+  CHECK(probeSaw("[GW] WIRELESS_EVENT node=1 child=1 event=OFFER reason=NONE count=1 value=6"));
 
   /* 2. Sem sessão, comandos de dados são recusados de forma explícita. */
   probeCommand("CMD TARGET=01.01 ACTION=FFT TX=A00001 MODE=VIEW_ONLY BINS=64");
   cycle(sensor, 2);
   CHECK(probeSaw("ACK COMMAND=FFT STATE=REJECTED TX=A00001 NODE=1 CHILD=1 DETAIL=0 REASON=NO_DATA_LINK"));
 
-  /* 3. Handshake. */
+  /* 3. Handshake. O driver Wi-Fi avisa a entrada da estação antes do HELLO. */
+  const uint8_t sensorMac[6] = {0x28, 0xCD, 0xC1, 0x00, 0x00, 0x02};
+  asNode();
+  wirelessLinkStationEvent(1, sensorMac, 0);
+  wirelessLinkStationEvent(3, nullptr, 0x0204A8C0u);  // 192.168.4.2 em ordem de rede
   sensor.hello();
   cycle(sensor);
   CHECK(sensor.bound && sensor.nodeId == 1 && sensor.childId == 1);
+  CHECK(probeSaw("[GW] WIRELESS_EVENT node=1 child=0 event=STATION_JOIN reason=NONE count=1 value=0 stations=1"));
+  CHECK(probeSaw("[GW] WIRELESS_EVENT node=1 child=0 event=STATION_IP reason=NONE count=1 value=2 stations=1"));
+  CHECK(probeSaw("[GW] WIRELESS_EVENT node=1 child=1 event=HELLO_OK reason=NONE count=1 value=2"));
+  CHECK(probeSaw("[GW] WIRELESS_EVENT node=1 child=1 event=SESSION_UP reason=NONE count=1 value=2"));
+  CHECK(g_probe_output.find("event=HELLO_OK") < g_probe_output.find("event=SESSION_UP"));
   CHECK(probeSaw("[GW] WIRELESS_LINK node=1 child=1 state=SECURE rssi=-47"));
   CHECK(probeSaw("[GW] WIRELESS_CONFIG node=1 child=1 status=CURRENT mode=ROTATING"));
   CHECK(!adv->advertising); // com sessão, a oferta deixa de ser anunciada
@@ -625,6 +640,7 @@ int main() {
   intruder.hello(); // anuncia o UUID legítimo, mas assina com a chave errada
   cycle(intruder);
   CHECK(!intruder.bound);
+  CHECK(probeSaw("[GW] WIRELESS_EVENT node=1 child=1 event=HELLO_REJECT reason=KEY count=1 value=2"));
   // 8d. HELLO autêntico repetido não derruba a sessão em vigor.
   sensor.hello();
   sensor.bound = true; // o sensor real ignoraria; aqui só interessa o lado do Node
@@ -910,6 +926,34 @@ int main() {
   CHECK(probeSaw("ACK COMMAND=FFT STATE=APPLIED TX=A00002 NODE=1 CHILD=1 DETAIL=64 RTT_MS="));
   CHECK(probeSaw("state=OFFERING rssi=0 age_s=0 rx=0 auth_fail=0 replay=0 lost=0 stream=ON period_ms=1000 "
                  "rtt_ms=-1 rtt_max_ms=-1"));
+
+  /* Etapas do canal de dados: recusas repetidas são agrupadas (no máximo um
+     relato a cada 5 s) e o HELLO de um sensor desconhecido é do Node. */
+  const uint64_t SPARE_UUID = 0xE6616408432B0002ull;
+  asNode();
+  wirelessLinkOnBound(SPARE_UUID, 2);
+  SimSensor wrongKey;
+  wrongKey.uuid = SPARE_UUID;
+  ioc_link_derive_device_key(master, SPARE_UUID + 1, wrongKey.devKey);
+  size_t mark = g_probe_output.size();
+  for (int i = 0; i < 4; ++i) {
+    wrongKey.hello();
+    cycle(wrongKey, 2);
+  }
+  CHECK(g_probe_output.find("child=2 event=HELLO_REJECT reason=KEY count=1", mark) != std::string::npos);
+  CHECK(g_probe_output.find("child=2 event=HELLO_REJECT reason=KEY count=3", mark) == std::string::npos);
+  g_millis += 5000;
+  cycle(wrongKey, 4);
+  CHECK(g_probe_output.find("child=2 event=HELLO_REJECT reason=KEY count=3", mark) != std::string::npos);
+  SimSensor stranger;
+  stranger.uuid = 0xE6616408432B0FFFull;
+  ioc_link_derive_device_key(master, stranger.uuid, stranger.devKey);
+  stranger.hello();
+  cycle(stranger, 4);
+  CHECK(probeSaw("[GW] WIRELESS_EVENT node=1 child=0 event=HELLO_REJECT reason=NOT_BOUND count=1 value=2 "));
+  CHECK(probeSaw(" uuid=0xE6616408432B0FFF"));
+  asNode();
+  wirelessLinkOnUnbound(SPARE_UUID, 2);
 
   if (g_failures) {
     fprintf(stderr, "sim_wireless_link: %d falha(s)\n", g_failures);

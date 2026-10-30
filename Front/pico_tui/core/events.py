@@ -123,6 +123,25 @@ class WirelessLinkReceived(Event):
 
 
 @dataclass(slots=True)
+class WirelessEventReceived(Event):
+    """Etapa da criação do canal de dados relatada pelo Node (v0.22).
+
+    ``child_id`` 0 indica um fato do módulo: ponto de acesso, estações Wi-Fi
+    ou o HELLO de um sensor que não está associado a ele (``wireless_uuid``).
+    """
+
+    parent_node_id: int
+    child_id: int
+    event: str
+    reason: str = "NONE"
+    count: int = 1
+    value: int = 0
+    stations: int = 0
+    since_s: int = 0
+    wireless_uuid: str = ""
+
+
+@dataclass(slots=True)
 class PanelReported(Event):
     """Relato do painel em papel eletrônico (perfil PANEL) encaminhado pelo Node.
 

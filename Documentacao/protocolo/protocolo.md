@@ -195,7 +195,7 @@ Quadros CAN:
              índice 0: tamanho total, CRC-8, 4 bytes de dados
 ```
 
-Tipos de transferência: `1` telemetria, `2` espectro, `3` confirmação de comando, `4` DTC, `5` estado do enlace, `6` configuração, `7` relatório acústico. Opcodes: `0x01` encaminhamento, `0x02` espectro, `0x03` estado, `0x10`–`0x14` preparação de configuração, `0x1F` aplicar, `0x20` limpar DTC, `0x21` controle do sensor acústico.
+Tipos de transferência: `1` telemetria, `2` espectro, `3` confirmação de comando, `4` DTC, `5` estado do enlace, `6` configuração, `7` relatório acústico, `8` painel em papel eletrônico, `10` etapa da criação do canal de dados (`9` fica reservado). Opcodes: `0x01` encaminhamento, `0x02` espectro, `0x03` estado, `0x10`–`0x14` preparação de configuração, `0x1F` aplicar, `0x20` limpar DTC, `0x21` controle do sensor acústico.
 
 Linhas trocadas entre a TUI e a Probe 00:
 
@@ -208,7 +208,36 @@ DTC NODE=N CHILD=C CODE=0x.... SYMPTOM=0x.. SEVERITY=. TS_MS=...
 ACK COMMAND=<ação> STATE=ACCEPTED|APPLIED|REJECTED TX=<id> NODE=N CHILD=C DETAIL=... [REASON=...] RTT_MS=...
 [GW] WIRELESS_LINK node=N child=C state=DOWN|OFFERING|HANDSHAKE|SECURE|NO_KEY rssi=... age_s=... rx=... auth_fail=... replay=... lost=... stream=ON|OFF period_ms=... rtt_ms=... rtt_max_ms=...
 [GW] WIRELESS_CONFIG node=N child=C status=CURRENT|APPLIED|REJECTED mode=... rate_req_hz=... rate_eff_hz=... window=... window_size=... stalta=... gain=... [profile=VIBRATION|ACOUSTIC]
+[GW] WIRELESS_EVENT node=N child=C event=<evento> reason=<motivo> count=... value=... stations=... since_s=... [uuid=0x...]
 ```
+
+### Etapas da criação do canal de dados (tipo `10`, v0.22)
+
+Entre o vínculo e a sessão autenticada, o Node relata ao CAN cada fato que observa, para a TUI mostrar em que etapa a criação está e por que parou. O relato tem 8 bytes (dois quadros):
+
+```text
+evento | motivo | quantidade(2) | valor | estações | segundos desde o vínculo(2)   [+ UUID(8)]
+```
+
+| Evento | Filho | Quando | `value` |
+|---|---|---|---|
+| `AP_UP` | sensor | o ponto de acesso subiu, ou o sensor foi associado com ele já no ar | canal |
+| `AP_DOWN` | sensor (0 sem sensores) | o ponto de acesso foi desligado; `reason` diz por quê | — |
+| `AP_ERROR` | sensor | o ponto de acesso não subiu; nova tentativa em 5 s | — |
+| `NO_KEY` | sensor | o Node não tem chave de enlace | — |
+| `OFFER` | sensor | primeira oferta BLE deste sensor desde o vínculo ou a última sessão | canal |
+| `OFFER_ERROR` | sensor | o anúncio BLE não começou | canal |
+| `STATION_JOIN`, `STATION_LEAVE` | 0 | uma estação entrou ou saiu do ponto de acesso | — |
+| `STATION_IP` | 0 | a estação recebeu endereço | último octeto |
+| `HELLO_OK` | sensor | HELLO conferido, CHALLENGE enviado | último octeto do IP do sensor |
+| `HELLO_REJECT` | sensor (0 com `NOT_BOUND` ou `FORMAT`) | HELLO recusado; `reason` diz por quê | último octeto |
+| `HANDSHAKE_TIMEOUT` | sensor | o CHALLENGE ficou 5 s sem CONFIRM | último octeto |
+| `SESSION_UP` | sensor | sessão autenticada | último octeto |
+| `SESSION_DOWN` | sensor | sessão encerrada; `reason` diz por quê | — |
+
+Motivos: `NONE`, `FORMAT`, `NOT_BOUND` (o sensor não está associado a este Node; o relato traz o `uuid`), `KEY` (chave não confere), `PROTOCOL`, `REPLAY` (repetição do HELLO da sessão em vigor), `BUSY` (autenticação anterior em andamento), `SEND` (falha ao enviar o CHALLENGE), `TIMEOUT` (sensor sem dados além do prazo), `UNBOUND`, `SLEEP` (painel dormindo), `TEST` (ensaio), `RADIO_OFF`, `IDLE` (nenhum sensor associado).
+
+O filho `0` marca um fato do Node: o Node não sabe qual sensor entrou no ponto de acesso até ele se apresentar no HELLO. `stations` é o número de estações no ponto de acesso no momento do relato. Fatos repetidos (o mesmo HELLO recusado pelo mesmo motivo, a mesma estação entrando e saindo) são agrupados: o primeiro sai na hora e os seguintes no máximo uma vez a cada 5 s, com `count` igual ao número de ocorrências agrupadas. Os relatos só entram na fila de transmissão do Node quando sobram três lugares, para não tomar o espaço da telemetria.
 
 No formato `U16_SCALED`, cada valor de 16 bits é a fração do pico; a magnitude é `valor × SCALE / 65535`.
 

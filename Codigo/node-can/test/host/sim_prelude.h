@@ -8,6 +8,7 @@
 #ifndef SIM_PRELUDE_H
 #define SIM_PRELUDE_H
 
+#include <atomic>
 #include <cmath>
 #include <cstdarg>
 #include <cstddef>

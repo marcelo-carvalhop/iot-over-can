@@ -45,7 +45,9 @@ typedef enum {
     IOC_WD_KIND_LINK      = 5,
     IOC_WD_KIND_CONFIG    = 6,
     IOC_WD_KIND_ACOUSTIC  = 7,  /* relatório do sensor acústico (v0.19) */
-    IOC_WD_KIND_PANEL     = 8   /* STATUS e MARK do painel em papel eletrônico (v0.20) */
+    IOC_WD_KIND_PANEL     = 8,  /* STATUS e MARK do painel em papel eletrônico (v0.20) */
+    /* 9 fica reservado (contadores do enlace no ramo de pesquisa). */
+    IOC_WD_KIND_LINK_EVENT = 10 /* etapas da criação do canal de dados (v0.22) */
 } ioc_wd_kind;
 
 uint8_t ioc_wd_crc8(const uint8_t *data, size_t len);
@@ -300,6 +302,87 @@ size_t ioc_wd_link_encode(const ioc_wd_link *in, uint8_t out[IOC_WD_LINK_LEN]);
 int    ioc_wd_link_decode(const uint8_t *buf, size_t len, ioc_wd_link *out);
 size_t ioc_wd_config_encode(const ioc_wd_config *in, uint8_t out[IOC_WD_CONFIG_LEN]);
 int    ioc_wd_config_decode(const uint8_t *buf, size_t len, ioc_wd_config *out);
+
+/* ------------------------------------------- etapas do canal de dados (v0.22) */
+
+/*
+ * Fatos que o Node observa enquanto cria o canal de dados com um sensor
+ * associado: ponto de acesso, oferta BLE, estações Wi-Fi, HELLO, CHALLENGE e
+ * sessão. Servem para o operador ver em que etapa a criação está e por que
+ * parou. Saem no identificador de dados do Node, como os demais relatos.
+ *
+ * O filho 0 indica um fato do Node, e não de um sensor: o ponto de acesso, as
+ * estações (o Node não sabe qual sensor entrou até ele se apresentar) e o
+ * HELLO de um sensor que não está associado a este Node. Neste último caso o
+ * relato traz também o UUID que se apresentou.
+ *
+ * Fatos repetidos (o mesmo HELLO recusado pelo mesmo motivo, por exemplo) são
+ * agrupados pelo Node: `count` diz quantas vezes ocorreram desde o relato
+ * anterior.
+ *
+ *   byte 0     evento
+ *   byte 1     motivo (IOC_WD_EVR_*)
+ *   bytes 2..3 quantidade de ocorrências agrupadas (u16)
+ *   byte 4     valor do evento (canal da oferta, último octeto do IP, ...)
+ *   byte 5     estações no ponto de acesso agora
+ *   bytes 6..7 segundos desde o vínculo do sensor (filho 0: desde que o ponto
+ *              de acesso subiu); 0xFFFF = 18 h ou mais
+ *   bytes 8..15 UUID (só com IOC_WD_EVR_NOT_BOUND)
+ */
+#define IOC_WD_LINK_EVENT_LEN      8
+#define IOC_WD_LINK_EVENT_UUID_LEN 16
+
+typedef enum {
+    IOC_WD_EV_AP_UP             = 1,  /* ponto de acesso do Node no ar */
+    IOC_WD_EV_AP_DOWN           = 2,  /* ponto de acesso desligado (motivo) */
+    IOC_WD_EV_AP_ERROR          = 3,  /* o ponto de acesso não subiu; nova tentativa adiante */
+    IOC_WD_EV_NO_KEY            = 4,  /* Node sem chave de enlace: não há canal de dados */
+    IOC_WD_EV_OFFER             = 5,  /* oferta deste sensor anunciada por BLE (valor = canal) */
+    IOC_WD_EV_OFFER_ERROR       = 6,  /* o anúncio BLE não começou */
+    IOC_WD_EV_STATION_JOIN      = 7,  /* uma estação entrou no ponto de acesso */
+    IOC_WD_EV_STATION_IP        = 8,  /* a estação recebeu endereço (valor = último octeto) */
+    IOC_WD_EV_STATION_LEAVE     = 9,  /* uma estação saiu do ponto de acesso */
+    IOC_WD_EV_HELLO_OK          = 10, /* HELLO conferido, CHALLENGE enviado */
+    IOC_WD_EV_HELLO_REJECT      = 11, /* HELLO recusado (motivo) */
+    IOC_WD_EV_HANDSHAKE_TIMEOUT = 12, /* o CHALLENGE ficou sem resposta no prazo */
+    IOC_WD_EV_SESSION_UP        = 13, /* CONFIRM conferido: sessão autenticada */
+    IOC_WD_EV_SESSION_DOWN      = 14  /* sessão encerrada (motivo) */
+} ioc_wd_event_id;
+
+typedef enum {
+    IOC_WD_EVR_NONE      = 0,
+    IOC_WD_EVR_FORMAT    = 1,  /* HELLO mal formado */
+    IOC_WD_EVR_NOT_BOUND = 2,  /* sensor não associado a este Node */
+    IOC_WD_EVR_KEY       = 3,  /* a chave do sensor não confere com a do Node */
+    IOC_WD_EVR_PROTOCOL  = 4,  /* versão de protocolo diferente */
+    IOC_WD_EVR_REPLAY    = 5,  /* repetição do HELLO da sessão em vigor */
+    IOC_WD_EVR_BUSY      = 6,  /* autenticação anterior ainda em andamento */
+    IOC_WD_EVR_SEND      = 7,  /* falha ao enviar o CHALLENGE */
+    IOC_WD_EVR_TIMEOUT   = 8,  /* sensor sem dados além do prazo da sessão */
+    IOC_WD_EVR_UNBOUND   = 9,  /* vínculo desfeito */
+    IOC_WD_EVR_SLEEP     = 10, /* painel dormindo por intervalo declarado */
+    IOC_WD_EVR_TEST      = 11, /* ensaio (sessões descartadas, queda do ponto de acesso) */
+    IOC_WD_EVR_RADIO_OFF = 12, /* rádio do Node desligado */
+    IOC_WD_EVR_IDLE      = 13  /* nenhum sensor associado: o ponto de acesso não é mais necessário */
+} ioc_wd_event_reason;
+
+typedef struct {
+    uint8_t  event;
+    uint8_t  reason;
+    uint16_t count;
+    uint8_t  value;
+    uint8_t  stations;
+    uint16_t since_s;
+    uint64_t uuid;   /* só com IOC_WD_EVR_NOT_BOUND; 0 nos demais */
+} ioc_wd_link_event;
+
+/** Retorna o tamanho codificado: 8 bytes, ou 16 com o UUID. */
+size_t ioc_wd_link_event_encode(const ioc_wd_link_event *in, uint8_t out[IOC_WD_LINK_EVENT_UUID_LEN]);
+int    ioc_wd_link_event_decode(const uint8_t *buf, size_t len, ioc_wd_link_event *out);
+/** Nome estável em maiúsculas ("HELLO_REJECT"); "UNKNOWN" fora da tabela. */
+const char *ioc_wd_event_name(uint8_t event);
+/** Nome estável do motivo ("KEY"); "NONE" para 0 e "UNKNOWN" fora da tabela. */
+const char *ioc_wd_event_reason_name(uint8_t reason);
 
 /* ---------------------------------------------------------------- comandos */
 
