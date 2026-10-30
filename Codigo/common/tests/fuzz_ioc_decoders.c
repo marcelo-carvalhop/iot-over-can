@@ -120,6 +120,8 @@ static void decode_all(const uint8_t *src, size_t len, const uint8_t key[IOC_LIN
     sink += (uint32_t)ioc_wd_ack_decode(buf, len, &ack);
     sink += (uint32_t)ioc_wd_dtc_decode(buf, len, &dtc);
     sink += (uint32_t)ioc_wd_link_decode(buf, len, &link);
+    ioc_wd_linkstats linkstats;
+    sink += (uint32_t)ioc_wd_linkstats_decode(buf, len, &linkstats);
     sink += (uint32_t)ioc_wd_config_decode(buf, len, &config);
 
     ioc_wd_spectrum_header hdr;

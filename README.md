@@ -64,6 +64,24 @@ Front/.venv/bin/python Simulacao/usb_panel_bridge.py --port /dev/ttyACM0 --node 
 
 Sem o aparelho, `SENSOR ADD <uuid> PANEL` (ou o formulário do Studio) cria um painel virtual com o mesmo PanelApp do firmware; o cenário `panel_papercolor` da bancada virtual o exercita.
 
+## Pesquisa
+
+Material para o TCC, fora do escopo da entrega da disciplina de IoT. A instrumentação (vinda do ramo `modelo-pesquisa`) transforma a bancada num instrumento de medição para uma pergunta comparativa: quanto a integração de sensores sem fio autenticados custa ao tráfego determinístico do CAN, em função da carga de fundo e da prioridade dela, e com que rapidez a rede reage a falhas do enlace. A metodologia está em [`Documentacao/pesquisa/metodologia.md`](Documentacao/pesquisa/metodologia.md); as ferramentas, em [`Pesquisa/`](Pesquisa/README.md).
+
+- **Relógios declarados**: as linhas da Probe 00 levam `t_us` (relógio monotônico dela); os Nodes medem intervalos no relógio deles (criptografia, ponte Wi-Fi → CAN, PING ao sensor). Instantes de relógios diferentes nunca são comparados.
+- **Eco**: `ECHO <node>.<filho> <n> <período> LOCAL|SENSOR` mede, num relógio só, a ida e volta pelo caminho CAN do plano de dados e, com o sensor, a ida e volta até ele.
+- **Carga determinística**: `FAULT LOAD <pct> <s> HIGH|MID|LOW|MIX <semente>`; a análise confere a sequência gerada pela semente.
+- **Custo da segurança**: HMAC por datagrama e handshake medidos no Node durante o experimento, e `BENCH CRYPTO` em cada placa (Probe, Nodes, Pico W e computador).
+- **Máquina de estados parametrizável**: `L`, `H` e `T` ajustáveis na compilação, publicados pela Probe (`[GW] CONFIG`) e conferidos pela coleta.
+- **Desenho fatorial** com 30 repetições, sementes e ordem sorteada; análise com IC 95 %, Wilson, g de Hedges, delta de Cliff e Mann-Whitney com Holm; relatório, CSV e figuras regenerados dos registros brutos.
+
+```bash
+cd Pesquisa
+../Codigo/scripts/build_network_sim.sh /tmp/sim_network
+python3 -m iocpesquisa coletar desenhos/bancada_virtual.json --binario /tmp/sim_network -j 4
+python3 -m iocpesquisa analisar resultados/bancada_virtual
+```
+
 ## TUI
 
 A interface é uma aplicação Textual em tela cheia organizada por assunto, sem a antiga concentração de topologia, telemetria, comandos e logs na mesma visão. A navegação principal é:

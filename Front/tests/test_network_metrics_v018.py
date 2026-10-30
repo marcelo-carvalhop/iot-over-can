@@ -91,6 +91,10 @@ def test_can_identifiers_for_experiments_do_not_collide_with_project_traffic() -
     numbers = {name: int(value, 16) for name, value in re.findall(r"#define (CAN_ID_\w+)\s+(0x[0-9A-Fa-f]+)", ids)}
     assert numbers["CAN_ID_TEST_LOAD_HIGH"] < min(v for k, v in numbers.items() if "TEST_LOAD" not in k)
     assert numbers["CAN_ID_TEST_LOAD_LOW"] > max(v for k, v in numbers.items() if "TEST_LOAD" not in k)
+    # A intermediária perde para a coordenação e vence todo o tráfego dos sensores.
+    assert numbers["CAN_ID_HEARTBEAT"] < numbers["CAN_ID_TEST_LOAD_MID"] < numbers["CAN_ID_SENSOR"]
+    assert numbers["CAN_ID_TEST_LOAD_MID"] < numbers["CAN_ID_WIRELESS_DISCOVERY_BASE"]
+    assert "intermediária" in describe(0x1F0).name
     for can_id, expected in ((0x100, "presença"), (0x381, "Módulo 01"), (0x305, "ensaio"), (0x322, "Módulo 01")):
         assert expected in describe(can_id).name
 

@@ -77,7 +77,7 @@
  * Estado (Node -> barramento):
  *   seq | node | tipo | estado | duracao (2 bytes) | 0 | 0x5A
  *
- * Os dois identificadores abaixo sao usados apenas pela Probe 00 para gerar
+ * Os identificadores de carga abaixo sao usados apenas pela Probe 00 para gerar
  * carga artificial: um vence a arbitragem contra todo o trafego do projeto,
  * o outro perde para todo ele. Nenhum Node os interpreta. (0x7EF e o maior
  * identificador de 11 bits permitido de uso geral: os sete bits mais
@@ -87,6 +87,13 @@
 #define CAN_ID_TEST_STATUS                0x306
 #define CAN_ID_TEST_LOAD_HIGH             0x010
 #define CAN_ID_TEST_LOAD_LOW              0x7EF
+/*
+ * Carga intermediaria (pesquisa): perde para eleicao, controle e sinal de
+ * presenca e vence o trafego dos sensores (0x200, descoberta, associacao e
+ * plano de dados). Separa o efeito da carga sobre a coordenacao do efeito
+ * sobre a integracao sem fio.
+ */
+#define CAN_ID_TEST_LOAD_MID              0x1F0
 
 /* =========================================================
  * DADOS DOS SENSORES

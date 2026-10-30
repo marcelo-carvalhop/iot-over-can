@@ -7,6 +7,7 @@
 #include "can_ids.h"
 #include "net_metrics.h"
 #include "node_config.h"
+#include "pesquisa.h"
 #include "protocolo.h"
 #include "wireless_link.h"
 
@@ -196,10 +197,42 @@ void handleNodeCommand(const CANMessage& rx) {
 
 uint8_t probeSeq = 0;
 
+/*
+ * Carga artificial. Sem semente, o padrão de sempre (contador e 0xAA/0x55).
+ * Com semente, os seis últimos bytes de cada quadro vêm de um xorshift32 e,
+ * em MIX, a classe de prioridade de cada quadro também: a mesma semente gera
+ * a mesma sequência de quadros (identificador e conteúdo), o que o
+ * seq_hash do fim do ensaio comprova (FNV-1a 32 sobre id, DLC e dados de
+ * cada quadro gerado; Pesquisa/ recalcula o valor esperado).
+ */
+enum class LoadPriority : uint8_t { High, Mid, Low, Mix };
+
+const char* loadPriorityName(LoadPriority p) {
+  switch (p) {
+    case LoadPriority::Mid: return "MID";
+    case LoadPriority::Low: return "LOW";
+    case LoadPriority::Mix: return "MIX";
+    default: return "HIGH";
+  }
+}
+
+uint16_t loadPriorityId(LoadPriority p) {
+  switch (p) {
+    case LoadPriority::Mid: return CAN_ID_TEST_LOAD_MID;
+    case LoadPriority::Low: return CAN_ID_TEST_LOAD_LOW;
+    default: return CAN_ID_TEST_LOAD_HIGH;
+  }
+}
+
 struct LoadGenerator {
   bool active = false;
   uint8_t percent = 0;
-  bool highPriority = true;
+  LoadPriority priority = LoadPriority::High;
+  uint32_t seed = 0;
+  uint32_t rng = 0;
+  uint32_t seqHash = 2166136261u;
+  CANMessage pending;           // próximo quadro já sorteado
+  bool havePending = false;
   uint32_t startMs = 0;
   uint32_t durationMs = 0;
   uint32_t lastUs = 0;
@@ -225,9 +258,9 @@ void probeSendCommand(uint8_t node, uint8_t kind, uint32_t durationMs, uint8_t a
   msg.data[6] = arg1;
   msg.data[7] = TEST_MAGIC_CMD;
   if (canSend(msg)) netMetricsOnTransmit(msg);
-  Serial.printf("[GW] FAULT_TX kind=%s node=%u duration_ms=%lu seq=%u\n", kindName(kind),
+  Serial.printf("[GW] FAULT_TX kind=%s node=%u duration_ms=%lu seq=%u t_us=%llu\n", kindName(kind),
                 static_cast<unsigned>(node), static_cast<unsigned long>(durationMs),
-                static_cast<unsigned>(probeSeq));
+                static_cast<unsigned>(probeSeq), static_cast<unsigned long long>(pesquisaMonoUs()));
 }
 
 void probePrintLoadEvent(uint8_t state) {
@@ -239,12 +272,14 @@ void probePrintLoadEvent(uint8_t state) {
                                      (static_cast<uint64_t>(CAN_NOMINAL_BITRATE) * elapsed / 10ull));
   }
   Serial.printf("[GW] FAULT_EVENT node=0 kind=BUS_LOAD state=%s duration_ms=%lu seq=%u load_pct=%u "
-                "priority=%s frames=%lu achieved_pct=%lu.%02lu\n",
+                "priority=%s frames=%lu achieved_pct=%lu.%02lu seed=%lu seq_hash=0x%08lX t_us=%llu\n",
                 stateName(state),
                 static_cast<unsigned long>(state == TEST_STATE_STARTED ? load.durationMs : elapsed),
                 static_cast<unsigned>(probeSeq), static_cast<unsigned>(load.percent),
-                load.highPriority ? "HIGH" : "LOW", static_cast<unsigned long>(load.frames),
-                static_cast<unsigned long>(achieved / 100u), static_cast<unsigned long>(achieved % 100u));
+                loadPriorityName(load.priority), static_cast<unsigned long>(load.frames),
+                static_cast<unsigned long>(achieved / 100u), static_cast<unsigned long>(achieved % 100u),
+                static_cast<unsigned long>(load.seed), static_cast<unsigned long>(load.seqHash),
+                static_cast<unsigned long long>(pesquisaMonoUs()));
 }
 
 void probeStopLoad() {
@@ -253,12 +288,24 @@ void probeStopLoad() {
   probePrintLoadEvent(TEST_STATE_ENDED);
 }
 
-void probeStartLoad(uint8_t percent, uint32_t durationMs, bool highPriority) {
+uint32_t loadNext() {
+  uint32_t x = load.rng;
+  x ^= x << 13;
+  x ^= x >> 17;
+  x ^= x << 5;
+  load.rng = x;
+  return x;
+}
+
+void probeStartLoad(uint8_t percent, uint32_t durationMs, LoadPriority priority, uint32_t seed) {
   if (load.active) probeStopLoad();
   load = LoadGenerator{};
   load.active = true;
   load.percent = percent;
-  load.highPriority = highPriority;
+  load.priority = priority;
+  // MIX sorteia a classe de cada quadro: precisa de semente (1 quando omitida).
+  load.seed = (seed == 0 && priority == LoadPriority::Mix) ? 1u : seed;
+  load.rng = load.seed;
   load.startMs = millis();
   load.durationMs = durationMs;
   load.lastUs = micros();
@@ -282,35 +329,56 @@ void probePollLoad() {
       (static_cast<uint64_t>(CAN_NOMINAL_BITRATE) * elapsedUs * load.percent) / 100000ull);
   if (load.creditBits > LOAD_MAX_CREDIT_MILLIBITS) load.creditBits = LOAD_MAX_CREDIT_MILLIBITS;
 
+  // O próximo quadro é sorteado uma vez e mantido até sair: a sequência não
+  // depende de quando o crédito ou o driver permitem a transmissão.
+  CANMessage& next = load.pending;
+  bool& havePending = load.havePending;
   while (can.transmitBufferCount(0) < LOAD_DRIVER_WATERMARK) {
-    CANMessage msg;
-    msg.id = load.highPriority ? CAN_ID_TEST_LOAD_HIGH : CAN_ID_TEST_LOAD_LOW;
-    msg.len = 8;
-    msg.data[0] = static_cast<uint8_t>(load.counter >> 8);
-    msg.data[1] = static_cast<uint8_t>(load.counter & 0xFFu);
-    for (uint8_t i = 2; i < 8; ++i) msg.data[i] = (i & 1u) ? 0xAA : 0x55;
-    const uint32_t frameBits = ioc_can_frame_bits(static_cast<uint16_t>(msg.id), msg.len, msg.data);
+    if (!havePending) {
+      LoadPriority cls = load.priority;
+      if (cls == LoadPriority::Mix) cls = static_cast<LoadPriority>(loadNext() % 3u);
+      next.id = loadPriorityId(cls);
+      next.len = 8;
+      next.data[0] = static_cast<uint8_t>(load.counter >> 8);
+      next.data[1] = static_cast<uint8_t>(load.counter & 0xFFu);
+      if (load.seed == 0) {
+        for (uint8_t i = 2; i < 8; ++i) next.data[i] = (i & 1u) ? 0xAA : 0x55;
+      } else {
+        const uint32_t a = loadNext(), b = loadNext();
+        for (uint8_t i = 0; i < 4; ++i) next.data[2 + i] = static_cast<uint8_t>(a >> (8 * i));
+        next.data[6] = static_cast<uint8_t>(b);
+        next.data[7] = static_cast<uint8_t>(b >> 8);
+      }
+      havePending = true;
+    }
+    const uint32_t frameBits = ioc_can_frame_bits(static_cast<uint16_t>(next.id), next.len, next.data);
     if (load.creditBits < frameBits * 1000u) break;
-    if (!canSend(msg)) break;
+    if (!canSend(next)) break;
+    havePending = false;
     load.creditBits -= frameBits * 1000u;
     load.bits += frameBits;
     ++load.frames;
     ++load.counter;
-    netMetricsOnTransmit(msg);
+    const uint8_t head[3] = {static_cast<uint8_t>(next.id & 0xFFu), static_cast<uint8_t>(next.id >> 8), next.len};
+    for (uint8_t b : head) load.seqHash = (load.seqHash ^ b) * 16777619u;
+    for (uint8_t i = 0; i < next.len; ++i) load.seqHash = (load.seqHash ^ next.data[i]) * 16777619u;
+    netMetricsOnTransmit(next);
   }
 }
 
 void probeHandleStatus(const CANMessage& rx) {
   if (rx.len != 8 || rx.data[7] != TEST_MAGIC_STATUS) return;
   const uint32_t durationMs = (static_cast<uint32_t>(rx.data[4]) | (static_cast<uint32_t>(rx.data[5]) << 8)) * 100u;
-  Serial.printf("[GW] FAULT_EVENT node=%u kind=%s state=%s duration_ms=%lu seq=%u\n",
+  Serial.printf("[GW] FAULT_EVENT node=%u kind=%s state=%s duration_ms=%lu seq=%u t_us=%llu\n",
                 static_cast<unsigned>(rx.data[1]), kindName(rx.data[2]), stateName(rx.data[3]),
-                static_cast<unsigned long>(durationMs), static_cast<unsigned>(rx.data[0]));
+                static_cast<unsigned long>(durationMs), static_cast<unsigned>(rx.data[0]),
+                static_cast<unsigned long long>(pesquisaMonoUs()));
 }
 
 void probeUsage() {
   Serial.println("[GW] FAULT_ERROR use: FAULT POWER_CYCLE|SILENCE|AP_OUTAGE <node> <segundos> | "
-                 "FAULT DROP_SESSION <node> | FAULT LOAD <pct> <segundos> [HIGH|LOW] | FAULT CANCEL [node]");
+                 "FAULT DROP_SESSION <node> | FAULT LOAD <pct> <segundos> [HIGH|MID|LOW|MIX] [semente] | "
+                 "FAULT CANCEL [node]");
 }
 
 void probeHandleLine(char* tokens[], uint8_t count) {
@@ -340,20 +408,29 @@ void probeHandleLine(char* tokens[], uint8_t count) {
     }
     const unsigned long percent = strtoul(tokens[1], nullptr, 10);
     const unsigned long seconds = strtoul(tokens[2], nullptr, 10);
-    bool high = true;
+    LoadPriority priority = LoadPriority::High;
     if (count >= 4) {
-      if (strcasecmp(tokens[3], "LOW") == 0) high = false;
+      if (strcasecmp(tokens[3], "LOW") == 0) priority = LoadPriority::Low;
+      else if (strcasecmp(tokens[3], "MID") == 0) priority = LoadPriority::Mid;
+      else if (strcasecmp(tokens[3], "MIX") == 0) priority = LoadPriority::Mix;
       else if (strcasecmp(tokens[3], "HIGH") != 0) {
         probeUsage();
         return;
       }
+    }
+    char* end = nullptr;
+    const unsigned long seed = count >= 5 ? strtoul(tokens[4], &end, 0) : 0ul;
+    if (count >= 5 && (end == tokens[4] || *end != '\0' || seed > 0xFFFFFFFFul)) {
+      probeUsage();
+      return;
     }
     if (percent == 0 || percent > LOAD_MAX_PERCENT || seconds == 0) {
       Serial.printf("[GW] FAULT_ERROR carga deve estar entre 1 e %u %% e a duracao ser maior que zero\n",
                     static_cast<unsigned>(LOAD_MAX_PERCENT));
       return;
     }
-    probeStartLoad(static_cast<uint8_t>(percent), clampDuration(seconds * 1000ul), high);
+    probeStartLoad(static_cast<uint8_t>(percent), clampDuration(seconds * 1000ul), priority,
+                   static_cast<uint32_t>(seed));
     return;
   }
 
@@ -431,7 +508,7 @@ void faultInjectionPoll() {
 }
 
 bool faultInjectionHandleCanMessage(const CANMessage& rx) {
-  if (rx.id == CAN_ID_TEST_LOAD_HIGH || rx.id == CAN_ID_TEST_LOAD_LOW) return true;
+  if (rx.id == CAN_ID_TEST_LOAD_HIGH || rx.id == CAN_ID_TEST_LOAD_MID || rx.id == CAN_ID_TEST_LOAD_LOW) return true;
 
   if (rx.id == CAN_ID_TEST_CMD) {
 #if IOT_FAULT_INJECTION

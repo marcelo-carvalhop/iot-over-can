@@ -24,6 +24,15 @@ cc -std=c11 -Wall -Wextra -Werror \
   -lm -o "$OUT_DIR/test_ioc_link"
 "$OUT_DIR/test_ioc_link"
 
+# 2b. Custo da criptografia do enlace (ioc_bench): estatísticas e formato das
+#     linhas BENCH; a mesma rotina roda no Node, no Pico W e aqui como referência.
+cc -std=c11 -O2 -Wall -Wextra -Werror -D_POSIX_C_SOURCE=200809L \
+  -I"$LINK" \
+  "$LINK/ioc_sha256.c" "$LINK/ioc_link.c" "$LINK/ioc_bench.c" \
+  "$REPO_ROOT/Codigo/common/tests/test_ioc_bench.c" \
+  -o "$OUT_DIR/test_ioc_bench"
+"$OUT_DIR/test_ioc_bench"
+
 # 3. Medição de ocupação do barramento, PDU autenticado (predisposição para
 #    CAN FD), segmentação em quadros maiores, reassociação automática e a
 #    tabela de vínculos gravada pelos Nodes.
@@ -84,6 +93,12 @@ cc -std=c11 -Wall -Wextra -Werror -I"$AUDIO" -I"$FW" \
   "$AUDIO/audio_config.c" "$AUDIO/acoustic_dsp.c" "$AUDIO/audio_fft.c" "$AUDIO/tests/test_audio_config.c" \
   -lm -o "$OUT_DIR/test_audio_config"
 "$OUT_DIR/test_audio_config"
+
+# 3b. Amostragem de Poisson das sondas de eco (instrumentação de pesquisa).
+c++ -std=c++17 -O2 -Wall -Wextra -Werror \
+  -I"$REPO_ROOT/Codigo/node-can/test/host/stubs" -I"$REPO_ROOT/Codigo/node-can/include" \
+  "$REPO_ROOT/Codigo/node-can/test/host/test_pesquisa.cpp" -lm -o "$OUT_DIR/test_pesquisa"
+"$OUT_DIR/test_pesquisa"
 
 # 4. Simulação sensor <-> Node <-> Probe com o código real de wireless_link.cpp.
 "$REPO_ROOT/Codigo/scripts/build_wireless_link_sim.sh" "$OUT_DIR/sim_wireless_link"

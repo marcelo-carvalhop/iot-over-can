@@ -12,6 +12,8 @@ HEARTBEAT_ID = 0x100
 LOCAL_SENSOR_ID = 0x200
 TEST_LOAD_HIGH_ID = 0x010
 TEST_LOAD_LOW_ID = 0x7EF
+TEST_LOAD_MID_ID = 0x1F0
+TEST_LOAD_IDS = (TEST_LOAD_HIGH_ID, TEST_LOAD_MID_ID, TEST_LOAD_LOW_ID)
 WIRELESS_DATA_BASE = 0x380
 
 
@@ -28,6 +30,8 @@ def describe(can_id: int) -> MessageInfo:
         return MessageInfo(can_id, "Carga de ensaio, alta prioridade", "Ensaio")
     if can_id == TEST_LOAD_LOW_ID:
         return MessageInfo(can_id, "Carga de ensaio, baixa prioridade", "Ensaio")
+    if can_id == TEST_LOAD_MID_ID:
+        return MessageInfo(can_id, "Carga de ensaio, prioridade intermediária", "Ensaio")
     if can_id == 0x050:
         return MessageInfo(can_id, "Eleição: presença", "Coordenação")
     if can_id == 0x060:

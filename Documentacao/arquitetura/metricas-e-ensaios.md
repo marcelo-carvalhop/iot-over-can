@@ -163,6 +163,10 @@ Regras que impedem uma decisão de deixar o sensor sem responsável:
 | O Node que aceita o pedido e não ouve o sensor em 15 s publica o vínculo como `STALE` | o vínculo não fica parado em `ASSOCIATING`; o líder pode escolher outro Node |
 | As observações de um Node declarado ausente são descartadas | um Node que saiu do ar não é escolhido com base no que relatou antes de sair |
 | Um líder que retoma de uma parada do próprio laço reinicia a contagem de silêncio dos vínculos e descarta as observações | ele não age com uma tabela que envelheceu enquanto estava parado |
+| Em `SENSOR_LOST`, o destino precisa observar o sensor sem interrupção por 6 s (`IOC_FO_SETTLE_MS`, mais que um ciclo de reenvio das observações) | quando um sensor `LOST` reaparece, todos os Nodes o veem quase ao mesmo tempo; o responsável tem esse prazo para também observá-lo |
+| Em `SENSOR_LOST`, nada é decidido se o responsável observou o sensor depois do último estado que publicou | a volta dele a `ONLINE` está a caminho, ainda que o quadro de estado não tenha chegado ao líder |
+
+As duas últimas regras corrigem uma disputa encontrada pela bancada virtual com a fase sorteada (`Documentacao/pesquisa/metodologia.md`, seção 3.3). Num ensaio de sensor desligado com 50 % de carga, o sensor reapareceu, e o líder fez a varredura de 1 s entre a observação do Node 2 (−68 dBm) e o novo estado do responsável (Node 1, −50 dBm). Com isso, moveu o sensor para o Node de sinal pior, e a telemetria só voltou 16,8 s depois, em vez de 1,5 s. Isso aconteceu em 1 de 30 repetições. Com fase fixa, a disputa nunca aparecia.
 
 O pedido usa o formato dos quadros de associação, em identificadores próprios do líder (`0x302`/`0x303`), com ações próprias (`0x11` e `0x12`), o Node de origem e o RSSI nos dois últimos bytes. Os identificadores `0x300`/`0x301` ficam só com a Probe 00: dois transmissores no mesmo identificador poderiam colidir sem arbitragem. Um Node só aceita as ações de reassociação em `0x302`/`0x303`, e só aceita ali essas ações. A Probe 00 registra a decisão:
 

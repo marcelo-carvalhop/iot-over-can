@@ -378,6 +378,14 @@ static void test_codecs(void) {
     CHECK(link2.stream_period_ms == 1000 && link2.rtt_100us == IOC_WD_RTT_UNKNOWN);
     CHECK(!ioc_wd_link_decode(buf, IOC_WD_LINK_LEN - 1, &link2));
 
+    ioc_wd_linkstats st = {31, 29, 88, 412, 12, 57}, st2;
+    CHECK(ioc_wd_linkstats_encode(&st, buf) == IOC_WD_LINKSTATS_LEN &&
+          ioc_wd_linkstats_decode(buf, IOC_WD_LINKSTATS_LEN, &st2));
+    CHECK(st2.crypto_rx_us == 31 && st2.crypto_tx_us == 29 && st2.crypto_max_us == 88);
+    CHECK(st2.handshake_us == 412 && st2.bridge_avg_100us == 12 && st2.bridge_max_100us == 57);
+    CHECK(!ioc_wd_linkstats_decode(buf, IOC_WD_LINKSTATS_LEN - 1, &st2));
+    CHECK(ioc_wd_segment_count(IOC_WD_LINKSTATS_LEN) == 3);  /* 0,6 quadro/s por sensor */
+
     ioc_wd_config cfg = {1, 1, 512, 1000.0f, 1000.0f, 4.0f, 1.0f, 1, 0x02}, cfg2;
     CHECK(ioc_wd_config_encode(&cfg, buf) == IOC_WD_CONFIG_LEN && ioc_wd_config_decode(buf, IOC_WD_CONFIG_LEN, &cfg2));
     CHECK(cfg2.window_size == 512 && cfg2.stalta == 4.0f && cfg2.status == 1 && cfg2.profile == 0x02);

@@ -95,6 +95,7 @@ static void on_xfer(ioc_pcache *c, uint16_t id, const uint8_t *data, uint8_t own
     /* DTC e confirmações de comando são eventos; os demais tipos, estado. */
     if (kind == IOC_WD_KIND_DTC || kind == IOC_WD_KIND_CMD_ACK) mailbox_push(c, id, data, 8, own, now);
     if (kind == IOC_WD_KIND_CMD_ACK || kind == IOC_WD_KIND_DTC) return;
+    if (kind == IOC_WD_KIND_LINKSTATS) return;  /* medidas de pesquisa: o painel não as usa */
 
     ioc_pcache_xfer *slot = NULL;
     ioc_pcache_xfer *free_slot = NULL;

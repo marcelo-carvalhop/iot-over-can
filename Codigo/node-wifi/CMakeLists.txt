@@ -36,6 +36,7 @@ add_executable(edge_node_firmware
     edge_link.c
     ${IOC_LINK_DIR}/ioc_sha256.c
     ${IOC_LINK_DIR}/ioc_link.c
+    ${IOC_LINK_DIR}/ioc_bench.c
 )
 
 # Adiciona diretórios de cabeçalho (inclui também lwipopts.h, que precisa

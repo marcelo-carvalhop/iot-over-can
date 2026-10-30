@@ -20,7 +20,9 @@
     "metrics_and_experiments": "Documentacao/arquitetura/metricas-e-ensaios.md",
     "can_fd_readiness": "Documentacao/arquitetura/predisposicao-can-fd.md",
     "virtual_bench": "Codigo/node-can/test/host/sim_network.cpp",
-    "replays": "Front/replays"
+    "replays": "Front/replays",
+    "research_toolkit": "Pesquisa",
+    "research_methodology": "Documentacao/pesquisa/metodologia.md"
   },
   "hardware": {
     "probe": "ESP32 + MCP2515, Node ID 0, instrumentação externa",
@@ -78,7 +80,8 @@
     "alarmes por limiar definidos pelo operador para cada sensor, com histerese, intercorrências e persistência",
     "gravação das sessões seriais reais no formato de --replay, com segredos mascarados",
     "fuzz determinístico dos decodificadores do enlace e do plano de dados (ASan/UBSan) e das linhas da TUI",
-    "vínculos dos sensores gravados na NVS dos Nodes e retomados depois de um reinício, sem disputar o que outro Node assumiu"
+    "vínculos dos sensores gravados na NVS dos Nodes e retomados depois de um reinício, sem disputar o que outro Node assumiu",
+    "instrumento de pesquisa: carimbos t_us da Probe, eco no plano de dados com amostragem de Poisson e fase da janela sorteada por repetição, carga com semente e prioridade MID/MIX, custo da criptografia no Node e BENCH CRYPTO nas placas, parâmetros L/H/T da máquina de estados, desenho fatorial com sementes, coleta com proveniência e análise com IC, Wilson, Hedges, Cliff e Holm"
   ],
   "pending": [
     "validação em bancada do plano de dados wireless",
@@ -89,7 +92,8 @@
     "entrega da chave do sensor pela estação, sem chave mestra nos Nodes",
     "verificação FIDO2/OTP real da chave física",
     "validação em bancada do sensor acústico: calibrador de 94 dB, ocupação do núcleo 1 nas duas placas, comparação com medidor de nível sonoro e tacômetro óptico",
-    "experimento comparativo em CAN FD"
+    "experimento comparativo em CAN FD",
+    "campanha da bancada física do desenho Pesquisa/desenhos/bancada_fisica.json (30 repetições por condição)"
   ],
   "validation": {
     "automated": "testes nativos (incluindo o DSP acústico e o fuzz dos decodificadores), simulação do plano de dados, simulação da PIO I2S, bancada virtual com dezessete cenários e suíte da TUI",

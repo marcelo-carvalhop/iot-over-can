@@ -22,6 +22,7 @@
 #include "can_ids.h"
 #include "net_metrics.h"
 #include "node_config.h"
+#include "pesquisa.h"
 
 #include "ioc_link.h"
 #include "ioc_sha256.h"
@@ -58,7 +59,7 @@ constexpr uint32_t HANDSHAKE_TIMEOUT_MS = 5000;
 constexpr uint32_t LINK_REPORT_MS = 5000;
 constexpr uint32_t APPLY_TIMEOUT_MS = 3000;
 constexpr uint32_t FFT_TIMEOUT_MS = 5000;
-constexpr uint16_t STREAM_PERIOD_DEFAULT_MS = 1000;
+constexpr uint16_t STREAM_PERIOD_DEFAULT_MS = IOT_STREAM_PERIOD_MS;
 constexpr uint16_t STREAM_PERIOD_MIN_MS = 200;
 constexpr uint16_t STREAM_PERIOD_MAX_MS = 10000;
 constexpr uint8_t  TX_QUEUE_LEN = 8;
@@ -76,6 +77,8 @@ constexpr uint32_t HELLO_GUARD_MS = 1000;       // um handshake recente não é 
 constexpr uint16_t ACK_DETAIL_TIMEOUT = 0xFFFF;
 constexpr uint16_t ACK_DETAIL_CONFIG_UNKNOWN = 0xFFFE;
 constexpr uint16_t ACK_DETAIL_PROFILE_MISMATCH = 0xFFFD; // comando de outro tipo de sensor
+constexpr uint16_t ACK_DETAIL_BUSY = 0xFFFC;             // eco anterior ainda sem resposta
+constexpr uint32_t ECHO_TIMEOUT_US = 2000000;            // eco pelo sensor sem PONG
 constexpr uint8_t  MAX_RX_DATAGRAMS_PER_POLL = 4;
 constexpr uint8_t  PROBE_PENDING_LEN = 12;
 // Painel em papel eletrônico (perfil 0x04).
@@ -96,6 +99,7 @@ struct PendingHandshake {
   IPAddress peerIp;
   uint16_t peerPort = 0;
   uint32_t startedMs = 0;
+  uint32_t cpuUs = 0;         // pesquisa: CPU da criptografia desta autenticação
 };
 
 struct SensorConfig {
@@ -155,6 +159,24 @@ struct Link {
   uint16_t rtt100us = IOC_WD_RTT_UNKNOWN;
   uint16_t rttMax100us = IOC_WD_RTT_UNKNOWN;
   uint8_t sessionSensorNonce[IOC_LINK_NONCE_LEN] = {0}; // nonce do HELLO que originou a sessão
+
+  // Pesquisa (domínio de relógio do Node), na janela entre dois relatórios:
+  // custo da criptografia por datagrama e da ponte Wi-Fi -> CAN.
+  uint32_t cryptoRxSumUs = 0;
+  uint16_t cryptoRxN = 0;
+  uint32_t cryptoTxSumUs = 0;
+  uint16_t cryptoTxN = 0;
+  uint32_t cryptoMaxUs = 0;
+  uint32_t handshakeUs = IOC_WD_RTT_UNKNOWN;
+  uint64_t bridgeSumUs = 0;
+  uint16_t bridgeN = 0;
+  uint32_t bridgeMaxUs = 0;
+  // Eco pelo sensor (IOC_WD_OP_ECHO, caminho 1): PING próprio, sem misturar
+  // com o PING periódico de vivacidade.
+  bool echoPending = false;
+  uint8_t echoSeq = 0;
+  uint32_t echoCounter = 0;
+  uint64_t echoSentUs = 0;
 
   // Um HELLO recebido durante uma sessão não a derruba: a troca só ocorre
   // quando o CONFIRM do novo handshake é autenticado.
@@ -222,8 +244,21 @@ struct TxTransfer {
   uint8_t transfer = 0;
   uint8_t len = 0;
   uint8_t next = 0;
+  uint64_t originUs = 0;  // recepção do datagrama que originou a transferência (0 = local)
   uint8_t data[IOC_WD_MAX_PAYLOAD] = {0};
 };
+
+// Instante de recepção do datagrama em tratamento (domínio do Node); 0 fora dele.
+uint64_t rxDatagramUs = 0;
+// Duração do último selo HMAC feito por sendEnvelope().
+uint32_t lastSealUs = 0;
+
+uint32_t elapsedUs(uint64_t since) {
+  const uint64_t d = pesquisaMonoUs() - since;
+  return d > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(d);
+}
+
+uint16_t clampU16(uint32_t v) { return v >= IOC_WD_RTT_UNKNOWN ? static_cast<uint16_t>(IOC_WD_RTT_UNKNOWN - 1u) : static_cast<uint16_t>(v); }
 
 Link links[MAX_LINKS];
 uint8_t masterKey[IOC_LINK_KEY_LEN] = {0};
@@ -316,6 +351,7 @@ bool queueTransfer(uint8_t child, uint8_t kind, const uint8_t* payload, size_t l
   slot.transfer = static_cast<uint8_t>(txTransferCounter++ & 0x07u);
   slot.len = static_cast<uint8_t>(len);
   slot.next = 0;
+  slot.originUs = rxDatagramUs;
   memcpy(slot.data, payload, len);
   ++txCount;
   return true;
@@ -353,6 +389,16 @@ void drainTxQueue() {
       if (!canSend(msg)) return;
       ++slot.next;
     }
+    // Ponte Wi-Fi -> CAN: do datagrama recebido ao último segmento entregue ao controlador.
+    if (slot.originUs && (slot.kind == IOC_WD_KIND_TELEMETRY || slot.kind == IOC_WD_KIND_ACOUSTIC)) {
+      Link* origin = findLinkByChild(slot.child);
+      if (origin) {
+        const uint32_t us = elapsedUs(slot.originUs);
+        origin->bridgeSumUs += us;
+        if (origin->bridgeN < 0xFFFF) ++origin->bridgeN;
+        if (us > origin->bridgeMaxUs) origin->bridgeMaxUs = us;
+      }
+    }
     if (slot.kind == IOC_WD_KIND_SPECTRUM) txNextTransferAtMs = now + SPECTRUM_GAP_MS;
     txHead = static_cast<uint8_t>((txHead + 1u) % TX_QUEUE_LEN);
     --txCount;
@@ -372,6 +418,32 @@ int8_t stationRssi() {
   memset(&list, 0, sizeof(list));
   if (esp_wifi_ap_get_sta_list(&list) != ESP_OK || list.num != 1) return 0;
   return static_cast<int8_t>(list.sta[0].rssi);
+}
+
+// Medidas de pesquisa da janela, logo após o relatório LINK; só com sessão
+// ou com alguma medida (um vínculo ocioso não gera tráfego extra).
+void publishLinkStats(Link& link) {
+  const bool any = link.cryptoRxN || link.cryptoTxN || link.bridgeN || link.handshakeUs != IOC_WD_RTT_UNKNOWN;
+  if (!link.secure && !any) return;
+  ioc_wd_linkstats st;
+  st.crypto_rx_us = link.cryptoRxN ? clampU16(link.cryptoRxSumUs / link.cryptoRxN) : IOC_WD_RTT_UNKNOWN;
+  st.crypto_tx_us = link.cryptoTxN ? clampU16(link.cryptoTxSumUs / link.cryptoTxN) : IOC_WD_RTT_UNKNOWN;
+  st.crypto_max_us = (link.cryptoRxN || link.cryptoTxN) ? clampU16(link.cryptoMaxUs) : IOC_WD_RTT_UNKNOWN;
+  st.handshake_us = link.handshakeUs == IOC_WD_RTT_UNKNOWN ? IOC_WD_RTT_UNKNOWN : clampU16(link.handshakeUs);
+  st.bridge_avg_100us = link.bridgeN ? clampU16(static_cast<uint32_t>(link.bridgeSumUs / link.bridgeN / 100u))
+                                     : IOC_WD_RTT_UNKNOWN;
+  st.bridge_max_100us = link.bridgeN ? clampU16(link.bridgeMaxUs / 100u) : IOC_WD_RTT_UNKNOWN;
+  link.cryptoRxSumUs = link.cryptoTxSumUs = link.cryptoMaxUs = 0;  // nova janela
+  link.cryptoRxN = link.cryptoTxN = 0;
+  link.bridgeSumUs = 0;
+  link.bridgeN = 0;
+  link.bridgeMaxUs = 0;
+  uint8_t raw[IOC_WD_LINKSTATS_LEN];
+  ioc_wd_linkstats_encode(&st, raw);
+  const uint64_t keep = rxDatagramUs;
+  rxDatagramUs = 0;  // relatórios não são ponte de dados do sensor
+  queueTransfer(link.childId, IOC_WD_KIND_LINKSTATS, raw, sizeof(raw));
+  rxDatagramUs = keep;
 }
 
 void publishLink(Link& link, bool force = false) {
@@ -397,6 +469,7 @@ void publishLink(Link& link, bool force = false) {
   uint8_t raw[IOC_WD_LINK_LEN];
   ioc_wd_link_encode(&report, raw);
   queueTransfer(link.childId, IOC_WD_KIND_LINK, raw, sizeof(raw));
+  publishLinkStats(link);
 }
 
 void publishConfig(const Link& link, uint8_t status) {
@@ -797,8 +870,10 @@ void updateOfferAdvertising() {
 
 bool sendEnvelope(const uint8_t* key, uint8_t type, uint32_t counter, const void* payload,
                   size_t len, const IPAddress& ip, uint16_t port) {
+  const uint64_t sealStart = pesquisaMonoUs();
   const size_t total = ioc_env_seal(key, type, counter, static_cast<const uint8_t*>(payload), len,
                                     txDatagram, sizeof(txDatagram));
+  lastSealUs = elapsedUs(sealStart);
   if (total == 0) return false;
   if (!udp.beginPacket(ip, port)) return false;
   udp.write(txDatagram, total);
@@ -807,8 +882,12 @@ bool sendEnvelope(const uint8_t* key, uint8_t type, uint32_t counter, const void
 
 bool sendToSensor(Link& link, const void* inner, size_t len) {
   if (!link.secure || link.txCounter == 0xFFFFFFFFu) return false;
-  return sendEnvelope(link.sessionKey, IOC_MSG_DATA_DOWN, ++link.txCounter, inner, len,
-                      link.peerIp, link.peerPort);
+  const bool sent = sendEnvelope(link.sessionKey, IOC_MSG_DATA_DOWN, ++link.txCounter, inner, len,
+                                 link.peerIp, link.peerPort);
+  link.cryptoTxSumUs += lastSealUs;
+  if (link.cryptoTxN < 0xFFFF) ++link.cryptoTxN;
+  if (lastSealUs > link.cryptoMaxUs) link.cryptoMaxUs = lastSealUs;
+  return sent;
 }
 
 void sendPing(Link& link) {
@@ -826,10 +905,18 @@ void sendPing(Link& link) {
 // O sensor devolve no PONG o contador do PING. A medida inclui o tempo de
 // processamento do sensor e o intervalo até este Node ler o datagrama.
 void handlePong(Link& link, const uint8_t* inner, size_t len) {
-  if (!link.pingPending || len < sizeof(Payload_Heartbeat)) return;
+  if (len < sizeof(Payload_Heartbeat)) return;
   Payload_Heartbeat pong;
   memcpy(&pong, inner, sizeof(pong));
-  if (pong.request_counter != link.pingCounter) return;
+  if (link.echoPending && pong.request_counter == link.echoCounter) {
+    // Eco de pesquisa: o detalhe da confirmação leva a ida e volta Wi-Fi medida
+    // aqui (domínio do Node), em 0,1 ms; a Probe mede o total no domínio dela.
+    link.echoPending = false;
+    publishAck(link.childId, link.echoSeq, IOC_WD_OP_ECHO, IOC_WD_ACK_APPLIED,
+               clampU16(elapsedUs(link.echoSentUs) / 100u));
+    return;
+  }
+  if (!link.pingPending || pong.request_counter != link.pingCounter) return;
   link.pingPending = false;
   const uint32_t elapsed100us = (micros() - link.pingSentUs) / 100u;
   const uint16_t rtt = elapsed100us >= IOC_WD_RTT_UNKNOWN ? static_cast<uint16_t>(IOC_WD_RTT_UNKNOWN - 1u)
@@ -1374,12 +1461,14 @@ void handleHello(const uint8_t* datagram, size_t len, const ioc_env_view& view,
     nodeRepeatable(IOC_WD_EV_HELLO_REJECT, IOC_WD_EVR_NOT_BOUND, ip[3], hello.uuid);
     return;
   }
+  const uint64_t helloStart = pesquisaMonoUs();
   if (!ioc_env_verify(link->devKey, datagram, len)) {
     if (link->authFailures < 0xFFFF) ++link->authFailures;
     diagDatagram("HELLO", ip, port, hello.uuid, "chave nao confere", true);
     linkRepeatable(*link, IOC_WD_EV_HELLO_REJECT, IOC_WD_EVR_KEY, ip[3]);
     return;
   }
+  uint32_t helloCpuUs = elapsedUs(helloStart);
   if (hello.protocol != IOC_LINK_VERSION) {
     diagDatagram("HELLO", ip, port, hello.uuid, "versao de protocolo diferente", true);
     linkRepeatable(*link, IOC_WD_EV_HELLO_REJECT, IOC_WD_EVR_PROTOCOL, ip[3]);
@@ -1413,8 +1502,11 @@ void handleHello(const uint8_t* datagram, size_t len, const ioc_env_view& view,
     pending.startedMs = millis();
     memcpy(pending.sensorNonce, hello.sensor_nonce, IOC_LINK_NONCE_LEN);
     fillRandom(pending.nodeNonce, IOC_LINK_NONCE_LEN);
+    const uint64_t deriveStart = pesquisaMonoUs();
     ioc_link_derive_session_key(link->devKey, link->uuid, NODE_ID, pending.sensorNonce,
                                 pending.nodeNonce, pending.sessionKey);
+    helloCpuUs += elapsedUs(deriveStart);
+    pending.cpuUs = 0;
   }
   pending.peerIp = ip;
   pending.peerPort = port;
@@ -1427,6 +1519,7 @@ void handleHello(const uint8_t* datagram, size_t len, const ioc_env_view& view,
   uint8_t raw[IOC_CHALLENGE_LEN];
   ioc_challenge_encode(&challenge, raw);
   const bool sent = sendEnvelope(link->devKey, IOC_MSG_CHALLENGE, 0, raw, sizeof(raw), ip, port);
+  pending.cpuUs += helloCpuUs + lastSealUs;
   diagDatagram("HELLO", ip, port, hello.uuid, sent ? "conferido, CHALLENGE enviado" : "conferido, falha ao enviar o CHALLENGE",
                false);
   if (sent) {
@@ -1440,6 +1533,8 @@ void handleHello(const uint8_t* datagram, size_t len, const ioc_env_view& view,
 // Promove o handshake pendente a sessão em vigor. `counter` é o contador do
 // datagrama que acabou de ser autenticado com a nova chave.
 void promotePending(Link& link, const IPAddress& ip, uint16_t port, uint32_t counter) {
+  link.handshakeUs = link.pending.cpuUs;
+  link.echoPending = false;
   memcpy(link.sessionKey, link.pending.sessionKey, IOC_LINK_KEY_LEN);
   memcpy(link.sessionSensorNonce, link.pending.sensorNonce, IOC_LINK_NONCE_LEN);
   ioc_secure_zero(link.pending.sessionKey, IOC_LINK_KEY_LEN);
@@ -1487,7 +1582,9 @@ void handleConfirm(const uint8_t* datagram, size_t len, const ioc_env_view& view
   for (uint8_t i = 0; i < MAX_LINKS; ++i) {
     Link& link = links[i];
     if (!link.used || !link.pending.active) continue;
+    const uint64_t confirmStart = pesquisaMonoUs();
     if (!ioc_env_verify(link.pending.sessionKey, datagram, len)) continue;
+    link.pending.cpuUs += elapsedUs(confirmStart);
     if (!ioc_ct_equal(confirm.node_nonce, link.pending.nodeNonce, IOC_LINK_NONCE_LEN) ||
         !ioc_ct_equal(confirm.sensor_nonce, link.pending.sensorNonce, IOC_LINK_NONCE_LEN)) {
       continue;
@@ -1518,7 +1615,15 @@ void handleDataUp(const uint8_t* datagram, size_t len, const ioc_env_view& view,
     }
     return;
   }
-  if (!ioc_env_verify(link->sessionKey, datagram, len)) {
+  const uint64_t verifyStart = pesquisaMonoUs();
+  const bool authentic = ioc_env_verify(link->sessionKey, datagram, len) != 0;
+  const uint32_t verifyUs = elapsedUs(verifyStart);
+  if (authentic) {
+    link->cryptoRxSumUs += verifyUs;
+    if (link->cryptoRxN < 0xFFFF) ++link->cryptoRxN;
+    if (verifyUs > link->cryptoMaxUs) link->cryptoMaxUs = verifyUs;
+  }
+  if (!authentic) {
     // O sensor pode ter refeito o handshake (reinício, CONFIRM perdido) do
     // mesmo endereço enquanto o Node ainda guarda a sessão anterior.
     if (link->pending.active && ioc_env_verify(link->pending.sessionKey, datagram, len)) {
@@ -1556,12 +1661,15 @@ void receiveDatagrams() {
       diagDatagram("datagrama", ip, port, 0, "formato desconhecido, descartado", true);
       continue;
     }
+    // Medida da ponte: do instante em que o laço lê o datagrama.
+    rxDatagramUs = view.type == IOC_MSG_DATA_UP ? pesquisaMonoUs() : 0;
     switch (view.type) {
       case IOC_MSG_HELLO:   handleHello(rxDatagram, got, view, ip, port); break;
       case IOC_MSG_CONFIRM: handleConfirm(rxDatagram, got, view, ip, port); break;
       case IOC_MSG_DATA_UP: handleDataUp(rxDatagram, got, view, ip, port); break;
       default: break;
     }
+    rxDatagramUs = 0;
   }
 }
 
@@ -1596,6 +1704,10 @@ void maintainLinks() {
       } else if (now - link.lastPingMs >= PING_INTERVAL_MS) {
         sendPing(link);
       }
+    }
+    if (link.echoPending && elapsedUs(link.echoSentUs) > ECHO_TIMEOUT_US) {
+      link.echoPending = false;
+      publishAck(link.childId, link.echoSeq, IOC_WD_OP_ECHO, IOC_WD_ACK_REJECTED, ACK_DETAIL_TIMEOUT);
     }
 
     if (link.applyPending && now - link.applySentMs > APPLY_TIMEOUT_MS) {
@@ -1691,6 +1803,30 @@ void handleDataCommand(const ioc_wd_command& cmd) {
     publishLink(*link, true);
     publishConfig(*link, 0);
     publishAck(link->childId, cmd.seq, cmd.opcode, IOC_WD_ACK_APPLIED, 0);
+    return;
+  }
+  // Eco de pesquisa. Caminho 0: o Node confirma na hora (ida e volta só no
+  // CAN). Caminho 1: o Node manda um PING ao sensor pela sessão e confirma no
+  // PONG, com a parte Wi-Fi medida por ele no detalhe da confirmação.
+  if (cmd.opcode == IOC_WD_OP_ECHO) {
+    if (cmd.arg[0] == 0) {
+      publishAck(link->childId, cmd.seq, cmd.opcode, IOC_WD_ACK_APPLIED, 0);
+    } else if (!link->secure) {
+      publishAck(link->childId, cmd.seq, cmd.opcode, IOC_WD_ACK_NO_LINK, 0);
+    } else if (link->echoPending) {
+      publishAck(link->childId, cmd.seq, cmd.opcode, IOC_WD_ACK_REJECTED, ACK_DETAIL_BUSY);
+    } else {
+      Payload_Heartbeat ping;
+      memset(&ping, 0, sizeof(ping));
+      ping.magic_header = NET_MAGIC_HEADER;
+      ping.cmd_type = CMD_PING;
+      ping.request_counter = link->txCounter + 1u;
+      link->echoCounter = ping.request_counter;
+      link->echoSeq = cmd.seq;
+      link->echoSentUs = pesquisaMonoUs();
+      link->echoPending = sendToSensor(*link, &ping, sizeof(ping));
+      if (!link->echoPending) publishAck(link->childId, cmd.seq, cmd.opcode, IOC_WD_ACK_NO_LINK, 0);
+    }
     return;
   }
 
@@ -1815,13 +1951,51 @@ struct ProbePending {
   uint8_t child = 0;
   bool report = false;       // false para os SET intermediários de um CONFIG
   uint32_t sentMs = 0;       // envio do comando, para o tempo de resposta
+  uint64_t sentUs = 0;       // o mesmo, em microssegundos (pesquisa)
   char tx[12] = {0};
   char action[20] = {0};
 };
 
+/*
+ * Trem de ecos (pesquisa). ECHO <node>.<filho> <n> <período_ms> [LOCAL|SENSOR] [semente]
+ * envia n comandos IOC_WD_OP_ECHO e mede, no relógio da Probe, do envio do
+ * quadro 0x304 à confirmação remontada (0x380+N). LOCAL: só o caminho CAN do
+ * plano de dados; SENSOR: inclui a ida e volta Wi-Fi ao sensor, que o Node
+ * mede no relógio dele e informa à parte (wl_us). Com semente (não nula), os
+ * intervalos entre sondas são exponenciais de média <período_ms> (amostragem
+ * de Poisson, ver pesquisa.h); sem ela, o período é fixo.
+ *   [GW] ECHO_START node=2 child=1 path=SENSOR count=30 period_ms=500 sampling=POISSON seed=7 t_us=...
+ *   [GW] ECHO node=2 child=1 path=SENSOR n=1 seq=7 status=APPLIED rtt_us=14250 wl_us=11800 t_us=...
+ *   [GW] ECHO_DONE node=2 child=1 path=SENSOR sent=30 received=30 lost=0 min_us=... avg_us=... max_us=...
+ */
+constexpr uint8_t PROBE_ECHO_PENDING = 8;
+constexpr uint32_t PROBE_ECHO_TIMEOUT_US = 3000000;
+constexpr uint16_t PROBE_ECHO_MAX = 10000;
+
+struct ProbeEcho {
+  bool active = false;
+  uint8_t node = 0;
+  uint8_t child = 0;
+  bool viaSensor = false;
+  uint16_t total = 0;
+  uint16_t sent = 0;
+  uint16_t received = 0;
+  uint16_t lost = 0;
+  uint32_t periodUs = 0;
+  uint32_t seed = 0;     // 0: período fixo; senão, amostragem de Poisson
+  uint32_t rng = 0;
+  uint64_t nextUs = 0;
+  uint64_t sumUs = 0;
+  uint32_t minUs = 0xFFFFFFFFu;
+  uint32_t maxUs = 0;
+  struct { bool used; uint8_t seq; uint16_t n; uint64_t sentUs; } pend[PROBE_ECHO_PENDING];
+};
+
 ioc_wd_rx probeRx[32];
 ProbePending probePending[PROBE_PENDING_LEN];
+ProbeEcho probeEcho;
 uint8_t probeSeq = 0;
+void probeEchoAck(uint8_t node, uint8_t child, const ioc_wd_ack& ack);
 uint8_t probePendingCursor = 0;
 
 const char* acquisitionName(uint8_t mode) {
@@ -1886,7 +2060,7 @@ void probePrintTelemetry(uint8_t node, uint8_t child, const ioc_wd_telemetry& t)
     "TEL NODE=%u CHILD=%u SEQ=%u GW_TS_MS=%lu MODE=%s ACQ=%s WIN=%u AXIS=%s FFT_VALID=%s "
     "RATE_REQ_HZ=%.2f RATE_EFF_HZ=%.2f RMS=%.5f RMS_UNIT=m/s2 KURT=%.5f CREST=%.4f "
     "PEAK_HZ=%.3f PEAK_AMP=%.6f ENT=%.4f PPV_MM_S=%.4f STA_LTA=%s CLIP=%s "
-    "BATT_PCT=%u BATT_MV=%u DTC=0x%04X DTC_COUNT=%u\n",
+    "BATT_PCT=%u BATT_MV=%u DTC=0x%04X DTC_COUNT=%u T_US=%llu\n",
     static_cast<unsigned>(node), static_cast<unsigned>(child), static_cast<unsigned>(t.seq),
     static_cast<unsigned long>(millis()), modeName(t.mode), acquisitionName(t.acquisition),
     static_cast<unsigned>(t.window_size), (t.axis_mask & AXIS_MASK_VECTOR) ? "VECTOR" : "Z",
@@ -1899,7 +2073,8 @@ void probePrintTelemetry(uint8_t node, uint8_t child, const ioc_wd_telemetry& t)
     (t.flags & IOC_WD_TEL_FLAG_STALTA) ? "YES" : "NO",
     (t.flags & IOC_WD_TEL_FLAG_CLIPPING) ? "YES" : "NO",
     static_cast<unsigned>(t.battery_pct), static_cast<unsigned>(t.battery_mv),
-    static_cast<unsigned>(t.dtc_code), static_cast<unsigned>(t.dtc_count));
+    static_cast<unsigned>(t.dtc_code), static_cast<unsigned>(t.dtc_count),
+    static_cast<unsigned long long>(pesquisaMonoUs()));
 }
 
 void probePrintSpectrum(uint8_t node, uint8_t child, const ioc_wd_spectrum_header& hdr,
@@ -2051,11 +2226,13 @@ void probePrintAck(uint8_t node, uint8_t child, const ioc_wd_ack& ack) {
     if (pending.report || (final && ack.status != IOC_WD_ACK_APPLIED)) {
       const char* reason = ackReason(ack);
       // RTT_MS: do envio do comando pela Probe até a chegada desta confirmação.
-      Serial.printf("ACK COMMAND=%s STATE=%s TX=%s NODE=%u CHILD=%u DETAIL=%u%s%s RTT_MS=%lu\n",
+      Serial.printf("ACK COMMAND=%s STATE=%s TX=%s NODE=%u CHILD=%u DETAIL=%u%s%s RTT_MS=%lu RTT_US=%lu T_US=%llu\n",
                     pending.action, ackStateName(ack.status), pending.tx,
                     static_cast<unsigned>(node), static_cast<unsigned>(child),
                     static_cast<unsigned>(ack.detail), reason[0] ? " REASON=" : "", reason,
-                    static_cast<unsigned long>(millis() - pending.sentMs));
+                    static_cast<unsigned long>(millis() - pending.sentMs),
+                    static_cast<unsigned long>(pesquisaMonoUs() - pending.sentUs),
+                    static_cast<unsigned long long>(pesquisaMonoUs()));
     }
     // Um SET fica concluído ao ser aceito pelo Node; os demais aguardam o resultado final.
     if (final || !pending.report) pending.used = false;
@@ -2118,7 +2295,10 @@ void probeHandleTransfer(uint8_t node, const ioc_wd_rx_slot& slot) {
     }
     case IOC_WD_KIND_CMD_ACK: {
       ioc_wd_ack ack;
-      if (ioc_wd_ack_decode(slot.data, slot.total_len, &ack)) probePrintAck(node, child, ack);
+      if (ioc_wd_ack_decode(slot.data, slot.total_len, &ack)) {
+        if (ack.opcode == IOC_WD_OP_ECHO) probeEchoAck(node, child, ack);
+        else probePrintAck(node, child, ack);
+      }
       break;
     }
     case IOC_WD_KIND_DTC: {
@@ -2146,13 +2326,29 @@ void probeHandleTransfer(uint8_t node, const ioc_wd_rx_slot& slot) {
                    static_cast<unsigned>(link.rtt_max_100us % 10u));
         }
         Serial.printf("[GW] WIRELESS_LINK node=%u child=%u state=%s rssi=%d age_s=%u rx=%u "
-                      "auth_fail=%u replay=%u lost=%u stream=%s period_ms=%u rtt_ms=%s rtt_max_ms=%s\n",
+                      "auth_fail=%u replay=%u lost=%u stream=%s period_ms=%u rtt_ms=%s rtt_max_ms=%s t_us=%llu\n",
                       static_cast<unsigned>(node), static_cast<unsigned>(child),
                       linkStateName(link.state), static_cast<int>(link.wifi_rssi),
                       static_cast<unsigned>(link.session_age_s), static_cast<unsigned>(link.rx_datagrams),
                       static_cast<unsigned>(link.auth_failures), static_cast<unsigned>(link.replay_drops),
                       static_cast<unsigned>(link.lost_datagrams), link.stream_enabled ? "ON" : "OFF",
-                      static_cast<unsigned>(link.stream_period_ms), rtt, rttMax);
+                      static_cast<unsigned>(link.stream_period_ms), rtt, rttMax,
+                      static_cast<unsigned long long>(pesquisaMonoUs()));
+      }
+      break;
+    }
+    case IOC_WD_KIND_LINKSTATS: {
+      // Medidas de pesquisa no relógio do Node: -1 = sem amostra na janela.
+      ioc_wd_linkstats st;
+      if (ioc_wd_linkstats_decode(slot.data, slot.total_len, &st)) {
+        auto num = [](uint16_t v) { return v == IOC_WD_RTT_UNKNOWN ? -1L : static_cast<long>(v); };
+        auto tenth = [](uint16_t v) { return v == IOC_WD_RTT_UNKNOWN ? -1L : static_cast<long>(v) * 100L; };
+        Serial.printf("[GW] WIRELESS_STATS node=%u child=%u crypto_rx_us=%ld crypto_tx_us=%ld crypto_max_us=%ld "
+                      "handshake_us=%ld bridge_avg_us=%ld bridge_max_us=%ld t_us=%llu\n",
+                      static_cast<unsigned>(node), static_cast<unsigned>(child), num(st.crypto_rx_us),
+                      num(st.crypto_tx_us), num(st.crypto_max_us), num(st.handshake_us),
+                      tenth(st.bridge_avg_100us), tenth(st.bridge_max_100us),
+                      static_cast<unsigned long long>(pesquisaMonoUs()));
       }
       break;
     }
@@ -2209,6 +2405,7 @@ uint8_t probeSendCommand(uint8_t node, uint8_t child, uint8_t opcode, const uint
   pending.child = child;
   pending.report = report;
   pending.sentMs = millis();
+  pending.sentUs = pesquisaMonoUs();
   strncpy(pending.tx, tx, sizeof(pending.tx) - 1);
   pending.tx[sizeof(pending.tx) - 1] = '\0';
   strncpy(pending.action, action, sizeof(pending.action) - 1);
@@ -2384,6 +2581,165 @@ void probeHandleCommandLine(char* tokens[], uint8_t count) {
 
   // ACQ, WIFI e DTC_LIST existem apenas no console USB do sensor.
   probeReject(action, tx, "UNSUPPORTED_VIA_NODE");
+}
+
+
+/* ------------------------------------------------- trem de ecos (pesquisa) */
+
+void probeEchoFinish() {
+  ProbeEcho& e = probeEcho;
+  const uint32_t avg = e.received ? static_cast<uint32_t>(e.sumUs / e.received) : 0u;
+  Serial.printf("[GW] ECHO_DONE node=%u child=%u path=%s sent=%u received=%u lost=%u min_us=%ld avg_us=%lu "
+                "max_us=%lu t_us=%llu\n",
+                static_cast<unsigned>(e.node), static_cast<unsigned>(e.child), e.viaSensor ? "SENSOR" : "LOCAL",
+                static_cast<unsigned>(e.sent), static_cast<unsigned>(e.received), static_cast<unsigned>(e.lost),
+                e.received ? static_cast<long>(e.minUs) : -1L, static_cast<unsigned long>(avg),
+                static_cast<unsigned long>(e.maxUs), static_cast<unsigned long long>(pesquisaMonoUs()));
+  e.active = false;
+}
+
+void probeEchoAck(uint8_t node, uint8_t child, const ioc_wd_ack& ack) {
+  ProbeEcho& e = probeEcho;
+  const uint64_t now = pesquisaMonoUs();
+  for (auto& p : e.pend) {
+    if (!p.used || p.seq != ack.seq || node != e.node || child != e.child) continue;
+    p.used = false;
+    const uint32_t rtt = static_cast<uint32_t>(now - p.sentUs);
+    // LOCAL: qualquer confirmação fecha a ida e volta no CAN (sem sensor
+    // associado o Node responde UNKNOWN pelo mesmo caminho). SENSOR: só o PONG.
+    const bool ok = e.viaSensor ? ack.status == IOC_WD_ACK_APPLIED : true;
+    long wl = -1;
+    if (ok && e.viaSensor) wl = static_cast<long>(ack.detail) * 100L;
+    Serial.printf("[GW] ECHO node=%u child=%u path=%s n=%u seq=%u status=%s rtt_us=%ld wl_us=%ld t_us=%llu\n",
+                  static_cast<unsigned>(node), static_cast<unsigned>(child), e.viaSensor ? "SENSOR" : "LOCAL",
+                  static_cast<unsigned>(p.n), static_cast<unsigned>(ack.seq), ackStateName(ack.status),
+                  ok ? static_cast<long>(rtt) : -1L, wl, static_cast<unsigned long long>(now));
+    if (ok) {
+      ++e.received;
+      e.sumUs += rtt;
+      if (rtt < e.minUs) e.minUs = rtt;
+      if (rtt > e.maxUs) e.maxUs = rtt;
+    } else {
+      ++e.lost;
+    }
+    return;
+  }
+}
+
+uint32_t probeEchoInterval(ProbeEcho& e) {
+  return e.seed ? pesquisaPoissonUs(e.rng, e.periodUs) : e.periodUs;
+}
+
+void probeEchoPoll() {
+  ProbeEcho& e = probeEcho;
+  if (!e.active) return;
+  const uint64_t now = pesquisaMonoUs();
+  bool waiting = false;
+  for (auto& p : e.pend) {
+    if (!p.used) continue;
+    if (now - p.sentUs > PROBE_ECHO_TIMEOUT_US) {
+      p.used = false;
+      ++e.lost;
+      Serial.printf("[GW] ECHO node=%u child=%u path=%s n=%u seq=%u status=TIMEOUT rtt_us=-1 wl_us=-1 t_us=%llu\n",
+                    static_cast<unsigned>(e.node), static_cast<unsigned>(e.child), e.viaSensor ? "SENSOR" : "LOCAL",
+                    static_cast<unsigned>(p.n), static_cast<unsigned>(p.seq), static_cast<unsigned long long>(now));
+    } else {
+      waiting = true;
+    }
+  }
+  if (e.sent < e.total && static_cast<int64_t>(now - e.nextUs) >= 0) {
+    auto* slot = &e.pend[0];
+    bool free = false;
+    for (auto& p : e.pend) {
+      if (!p.used) { slot = &p; free = true; break; }
+    }
+    if (free) {
+      ioc_wd_command cmd;
+      cmd.seq = ++probeSeq;
+      cmd.node_id = e.node;
+      cmd.child_id = e.child;
+      cmd.opcode = IOC_WD_OP_ECHO;
+      memset(cmd.arg, 0, sizeof(cmd.arg));
+      cmd.arg[0] = e.viaSensor ? 1 : 0;
+      CANMessage msg;
+      msg.id = CAN_ID_WIRELESS_DATA_CMD;
+      msg.len = IOC_WD_FRAME_LEN;
+      ioc_wd_command_encode(&cmd, msg.data);
+      // O instante é tomado antes de entregar o quadro: a espera na fila da
+      // Probe e a arbitragem fazem parte da medida.
+      slot->sentUs = pesquisaMonoUs();
+      if (canSend(msg)) {
+        netMetricsOnTransmit(msg);
+        slot->used = true;
+        slot->seq = cmd.seq;
+        slot->n = static_cast<uint16_t>(e.sent + 1u);
+        ++e.sent;
+        waiting = true;
+      }
+      e.nextUs = now + probeEchoInterval(e);
+    }
+  }
+  if (e.sent >= e.total && !waiting) probeEchoFinish();
+}
+
+bool isDecimal(const char* text) {
+  if (!text || !*text) return false;
+  for (const char* p = text; *p; ++p) {
+    if (*p < '0' || *p > '9') return false;
+  }
+  return true;
+}
+
+bool probeEchoCommand(const char* command) {
+  // ECHO <node>.<filho> <n> <período_ms> [LOCAL|SENSOR] [semente] | ECHO CANCEL
+  char line[80];
+  strncpy(line, command + 4, sizeof(line) - 1);
+  line[sizeof(line) - 1] = '\0';
+  char* save = nullptr;
+  char* target = strtok_r(line, " \t", &save);
+  if (target && strcasecmp(target, "CANCEL") == 0) {
+    if (probeEcho.active) probeEchoFinish();
+    return true;
+  }
+  char* countText = strtok_r(nullptr, " \t", &save);
+  char* periodText = strtok_r(nullptr, " \t", &save);
+  char* pathText = strtok_r(nullptr, " \t", &save);
+  char* seedText = strtok_r(nullptr, " \t", &save);
+  if (isDecimal(pathText) && !seedText) {  // ECHO 1.1 30 500 <semente>
+    seedText = pathText;
+    pathText = nullptr;
+  }
+  unsigned node = 0, child = 0;
+  const unsigned long count = countText ? strtoul(countText, nullptr, 10) : 0;
+  const unsigned long period = periodText ? strtoul(periodText, nullptr, 10) : 0;
+  const unsigned long seed = seedText ? strtoul(seedText, nullptr, 10) : 0;
+  const bool viaSensor = pathText && strcasecmp(pathText, "SENSOR") == 0;
+  if (!target || sscanf(target, "%u.%u", &node, &child) != 2 || node == 0 || node >= 32 || child == 0 ||
+      child > IOC_WD_MAX_CHILD || count == 0 || count > PROBE_ECHO_MAX || period < 20 || period > 60000 ||
+      (pathText && !viaSensor && strcasecmp(pathText, "LOCAL") != 0) || (seedText && !isDecimal(seedText)) ||
+      strtok_r(nullptr, " \t", &save) != nullptr) {
+    Serial.println("[GW] ECHO_ERROR use: ECHO <node>.<filho> <n 1..10000> <periodo_ms 20..60000> [LOCAL|SENSOR] "
+                   "[semente] | ECHO CANCEL");
+    return true;
+  }
+  if (probeEcho.active) probeEchoFinish();
+  probeEcho = ProbeEcho{};
+  probeEcho.active = true;
+  probeEcho.node = static_cast<uint8_t>(node);
+  probeEcho.child = static_cast<uint8_t>(child);
+  probeEcho.viaSensor = viaSensor;
+  probeEcho.total = static_cast<uint16_t>(count);
+  probeEcho.periodUs = static_cast<uint32_t>(period) * 1000u;
+  probeEcho.seed = static_cast<uint32_t>(seed);
+  probeEcho.rng = pesquisaSemente(probeEcho.seed);
+  // Com Poisson, também a primeira sonda espera um intervalo sorteado: o
+  // instante do comando não fica alinhado à primeira medida.
+  probeEcho.nextUs = pesquisaMonoUs() + (probeEcho.seed ? probeEchoInterval(probeEcho) : 0u);
+  for (auto& p : probeEcho.pend) p.used = false;
+  Serial.printf("[GW] ECHO_START node=%u child=%u path=%s count=%lu period_ms=%lu sampling=%s seed=%lu t_us=%llu\n",
+                node, child, viaSensor ? "SENSOR" : "LOCAL", count, period, seed ? "POISSON" : "PERIODIC", seed,
+                static_cast<unsigned long long>(pesquisaMonoUs()));
+  return true;
 }
 
 } // namespace
@@ -2570,7 +2926,10 @@ bool wirelessLinkSensorWaiting() {
 }
 
 void wirelessLinkPoll() {
-  if (NODE_ID == 0) return;
+  if (NODE_ID == 0) {
+    probeEchoPoll();
+    return;
+  }
   if (apOutageActive && millis() - apOutageStartMs >= apOutageDurationMs) {
     wirelessLinkInjectApOutage(0);
   }
@@ -2623,6 +2982,7 @@ bool wirelessLinkHandleCanMessage(const CANMessage& rx) {
 
 bool wirelessLinkHandleSerialCommand(const char* command) {
   if (NODE_ID != 0 || !command) return false;
+  if (strncasecmp(command, "ECHO ", 5) == 0) return probeEchoCommand(command);
   if (strncasecmp(command, "CMD ", 4) != 0) return false;
 
   static char line[192];

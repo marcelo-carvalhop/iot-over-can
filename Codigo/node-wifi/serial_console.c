@@ -23,6 +23,8 @@
 #include "config_validation.h"
 #include "device_identity.h"
 #include "edge_link.h"
+#include "hardware/clocks.h"
+#include "ioc_bench.h"
 
 extern OperationModeFSM main_get_active_fsm_mode(void);
 extern uint16_t         bite_get_current_status(void);
@@ -77,7 +79,7 @@ static bool serial_command_requires_auth(char *const tok[], int ntok) {
     if (str_ieq(tok[0], "HELP") || str_ieq(tok[0], "MENU") ||
         str_ieq(tok[0], "STATUS") || str_ieq(tok[0], "GET") ||
         str_ieq(tok[0], "PING") || str_ieq(tok[0], "VERSION") ||
-        str_ieq(tok[0], "AUTH")) return false;
+        str_ieq(tok[0], "AUTH") || str_ieq(tok[0], "BENCH")) return false;
     if (str_ieq(tok[0], "DTC") && (ntok < 2 || !str_ieq(tok[1], "CLEAR"))) return false;
     if (str_ieq(tok[0], "NET")) {
         if (ntok < 2) return false;
@@ -87,6 +89,14 @@ static bool serial_command_requires_auth(char *const tok[], int ntok) {
     return true;
 }
 
+
+/* Medição da criptografia do enlace (Pesquisa/): relógio de 1 us do RP2040. */
+static uint64_t bench_clock(void) { return time_us_64(); }
+static void bench_emit(const char *line, void *ctx) {
+    (void)ctx;
+    printf("%s\n", line);
+    watchdog_update();
+}
 
 static const char *yes_no(bool v) {
     return v ? "YES" : "NO";
@@ -239,6 +249,7 @@ static void print_menu(void) {
     printf("  NET WIFI CLEAR               (remove RAM provisioning)\n");
     printf("  AUTH STATUS|UNLOCK <token>|LOCK\n");
     printf("  VERSION\n");
+    printf("  BENCH CRYPTO [n]              (custo do HMAC do enlace nesta placa; pausa a aquisicao)\n");
     printf("  RESET                         (then RESET CONFIRM within 10 s)\n");
     printf("\n");
     printf("Ranges: RATE=4..1000 Hz, WINDOW_SIZE=128|256|512 samples\n");
@@ -595,6 +606,18 @@ static void process_line(char *line) {
                edge_link_key_mode_name(),
                (unsigned)edge_net_parent_node_id(), (unsigned)edge_net_child_id(),
                (unsigned)edge_net_auth_reject_count(), (unsigned)edge_net_replay_reject_count());
+        return;
+    }
+
+    if (str_ieq(tok[0], "BENCH")) {
+        if (ntok >= 2 && str_ieq(tok[1], "CRYPTO")) {
+            const unsigned long n = ntok >= 3 ? strtoul(tok[2], NULL, 10) : 0ul;
+            const int ops = ioc_bench_crypto("sensor", (uint16_t)(n > IOC_BENCH_MAX_N ? IOC_BENCH_MAX_N : n),
+                                             bench_clock, bench_emit, NULL);
+            printf("BENCH_DONE ops=%d cpu_mhz=%lu\n", ops, (unsigned long)(clock_get_hz(clk_sys) / 1000000u));
+            return;
+        }
+        print_err("Usage: BENCH CRYPTO [n]");
         return;
     }
 

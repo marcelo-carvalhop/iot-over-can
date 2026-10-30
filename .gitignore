@@ -29,6 +29,8 @@ logs/
 *.csv
 *.jsonl
 *.binlog
+# Tabelas do relatório de validação do método (pequenas, geradas de registros com proveniência).
+!Documentacao/pesquisa/validacao-virtual/*.csv
 
 # Editors / OS
 .vscode/
@@ -54,3 +56,7 @@ Documentacao/release-v*.md
 
 # Patches de trabalho não pertencem ao repositório
 *.patch
+
+# Campanhas de pesquisa: registros brutos ficam fora do repositório (regeneráveis pela semente na bancada virtual)
+Pesquisa/resultados/
+resultados/

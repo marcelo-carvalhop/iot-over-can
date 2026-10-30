@@ -117,8 +117,11 @@ def test_associated_wireless_child_keeps_node_authoritative_liveness() -> None:
 
 def test_wireless_liveness_uses_rf_tolerant_lease_and_scan_watchdog() -> None:
     source = (ROOT / "Codigo/node-can/src/wireless_discovery.cpp").read_text()
-    assert "ONLINE_STALE_MS = 15000" in source
-    assert "STALE_LOST_MS = 45000" in source
+    # Os prazos padrão ficam em pesquisa.h, ajustáveis na compilação para análise de sensibilidade.
+    params = (ROOT / "Codigo/node-can/include/pesquisa.h").read_text()
+    assert "ONLINE_STALE_MS = IOT_ASSOC_STALE_MS" in source and "#define IOT_ASSOC_STALE_MS 15000" in params
+    assert "STALE_LOST_MS = IOT_ASSOC_LOST_MS" in source and "#define IOT_ASSOC_LOST_MS 45000" in params
+    assert "#define IOT_ASSOC_HYSTERESIS_MS 0" in params
     assert "SCAN_WATCHDOG_MS = 2000" in source
     assert "setDuplicateFilter(0)" in source
     assert "isScanning()" in source

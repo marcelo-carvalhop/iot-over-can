@@ -166,6 +166,13 @@ static void test_assoc_flags(void) {
     CHECK(state == IOC_ASSOC_UNBOUND && a == 1);
 }
 
+/* Observações a cada 5 s de `from` até `to` (o reenvio dos Nodes). Com
+ * from = to - IOC_FO_SETTLE_MS, o candidato observa o sensor há um ciclo. */
+static void observe_since(ioc_fo_table *t, uint64_t uuid, uint8_t node, int8_t rssi, uint32_t from, uint32_t to) {
+    for (uint32_t x = from; (int32_t)(to - x) > 0; x += 5000u) ioc_fo_on_observation(t, x, node, uuid, rssi);
+    ioc_fo_on_observation(t, to, node, uuid, rssi);
+}
+
 static void test_failover(void) {
     const uint64_t U = 0xE6616408432B6F39ull;
     ioc_fo_table t;
@@ -243,15 +250,48 @@ static void test_failover(void) {
     ioc_fo_on_observation(&t, now + 5000, 3, U, -70);
     CHECK(ioc_fo_poll(&t, now + 5000, &d) && d.reason == IOC_FO_REASON_OWNER_LOST && d.to_node == 3);
 
-    /* Sensor fora do alcance do responsável, que continua ativo. */
+    /* Sensor fora do alcance do responsável, que continua ativo. O outro Node
+     * já observava o sensor havia mais de um ciclo de reenvio. */
     ioc_fo_init(&t);
     now = 1000;
+    ioc_fo_on_status(&t, now, 2, 1, U, IOC_ASSOC_ONLINE, 1, 1);
+    ioc_fo_on_observation(&t, now, 3, U, -65);
+    now += IOC_FO_SETTLE_MS;
     ioc_fo_on_status(&t, now, 2, 1, U, IOC_ASSOC_STALE, 1, 1);
     ioc_fo_on_observation(&t, now, 3, U, -65);
     CHECK(!ioc_fo_poll(&t, now, &d)); /* sem anúncios, mas com sessão: o sensor fica */
     ioc_fo_on_status(&t, now + 100, 2, 1, U, IOC_ASSOC_STALE, 1, 0);
     CHECK(ioc_fo_poll(&t, now + 100, &d));
     CHECK(d.reason == IOC_FO_REASON_SENSOR_LOST && d.from_node == 2 && d.to_node == 3);
+
+    /*
+     * O sensor reaparece depois de ficar LOST: todos os Nodes o observam quase
+     * ao mesmo tempo. O líder não o move enquanto o candidato não o observar
+     * por um ciclo inteiro, nem quando o responsável já voltou a ouvi-lo, ainda
+     * que o novo estado dele (ONLINE) não tenha chegado.
+     */
+    ioc_fo_init(&t);
+    ioc_fo_on_status(&t, 55000, 1, 1, U, IOC_ASSOC_LOST, 1, 0);
+    ioc_fo_on_observation(&t, 60002, 2, U, -68);
+    CHECK(!ioc_fo_poll(&t, 60003, &d));         /* candidato recém-chegado */
+    ioc_fo_on_observation(&t, 60004, 1, U, -50); /* o responsável também ouve */
+    ioc_fo_on_observation(&t, 65002, 2, U, -68);
+    CHECK(!ioc_fo_poll(&t, 66500, &d));         /* responsável voltando: fica com ele */
+    ioc_fo_on_status(&t, 66600, 1, 1, U, IOC_ASSOC_ONLINE, 1, 0);
+    CHECK(!ioc_fo_poll(&t, 67000, &d));
+    /* Sem o responsável ouvir o sensor, o candidato assume depois do prazo. */
+    ioc_fo_init(&t);
+    ioc_fo_on_status(&t, 55000, 1, 1, U, IOC_ASSOC_LOST, 1, 0);
+    ioc_fo_on_observation(&t, 60002, 2, U, -68);
+    ioc_fo_on_observation(&t, 65002, 2, U, -68);
+    CHECK(!ioc_fo_poll(&t, 65003, &d));
+    CHECK(ioc_fo_poll(&t, 60002 + IOC_FO_SETTLE_MS, &d) && d.to_node == 2 && d.reason == IOC_FO_REASON_SENSOR_LOST);
+    /* Uma observação vencida reinicia a contagem. */
+    ioc_fo_init(&t);
+    ioc_fo_on_status(&t, 1000, 1, 1, U, IOC_ASSOC_LOST, 1, 0);
+    ioc_fo_on_observation(&t, 1000, 2, U, -60);
+    ioc_fo_on_observation(&t, 1000 + IOC_FO_OBSERVATION_AGE_MS + 1, 2, U, -60);
+    CHECK(!ioc_fo_poll(&t, 1000 + IOC_FO_OBSERVATION_AGE_MS + 2, &d));
 
     /* Sem outro observador, ou com sinal fraco demais, ninguém assume. */
     ioc_fo_init(&t);
@@ -277,7 +317,9 @@ static void test_failover(void) {
     ioc_fo_on_status(&t, 1000, 2, 1, U, IOC_ASSOC_LOST, 1, 0);
     ioc_fo_on_observation(&t, 1000, 5, U, -60);
     ioc_fo_on_observation(&t, 1000, 3, U, -60);
-    CHECK(ioc_fo_poll(&t, 1000, &d) && d.to_node == 3);
+    ioc_fo_on_observation(&t, 1000 + IOC_FO_SETTLE_MS, 5, U, -60);
+    ioc_fo_on_observation(&t, 1000 + IOC_FO_SETTLE_MS, 3, U, -60);
+    CHECK(ioc_fo_poll(&t, 1000 + IOC_FO_SETTLE_MS, &d) && d.to_node == 3);
     CHECK(ioc_fo_should_yield(2, IOC_ASSOC_ONLINE, 0, 4, IOC_ASSOC_BOUND, 0) == 1);
     CHECK(ioc_fo_should_yield(4, IOC_ASSOC_ONLINE, 0, 2, IOC_ASSOC_BOUND, 0) == 0);
     CHECK(ioc_fo_should_yield(2, IOC_ASSOC_ONLINE, 0, 4, IOC_ASSOC_LOST, 0) == 0);
@@ -324,34 +366,34 @@ static void test_failover(void) {
      */
     ioc_fo_init(&t);
     ioc_fo_on_status(&t, 1000, 2, 1, U, IOC_ASSOC_STALE, 1, 0);
-    ioc_fo_on_observation(&t, 1000, 3, U, -60);
-    ioc_fo_on_observation(&t, 1000, 4, U, -70);
+    observe_since(&t, U, 3, -60, 1000 - IOC_FO_SETTLE_MS, 1000);
+    observe_since(&t, U, 4, -70, 1000 - IOC_FO_SETTLE_MS, 1000);
     CHECK(ioc_fo_poll(&t, 1000, &d) && d.to_node == 3);
     ioc_fo_on_status(&t, 1200, 3, 1, U, IOC_ASSOC_ASSOCIATING, 1, 0);
     CHECK(ioc_fo_find(&t, U)->owner == 3);
     ioc_fo_on_status(&t, 9000, 3, 1, U, IOC_ASSOC_STALE, 1, 0);
-    ioc_fo_on_observation(&t, 9000, 4, U, -70);
+    observe_since(&t, U, 4, -70, 6000, 9000);
     CHECK(!ioc_fo_poll(&t, 9000, &d));
-    ioc_fo_on_observation(&t, 1000 + IOC_FO_COOLDOWN_MS, 4, U, -70);
+    observe_since(&t, U, 4, -70, 9000, 1000 + IOC_FO_COOLDOWN_MS);
     CHECK(ioc_fo_poll(&t, 1000 + IOC_FO_COOLDOWN_MS, &d));
     CHECK(d.from_node == 3 && d.to_node == 4 && d.reason == IOC_FO_REASON_SENSOR_LOST);
 
     /* O destino recusa ou não responde: o vínculo anterior continua na tabela e há nova tentativa. */
     ioc_fo_init(&t);
     ioc_fo_on_status(&t, 1000, 2, 1, U, IOC_ASSOC_LOST, 1, 0);
-    ioc_fo_on_observation(&t, 1000, 3, U, -60);
+    observe_since(&t, U, 3, -60, 1000 - IOC_FO_SETTLE_MS, 1000);
     CHECK(ioc_fo_poll(&t, 1000, &d) && d.to_node == 3);
     ioc_fo_on_status(&t, 1100, 3, 0, U, IOC_ASSOC_REJECTED, 0, 0);
     ioc_fo_on_status(&t, 11000, 2, 1, U, IOC_ASSOC_LOST, 1, 0);
     CHECK(ioc_fo_find(&t, U) != NULL && ioc_fo_find(&t, U)->owner == 2);
-    ioc_fo_on_observation(&t, 1000 + IOC_FO_COOLDOWN_MS, 4, U, -72);
+    observe_since(&t, U, 4, -72, 1000 + IOC_FO_COOLDOWN_MS - IOC_FO_SETTLE_MS, 1000 + IOC_FO_COOLDOWN_MS);
     CHECK(ioc_fo_poll(&t, 1000 + IOC_FO_COOLDOWN_MS, &d) && d.from_node == 2 && d.to_node == 4);
 
     /* Um Node declarado ausente deixa de ser destino, mesmo com observação recente. */
     ioc_fo_init(&t);
     ioc_fo_on_status(&t, 1000, 2, 1, U, IOC_ASSOC_STALE, 1, 0);
-    ioc_fo_on_observation(&t, 1000, 3, U, -50);
-    ioc_fo_on_observation(&t, 1000, 4, U, -80);
+    observe_since(&t, U, 3, -50, 1500 - IOC_FO_SETTLE_MS, 1500);
+    observe_since(&t, U, 4, -80, 1500 - IOC_FO_SETTLE_MS, 1500);
     ioc_fo_on_node_fault(&t, 3);
     CHECK(ioc_fo_poll(&t, 1500, &d) && d.to_node == 4);
 

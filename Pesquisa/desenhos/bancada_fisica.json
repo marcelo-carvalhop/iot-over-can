@@ -1,0 +1,35 @@
+{
+  "nome": "bancada_fisica",
+  "descricao": "Mesmo estudo da bancada virtual no equipamento: Probe 00, três Nodes ESP32 + MCP2515 a 500 kbit/s e um sensor Pico W associado ao Node 1 (alvo 1.1) com reassociação automática. Os sensores precisam estar associados antes da coleta.",
+  "bancada": "fisica",
+  "semente_base": 20261029,
+  "ordem_aleatoria": true,
+  "blocos": [
+    {
+      "nome": "desempenho",
+      "repeticoes": 30,
+      "fatores": {"load_pct": [0, 50, 80], "load_prio": ["HIGH", "LOW"], "iot": ["off", "on"]},
+      "fixos": {"sensors": 1, "alvo": "1.1", "warmup_s": 10, "duration_s": 60, "echo_n": 40, "echo_period_ms": 500,
+                "fault": "none"},
+      "excluir": [{"load_pct": 0, "load_prio": "LOW"}]
+    },
+    {
+      "nome": "falhas",
+      "repeticoes": 30,
+      "fatores": {"fault": ["owner_power", "ap_outage", "drop_session"]},
+      "fixos": {"sensors": 1, "alvo": "1.1", "iot": "on", "load_pct": 0, "warmup_s": 10, "duration_s": 120,
+                "echo_n": 0, "fault_at_s": 15, "fault_s": 40}
+    },
+    {
+      "nome": "sensor_desligado",
+      "repeticoes": 30,
+      "fatores": {"fault": ["sensor_off"]},
+      "fixos": {"sensors": 1, "alvo": "1.1", "iot": "on", "load_pct": 0, "warmup_s": 10, "duration_s": 120,
+                "echo_n": 0, "fault_at_s": 15, "fault_s": 60}
+    }
+  ],
+  "comparacoes": [
+    {"fator": "iot", "base": "off"},
+    {"fator": "load_pct", "base": 0, "ignorar": ["load_prio"]}
+  ]
+}
