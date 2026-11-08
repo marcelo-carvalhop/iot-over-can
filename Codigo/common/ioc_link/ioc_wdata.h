@@ -300,7 +300,7 @@ size_t ioc_wd_dtc_encode(const ioc_wd_dtc *in, uint8_t out[IOC_WD_DTC_LEN]);
 int    ioc_wd_dtc_decode(const uint8_t *buf, size_t len, ioc_wd_dtc *out);
 /*
  * Medidas de pesquisa do enlace, no domínio de relógio do Node, na janela
- * desde o relatório anterior (Pesquisa/, Documentacao/pesquisa). Vão numa
+ * desde o relatório anterior (Pesquisa/). Vão numa
  * transferência própria: o relatório LINK continua com 19 bytes (4 quadros) e
  * uma Probe antiga apenas ignora este tipo. 0xFFFF = sem medida na janela.
  */

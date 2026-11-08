@@ -516,7 +516,7 @@ def analisar(base: Path, figuras: bool = True) -> dict[str, Any]:
         ("O caminho da análise é automático: `python -m iocpesquisa analisar <pasta>` refaz este relatório, as "
         "tabelas CSV e as figuras a partir dos registros brutos (`execucoes/*/traco.jsonl`). Na bancada virtual, "
         "a coleta também é: a mesma semente produz o mesmo registro. Na bancada física, a coleta exige o "
-        "equipamento descrito em Documentacao/pesquisa/metodologia.md; o plano, as sementes e a ordem são os mesmos."),
+        "equipamento descrito em Pesquisa/metodologia.md; o plano, as sementes e a ordem são os mesmos."),
         "",
         "## Ressalvas",
         "",

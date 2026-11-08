@@ -263,7 +263,7 @@ class MetricsScreen(BaseScreen):
                     f"{more}{acoustic.extra_sensors}, com um relatório de 19 quadros por segundo cada",
                 )
             )
-        rows.append(("Ressalva", "Vale para o tráfego observado; ver Documentação, métricas e ensaios."))
+        rows.append(("Ressalva", "Vale para o tráfego observado; ver a seção Medição e ensaios da documentação de arquitetura."))
         fields.set_fields(rows)
 
     @staticmethod

@@ -160,7 +160,7 @@ def test_can_fd_predisposition_is_present_but_not_wired() -> None:
         text = source.read_text()
         assert "ioc_secpdu" not in text, source.name
         assert "_ex(" not in text, source.name
-    assert (ROOT / "Documentacao/arquitetura/predisposicao-can-fd.md").exists()
+    assert "Preparação para CAN FD" in (ROOT / "Documentacao/arquitetura.md").read_text(encoding="utf-8")
 
 
 # --------------------------------------------------------------------------

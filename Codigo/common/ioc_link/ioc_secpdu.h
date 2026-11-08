@@ -7,7 +7,7 @@
  * quadro, 4 bytes de proteção deixam 4 de carga útil); ele foi escrito para
  * ser ligado na migração para CAN FD, em que 9 bytes de proteção cabem com
  * folga em um quadro de até 64 bytes. Ver
- * Documentacao/arquitetura/predisposicao-can-fd.md.
+ * Documentacao/arquitetura.md (Preparação para CAN FD).
  *
  * Formato:
  *

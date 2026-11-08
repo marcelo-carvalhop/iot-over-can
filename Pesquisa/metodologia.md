@@ -1,6 +1,6 @@
 # Metodologia de pesquisa
 
-Este documento descreve como o projeto passa de protótipo que funciona a **instrumento para responder a uma pergunta comparativa em condições controladas**. Ele é o esqueleto do capítulo de metodologia: a pergunta, o desenho experimental, as métricas com definição operacional e domínio de relógio, o protocolo de injeção de falhas, a estatística e o que torna os resultados reprodutíveis. As ferramentas estão em [`Pesquisa/`](../../Pesquisa/README.md); a instrumentação do firmware, em `Codigo/node-can/include/pesquisa.h`.
+Este documento descreve como o projeto passa de protótipo que funciona a **instrumento para responder a uma pergunta comparativa em condições controladas**. Ele é o esqueleto do capítulo de metodologia: a pergunta, o desenho experimental, as métricas com definição operacional e domínio de relógio, o protocolo de injeção de falhas, a estatística e o que torna os resultados reprodutíveis. As ferramentas estão em [`Pesquisa/`](README.md); a instrumentação do firmware, em `Codigo/node-can/include/pesquisa.h`.
 
 ## 1. Pergunta de pesquisa
 
@@ -166,7 +166,7 @@ Equipamento da bancada física: Probe 00 e três Nodes ESP32 (`esp32dev`) com MC
 
 - **Acoplamento forte**: um Pico 2 W com transceptor CAN (MCP2518FD por SPI, que também dá carimbo de tempo no hardware) atuando como Node, para comparar com a ponte pelo ESP32.
 - **Carimbo no hardware**: o MCP2518FD na Probe permitiria medir a arbitragem abaixo de 1 ms.
-- **Ponte com o SocketCAN** (`vcan`), para observar a bancada virtual com `candump` e Wireshark (ver `../arquitetura/metricas-e-ensaios.md`, seção 8.1).
+- **Ponte com o SocketCAN** (`vcan`), para observar a bancada virtual com `candump` e Wireshark (ver `Documentacao/arquitetura.md`, seção 10).
 
 ## 13. Mapeamento para os capítulos
 
@@ -174,7 +174,7 @@ Equipamento da bancada física: Probe 00 e três Nodes ESP32 (`esp32dev`) com MC
 |---|---|
 | Introdução | a pergunta da seção 1 e a lacuna: sensores sem fio autenticados na fronteira de uma rede CAN legada |
 | Trabalhos relacionados | análise de tempo de resposta do CAN (Tindell 1995; Davis et al. 2007), custo de autenticação em CAN e reprodutibilidade de artefatos de sistemas embarcados |
-| Arquitetura | `Documentacao/arquitetura/`, escrito como decisões e compromissos |
+| Arquitetura | `Documentacao/arquitetura.md`, escrito como decisões e compromissos |
 | Metodologia | este documento |
 | Resultados | `relatorio/` de cada campanha: tabelas com IC, efeitos e figuras (exemplo da bancada virtual em [`validacao-virtual/`](validacao-virtual/README.md)) |
 | Discussão | seção 11 e o que os resultados não mostram |

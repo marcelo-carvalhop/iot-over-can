@@ -1,7 +1,7 @@
 """Métricas de uma execução, com definição operacional e domínio de relógio.
 
 Todas as medidas são feitas dentro da janela de medição. As definições
-estão também em Documentacao/pesquisa/metodologia.md (tabela de métricas).
+estão também em Pesquisa/metodologia.md (tabela de métricas).
 
 | métrica                 | definição                                                           | relógio |
 |-------------------------|---------------------------------------------------------------------|---------|

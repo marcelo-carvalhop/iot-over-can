@@ -2,9 +2,6 @@
 
 O segundo sensor sem fio do projeto mede som. Um microfone MEMS digital INMP441, ligado por I2S a um Raspberry Pi Pico W (RP2040) ou Pico 2 W (RP2350), alimenta um motor de análise que roda inteiro no segundo núcleo do microcontrolador. A cada segundo o sensor publica um relatório com níveis sonoros já integrados e os resultados do modo em uso; o restante do sistema — oferta BLE, enlace autenticado, Node CAN, Probe 00 e TUI — é o mesmo do sensor de vibração.
 
-Os trechos marcados com `livro:inicio`/`livro:fim` compõem o capítulo correspondente do livro do projeto; ver [`../livro.md`](../livro.md).
-
-<!-- livro:inicio id="acustico-visao-geral" capitulo="Sensor acústico INMP441" -->
 ## 1. Visão geral
 
 O sensor de vibração responde três perguntas sobre uma máquina ou estrutura — como ela gira (modo `ROTATING`), quanto ela vibra (`STRUCTURAL`) e quando algo a sacode (`SEISMIC`). O sensor acústico faz as mesmas três perguntas pelo som:
@@ -25,9 +22,7 @@ INMP441 ──I2S──► PIO ──DMA (anel de 16 blocos)──► núcleo 1:
                                                                             │
    TUI ◄── Probe 00 (TEL PROFILE=ACOUSTIC) ◄── CAN 0x380+N (19 quadros) ◄── Node CAN ◄── Wi-Fi/UDP (DATA_UP)
 ```
-<!-- livro:fim id="acustico-visao-geral" -->
 
-<!-- livro:inicio id="acustico-hardware" capitulo="Sensor acústico INMP441" -->
 ## 2. Hardware e ligação
 
 O INMP441 entrega amostras de 24 bits em complemento de dois por I2S. As características que importam para a medição:
@@ -64,9 +59,7 @@ O mesmo código compila para as duas placas (`PICO_BOARD=pico_w` ou `pico2_w`); 
 | Pico 2 W (RP2350, 150 MHz) | Cortex-M33 com FPU | 48 kHz, FFT de 2048 pontos | acompanha a banda inteira do INMP441 |
 
 A ocupação do núcleo de DSP aparece em cada relatório (`CPU_PCT`) e a fração do áudio que passou pela FFT em `COVERAGE_PCT`; os dois números devem ser conferidos em bancada antes de usar 32 ou 48 kHz no RP2040.
-<!-- livro:fim id="acustico-hardware" -->
 
-<!-- livro:inicio id="acustico-aquisicao" capitulo="Sensor acústico INMP441" -->
 ## 3. Aquisição: I2S na PIO e DMA em anel
 
 O RP2040 e o RP2350 não têm periférico I2S; o barramento é gerado por uma máquina de estados da PIO (`inmp441_i2s.pio`). O programa tem 12 instruções e usa o *side-set* de dois bits para gerar SCK (bit 0) e WS (bit 1): cada período de SCK ocupa duas instruções, de modo que a PIO roda a 128 × fs. O dado é lido apenas nas bordas de subida do SCK, quando o INMP441 o mantém estável, e os 32 bits do canal esquerdo são empacotados por *autopush* em uma palavra por quadro estéreo. O canal direito é lido com o mesmo programa: o firmware inverte WS no próprio pino (override de saída do GPIO), e a PIO continua "lendo o esquerdo".
@@ -83,9 +76,7 @@ O divisor da PIO tem 16 bits inteiros e 8 fracionários; a taxa efetiva é recal
 Dois canais de DMA encadeados (A → B → A) copiam o FIFO da PIO para um anel de 16 blocos de 256 palavras (256 ms de áudio a 16 kHz, 85 ms a 48 kHz). Quando um canal termina, o outro já escreve o bloco seguinte; a interrupção (`DMA_IRQ_1`, compartilhada) apenas conta o bloco e reaponta o canal que terminou. Nenhuma amostra depende da latência do processamento. Se o DSP ficar mais de 14 blocos para trás, os mais antigos são descartados, contados como perdidos e informados ao motor, que mantém a dose com o último nível lento conhecido (ver *LEVEL — nível sonoro e exposição*) e acusa o DTC `0x3001`.
 
 O rádio CYW43 também usa uma máquina de estados e canais de DMA. Por isso o microfone reserva os seus dinamicamente (`pio_claim_free_sm_and_add_program_for_gpio_range`, `dma_claim_unused_channel`), depois de o rádio ter reservado os dele. A parada respeita a errata RP2040-E13: o encadeamento é desfeito antes do `abort`.
-<!-- livro:fim id="acustico-aquisicao" -->
 
-<!-- livro:inicio id="acustico-firmware" capitulo="Sensor acústico INMP441" -->
 ## 4. Firmware em dois núcleos
 
 | Núcleo | Tarefa | Arquivos |
@@ -96,9 +87,7 @@ O rádio CYW43 também usa uma máquina de estados e canais de DMA. Por isso o m
 Os núcleos conversam por três filas (`pico/util/queue.h`): comandos (configuração e controle) do 0 para o 1, resultados e relatórios do 1 para o 0. O núcleo 1 tem pilha própria de 8 KiB e um motor de cerca de 70 KiB que só ele toca. O núcleo 0 só alimenta o *watchdog* (8 s) enquanto o contador de vida do núcleo 1 avança; 2 s sem progresso geram o DTC `0x3002` e, sem recuperação, a reinicialização.
 
 O enlace não foi copiado. Oferta BLE, HELLO/CHALLENGE/CONFIRM, sessão, contadores anti-repetição e DTCs ficam em `Codigo/node-wifi` e são compartilhados pelos dois firmwares por meio de ganchos definidos em `edge_app.h` (perfil anunciado, menu de configuração, taxa e janela efetivas, fila de configuração e comandos próprios da sessão). Cada firmware implementa os ganchos e o ligador escolhe a implementação; o firmware de vibração usa `edge_app_vibration.c`, o acústico `audio_app.c`. A validação de configuração segue o mesmo contrato (`config_validation.h`), com as faixas de cada sensor.
-<!-- livro:fim id="acustico-firmware" -->
 
-<!-- livro:inicio id="acustico-cadeia-de-medicao" capitulo="Sensor acústico INMP441" -->
 ## 5. Cadeia de medição
 
 ### 5.1 Da palavra I2S à pressão
@@ -146,9 +135,7 @@ A correção do janelamento é a mesma no numerador e no denominador e cancela. 
 A política de FFT depende do atraso do DMA: até 8 blocos de atraso todos os quadros pedidos passam pela FFT; de 9 a 12, só os quadros de evento; acima disso, nenhum. `COVERAGE_PCT` informa a fração analisada.
 
 Um microfone desligado ou com SD aberto produz palavras todas em zero; SD preso em nível alto, todas em um. Um segundo inteiro assim marca `MIC_FAULT` e gera o DTC `0x1003`.
-<!-- livro:fim id="acustico-cadeia-de-medicao" -->
 
-<!-- livro:inicio id="acustico-modos" capitulo="Sensor acústico INMP441" -->
 ## 6. Modos de operação
 
 ### 6.1 LEVEL — nível sonoro e exposição
@@ -190,9 +177,7 @@ A FFT, neste modo, roda só durante eventos e uma vez por segundo (para manter a
 | `TRANSIENT` | duração ≥ 400 ms, banda larga | passagem de veículo, partida de máquina |
 
 Para cada evento o relatório traz a classe, o pico, a duração, o centroide e o SEL — a energia A acima do fundo durante o evento, referida a 1 s.
-<!-- livro:fim id="acustico-modos" -->
 
-<!-- livro:inicio id="acustico-configuracao" capitulo="Sensor acústico INMP441" -->
 ## 7. Configuração, calibração e console
 
 ### 7.1 Campos da configuração
@@ -242,9 +227,7 @@ NET | AUTH ... | RESET
 ```
 
 Leitura é livre; tudo o que altera estado exige `AUTH UNLOCK`, como no sensor de vibração. `STATUS` e `VERSION` trazem `PROFILE=ACOUSTIC`, o chip (`RP2040` ou `RP2350`), a placa, o canal em uso e o estado do microfone. A linha de telemetria tem as mesmas chaves que a Probe 00 imprime (ver *Do Node à TUI*), de modo que a TUI usa um único analisador para as duas origens.
-<!-- livro:fim id="acustico-configuracao" -->
 
-<!-- livro:inicio id="acustico-transporte" capitulo="Sensor acústico INMP441" -->
 ## 8. Telemetria e transporte
 
 ### 8.1 Do sensor ao Node
@@ -300,9 +283,7 @@ Chave ausente significa "não calculado"; em `OCT_DB`, `-` marca a banda acima d
 | `CMD ... ACTION=BASELINE_CLEAR` | `0x21`, ação 3 | descarta a assinatura |
 
 O argumento 1 de `SET_MODE` leva o perfil a que o nome do modo pertence (1 vibração, 2 acústico, 0 para `IDLE`). Um modo de outro perfil é recusado com `REASON=PROFILE_MISMATCH` (`DETAIL=65533`) e a edição inteira é descartada no `APPLY`; o mesmo vale para o opcode `0x21` enviado a um sensor de vibração. `WIRELESS_CONFIG` ganhou `profile=VIBRATION|ACOUSTIC` no fim da linha; um Node da versão 0.18, que não o informa, continua sendo entendido.
-<!-- livro:fim id="acustico-transporte" -->
 
-<!-- livro:inicio id="acustico-diagnostico" capitulo="Sensor acústico INMP441" -->
 ## 9. Diagnóstico
 
 | DTC | Severidade | Causa | Sintoma (FTB) |
@@ -314,12 +295,10 @@ O argumento 1 de `SET_MODE` leva o perfil a que o nome do modo pertence (1 vibra
 | `0x4006` | aviso | configuração recusada (fora das faixas de *Campos da configuração*) | `0x16` acima da faixa |
 
 Os demais códigos de rede e segurança (`0x4001`–`0x4005`) são os do sensor de vibração, pois o enlace é o mesmo.
-<!-- livro:fim id="acustico-diagnostico" -->
 
-<!-- livro:inicio id="acustico-tui" capitulo="Sensor acústico INMP441" -->
 ## 10. Análises na TUI
 
-A TUI transforma cada relatório em leituras de operador (`Front/pico_tui/acoustics.py`, sem dependência da interface e coberto por testes). A tela do sensor acústico tem quatro blocos — níveis sonoros com barras de oitava e tendência do LAeq, painel do modo, leitura do ambiente e eventos — descritos em [`../interface/tui.md`](../interface/tui.md).
+A TUI transforma cada relatório em leituras de operador (`Front/pico_tui/acoustics.py`, sem dependência da interface e coberto por testes). A tela do sensor acústico tem quatro blocos — níveis sonoros com barras de oitava e tendência do LAeq, painel do modo, leitura do ambiente e eventos — descritos em [TUI](tui.md#sensor).
 
 **Exposição (LEVEL).** A partir da dose acumulada e do tempo decorrido:
 
@@ -348,9 +327,7 @@ A TUI transforma cada relatório em leituras de operador (`Front/pico_tui/acoust
 **Ações.** Reiniciar a medição (`z`), aprender a assinatura (`a`, no modo MACHINE), descartar a assinatura, calibrar com calibrador, configurar (modos, taxas de WS e pontos da FFT do INMP441) e espectro em dB SPL (`f`).
 
 As leituras são indicativas: o INMP441 não é um medidor classe 1 ou 2 da IEC 61672, e a exposição ocupacional formal exige equipamento e procedimento normatizados.
-<!-- livro:fim id="acustico-tui" -->
 
-<!-- livro:inicio id="acustico-validacao" capitulo="Sensor acústico INMP441" -->
 ## 11. Validação
 
 Automatizada (sem hardware), executada por `Codigo/scripts/test_native_firmware.sh` e pela suíte da TUI:
@@ -375,9 +352,7 @@ Pendente em bancada:
 4. Tacômetro contra um tacômetro óptico em um motor; escore de anomalia com uma falha provocada (desbalanceamento, folga).
 5. Classificação de eventos com sons conhecidos (batida, estalo, apito, passagem).
 6. Troca automática de canal com L/R em GND e em VDD; falha com SD desconectado.
-<!-- livro:fim id="acustico-validacao" -->
 
-<!-- livro:inicio id="acustico-limitacoes" capitulo="Sensor acústico INMP441" -->
 ## 12. Limitações e próximos passos
 
 - A resposta do INMP441 não é compensada: abaixo de 60 Hz e acima de 15 kHz os níveis de banda são subestimados.
@@ -386,4 +361,3 @@ Pendente em bancada:
 - A classificação de eventos é heurística (duração, centroide, planura); um classificador treinado com sons da instalação é o próximo passo natural.
 - O espectro reduzido pelo Node para o CAN guarda o máximo de cada grupo de faixas, e a TUI o exibe em dB por coluna: adequado para localizar componentes, não para somar energia.
 - O Pico W pode ficar no limite com 48 kHz e FFT de 2048 pontos; a configuração padrão do RP2040 é conservadora até a medição em bancada (ver *Validação*).
-<!-- livro:fim id="acustico-limitacoes" -->

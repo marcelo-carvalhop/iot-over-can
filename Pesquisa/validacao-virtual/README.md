@@ -7,7 +7,7 @@ Esta pasta guarda a saída de `python -m iocpesquisa analisar` da campanha `Pesq
 ## O que a validação encontrou no próprio projeto
 
 1. **Sondas em fase com a rede.** A primeira campanha usava trens de eco de período fixo. Eles entraram em fase com o relatório do enlace do Node, publicado a cada 5 s, e produziram um efeito espúrio: sem carga, a integração ligada parecia *reduzir* o p99 do eco. Corrigido com amostragem de Poisson e fase da janela sorteada por repetição ([metodologia, seção 3.3](../metodologia.md)).
-2. **Disputa na reassociação.** Com a fase sorteada, 1 das 30 repetições de "sensor desligado com 50 % de carga" moveu o sensor, ao reaparecer, para um Node de sinal pior. A telemetria voltou em 16,8 s em vez de 1,5 s. A política foi corrigida, e a campanha desta pasta já roda com a correção ([metricas-e-ensaios, seção 5.2](../../arquitetura/metricas-e-ensaios.md)).
+2. **Disputa na reassociação.** Com a fase sorteada, 1 das 30 repetições de "sensor desligado com 50 % de carga" moveu o sensor, ao reaparecer, para um Node de sinal pior. A telemetria voltou em 16,8 s em vez de 1,5 s. A política foi corrigida, e a campanha desta pasta já roda com a correção ([arquitetura, reassociação automática](../../Documentacao/arquitetura.md#4-reassociação-automática)).
 
 ## Resultados preliminares (bancada virtual)
 

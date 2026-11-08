@@ -2,7 +2,7 @@
 #define PESQUISA_H
 
 /*
- * Instrumentação para pesquisa (ver Documentacao/pesquisa/metodologia.md).
+ * Instrumentação para pesquisa (ver Pesquisa/metodologia.md).
  *
  * 1. Relógio monotônico de 64 bits em microssegundos. Cada placa tem o seu
  *    domínio de relógio: as linhas da Probe 00 levam t_us no domínio "probe";

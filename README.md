@@ -1,273 +1,76 @@
 # iot-over-can
 
-**iot-over-can** é uma plataforma experimental de IoT embarcada para estudo de redes distribuídas sobre CAN/CAN FD, integração de eventos determinísticos e assíncronos, descoberta e associação de dispositivos wireless, supervisão, diagnóstico e operação segura.
+O **iot-over-can** liga sensores sem fio a uma rede **CAN**, o barramento de fios usado em carros, máquinas e equipamentos industriais. A rede CAN existente continua do mesmo jeito; os sensores se integram a ela.
 
-O sistema é composto por três classes de elemento. A **Probe 00** é uma sonda de instrumentação ligada ao CAN e ao computador por USB; observa o barramento e injeta comandos de bancada, mas não participa da eleição nem da lógica funcional distribuída. Os **Nodes CAN** são módulos ESP32 + MCP2515 com papel dinâmico de líder ou seguidor, funções locais próprias e descoberta BLE. O **sensor wireless** é um Raspberry Pi Pico W com MPU6050, aquisição local, DSP, diagnóstico e advertising BLE. Desde a versão 0.19 há um segundo, o **sensor acústico**: um Pico W ou Pico 2 W com o microfone MEMS INMP441, que usa o mesmo enlace e mede níveis sonoros, exposição ao ruído, a assinatura de máquinas e eventos sonoros.
+Os sensores medem vibração e som e se comunicam por rádio com pequenos módulos ligados ao barramento. Cada módulo confere a identidade do sensor antes de aceitar qualquer dado e leva as medições pelo CAN até a estação de operação, no computador. Se um módulo sai do ar, a rede se reorganiza sozinha e, quando o operador autoriza, outro módulo assume os sensores dele.
 
-```text
-Raspberry Pi Pico W
-       │ BLE: identidade, perfil e presença
-       │ Wi-Fi/UDP autenticado: telemetria, espectro e configuração
-       ▼
-Nodes CAN funcionais ───────── CAN clássico ───────── Probe 00 ── USB ── TUI
- sensores/atuadores locais                              instrumentação
- associação e plano de dados wireless
-```
+![Tela inicial da estação de operação](Documentacao/img/tui-inicio.png)
 
-A Probe 00 não é um gateway funcional da aplicação distribuída. Nomes internos antigos como `GATEWAY_CAN` permanecem apenas como identificadores de compatibilidade do protocolo e da linha de comando.
-
-## Estado funcional
-
-O CAN clássico opera a 500 kbit/s com eleição de líder, supervisão, comandos administrativos, estado dos Nodes e uma função local de demonstração. O valor `LOCAL_SENSOR_DEMO_VALUE=0xAA` pertence ao próprio Node CAN e demonstra que o módulo pode possuir funções locais independentes dos sensores wireless.
-
-A descoberta BLE e a associação lógica estão implementadas. O Pico W anuncia UUID, perfil e versão de protocolo. Vários Nodes podem observar o mesmo UUID e enviar pelo CAN suas medições independentes de RSSI. O operador escolhe explicitamente qual Node será responsável pelo sensor; a TUI apresenta como recomendação o Node com melhor recepção recente, mas não decide automaticamente. Depois da confirmação pelo Node, o sensor recebe um identificador lógico `parent.child`, por exemplo `04.01`.
-
-O Node associado é a autoridade sobre o liveness wireless. A continuidade dos advertisements BLE mantém o vínculo `ONLINE`; 15 s sem advertisement levam a `STALE` e 45 s levam a `LOST`. O retorno do sensor recupera `ONLINE` sem recriar o filho lógico. `WIRELESS UNBIND` remove o vínculo somente depois da confirmação `UNBOUND` publicada pelo Node.
-
-A associação é o **plano de controle**. O **plano de dados** é estabelecido a partir dela: o Node responsável anuncia por BLE uma oferta assinada, o sensor entra no ponto de acesso desse Node e os dois se autenticam por desafio-resposta com HMAC-SHA256 e chave por dispositivo. Telemetria, espectro, diagnósticos e configuração passam então pelo Node e chegam à TUI pelo CAN, em identificadores de menor prioridade que os de coordenação da rede. A TUI só oferece essas ações enquanto o Node informa sessão autenticada.
-
-Essa camada está implementada e coberta por testes automatizados no computador, incluindo uma simulação que executa o código do Node e da Probe. **Ainda não foi validada em hardware.** O desenho, o modelo de ameaças e o roteiro de bancada estão em [`Documentacao/arquitetura/plano-de-dados-wireless.md`](Documentacao/arquitetura/plano-de-dados-wireless.md).
-
-A versão 0.18 acrescenta medição e resiliência, também sem validação em hardware até aqui:
-
-- **Métricas.** A Probe 00 mede a ocupação do barramento pela duração exata de cada quadro e o período de cada identificador. Os Nodes medem o tempo de ida e volta de cada enlace sem fio. A TUI calcula o pior tempo de resposta de cada mensagem (análise de Davis et al., 2007) e estima a capacidade restante.
-- **Reassociação automática.** Quando o operador autoriza, o líder entrega um sensor a outro Node que o alcance se o responsável sair do ar ou deixar de ouvi-lo.
-- **Recuperação sem a Probe.** Os seguidores vigiam o líder e pedem a eleição; a Probe 00 deixou de ser necessária para a rede se recuperar.
-- **Ensaios de falha.** Queda de módulo, módulo congelado, queda do ponto de acesso e carga no barramento, comandados pela TUI, que mede a reação da rede.
-- **Bancada virtual.** O firmware completo do Node CAN é executado no computador, em vários Nodes ao mesmo tempo, com barramento, rádios e sensores simulados. Dezessete cenários (um deles com o sensor acústico, da versão 0.19; outro, com o Node que reinicia e retoma os vínculos gravados) fazem parte dos testes, e a TUI os reproduz com `--replay`.
-
-A versão 0.19 acrescenta o **sensor acústico** (INMP441 em I2S, Pico W ou Pico 2 W), com DSP no segundo núcleo e três modos análogos aos do sensor de vibração: `LEVEL` (LAeq, Ln e doses NR-15/NHO-01), `MACHINE` (tacômetro acústico pela série harmônica, proeminência tonal e escore de anomalia contra uma assinatura aprendida) e `EVENTS` (detecção STA/LTA, classificação, pico e SEL). O relatório de um segundo atravessa o Node e a Probe como os dados do sensor de vibração, e a TUI o transforma em leituras de operador: projeção de dose e critério da NHO-01, curva NC, distância de conversa, hipótese de motor de indução, estatística de eventos e calibração com calibrador. Firmware compilado para as duas placas e verificado no computador; **validação em bancada pendente**. Ver [`Documentacao/sensor-acustico/sensor-acustico.md`](Documentacao/sensor-acustico/sensor-acustico.md).
-
-Detalhes em [`Documentacao/arquitetura/metricas-e-ensaios.md`](Documentacao/arquitetura/metricas-e-ensaios.md). O que está preparado para CAN FD, e a recomendação de não migrar por ora, estão em [`Documentacao/arquitetura/predisposicao-can-fd.md`](Documentacao/arquitetura/predisposicao-can-fd.md).
-
-## Painel em papel eletrônico (M5Stack PaperColor)
-
-Desde a versão 0.20 o projeto tem um terceiro tipo de filho wireless: o **painel** (perfil `0x04`, `Codigo/node-paper`), um M5Stack PaperColor (ESP32-S3, E Ink Spectra 6 de 400×600) com o teclado CardKB na porta HY2.0. Ele se associa a um Node como qualquer sensor (F7) e recebe desse Node, pela sessão autenticada, os quadros CAN que o Node observa: o retrato do estado ao conectar, a caixa postal do que aconteceu enquanto dormia e o tráfego ao vivo. Não depende do computador.
-
-- **Página por exceção**: requer você, a rede está tratando e normal; o papel só é redesenhado quando o significado muda (leituras e rodapé não contam) e cada página diz até quando vale.
-- **LEDs e bipes (canal rápido)**: o papel leva 15 a 30 s, os LEDs do topo e o alto-falante avisam na hora. LED da rede: verde normal (na USB), azul respirando com 1 bipe (a rede está tratando), amarelo piscando com 2 bipes (atenção, repetidos a cada 5 min) e vermelho alternando nos dois LEDs com 3 bipes (requer você, repetidos a cada minuto). Qualquer botão ou tecla dá ciência: os bipes param e a ciência vira marca `ACK` com o tempo de reação ("Ciente em 80 s: Node 1 sem sinal"). O outro LED mostra o painel: tecla lida, nota aberta, marca gravada pelo Node e papel desenhando.
-- **Marcas na linha do tempo**: começar a digitar no CardKB abre uma marca no instante da primeira tecla; Enter grava o texto (`#etiquetas` viram filtro), Enter sozinho marca só o instante e Esc cancela. Marcas, o botão A (intervenção física) e os passos de roteiro chegam à TUI (`PANEL ... TYPE=MARK`) e ao histórico, na faixa `OPERATOR`, com captura da rede ao redor; no histórico, `m`/`M` saltam entre as marcas.
-- **Energia**: um toque no botão liga; ligado, um toque atualiza (ou dá ciência). Segurar 1,5 s (ou dois toques) desliga: aviso ao Node, LEDs vermelhos enquanto o papel desenha a tela final "Painel desligado" com a marca IoT-over-CAN, e então rádios, LEDs, som, teclado e o sistema desligados. Na bateria, o painel declara o sono, o Node mantém o vínculo (`SLEEPING`) e guarda a caixa postal; o botão acorda o painel antes da hora.
-- **Páginas** (B, Tab ou setas): Situação, Rede, Roteiro, Rádio (varredura de canais e anúncios BLE) e Ajuda. Comandos no teclado: `/hora HH:MM`, `/data AAAA-MM-DD`, `/sono N`.
-
-```bash
-./Codigo/scripts/build_paper.sh                           # chave de bancada (.env.local), UUID pelo MAC
-./Codigo/scripts/build_paper.sh --upload /dev/ttyACM0     # compila e grava
-```
-
-Com o Simulation Studio, a USB faz o papel do Wi-Fi: o PaperColor físico executa o próprio firmware e troca com o Node virtual os mesmos datagramas autenticados. No Studio, o inspetor do painel mostra a página e envia botões e notas.
-
-```bash
-python3 Simulacao/studio/server.py --binary /tmp/ioc_sim_network --browser
-Front/.venv/bin/python Simulacao/usb_panel_bridge.py --port /dev/ttyACM0 --node 2 --rssi -52 --also 3:-65
-```
-
-Sem o aparelho, `SENSOR ADD <uuid> PANEL` (ou o formulário do Studio) cria um painel virtual com o mesmo PanelApp do firmware; o cenário `panel_papercolor` da bancada virtual o exercita.
-
-### Painel na CYD (ESP32-2432S028)
-
-O papel colorido leva de 15 a 30 s por redesenho e não acompanhou bem a rede ao vivo, por isso o painel passa a ter também uma versão em LCD: a ESP32-2432S028, conhecida como "Cheap Yellow Display" (ESP32 sem PSRAM, tela de 2,8" com 320×240 e toque resistivo). O `PanelApp` é o mesmo, e com ele o enlace autenticado, o retrato, a relevância, as marcas, o LED e os sons; muda o hardware (`Codigo/node-paper/src/cyd/`). A tela compõe a própria página, compacta, a partir da visão da rede e dos itens de relevância, e só redesenha o que mudou, no máximo uma vez por segundo. Sem teclado, a barra de toque tem quatro botões: Situação e Rede (páginas), Marcar (marca o instante ou dá ciência) e Ciente.
-
-```bash
-./Codigo/scripts/build_paper.sh --cyd                         # chave de bancada (.env.local), UUID pelo MAC
-./Codigo/scripts/build_paper.sh --cyd --upload /dev/ttyUSB0   # compila e grava
-```
-
-- **Controlador da tela.** A versão com USB-C e micro-USB usa ST7789, com cores invertidas (padrão). A versão só com micro-USB usa ILI9341: acrescente `-D CYD_PANEL_ILI9341=1` em `build_flags`. Na partida aparecem barras vermelha, verde, azul e branca; se as cores saírem trocadas, ajuste `CYD_INVERT` ou `CYD_RGB_ORDER`; se a imagem sair espelhada ou de lado, `CYD_ROTATION` (0 a 7).
-- **Toque.** A calibração roda na primeira partida e fica gravada; para refazê-la, ligue a placa com o botão BOOT pressionado.
-- **Alimentação.** Pela USB do hub. A porta USB-C dessa versão não liga com cabo C-C: use um cabo USB-A para USB-C ou a micro-USB.
-- **Hora.** Sem RTC, a placa pede a hora à rede a cada conexão e a mostra no cabeçalho. A hora vem do terminal: a TUI envia a do computador à Probe 00 ao conectar e a cada 10 minutos (ver [Relógio da rede](Documentacao/protocolo/protocolo.md#relógio-da-rede)). Sem terminal na rede, o painel mostra tempos relativos.
-- **Limites.** Sem teclado não há notas com texto nem os comandos `/hora`, `/data` e `/sono`.
-
-## Pesquisa
-
-Material para o TCC, fora do escopo da entrega da disciplina de IoT. A instrumentação (vinda do ramo `modelo-pesquisa`) transforma a bancada num instrumento de medição para uma pergunta comparativa: quanto a integração de sensores sem fio autenticados custa ao tráfego determinístico do CAN, em função da carga de fundo e da prioridade dela, e com que rapidez a rede reage a falhas do enlace. A metodologia está em [`Documentacao/pesquisa/metodologia.md`](Documentacao/pesquisa/metodologia.md); as ferramentas, em [`Pesquisa/`](Pesquisa/README.md).
-
-- **Relógios declarados**: as linhas da Probe 00 levam `t_us` (relógio monotônico dela); os Nodes medem intervalos no relógio deles (criptografia, ponte Wi-Fi → CAN, PING ao sensor). Instantes de relógios diferentes nunca são comparados.
-- **Eco**: `ECHO <node>.<filho> <n> <período> LOCAL|SENSOR` mede, num relógio só, a ida e volta pelo caminho CAN do plano de dados e, com o sensor, a ida e volta até ele.
-- **Carga determinística**: `FAULT LOAD <pct> <s> HIGH|MID|LOW|MIX <semente>`; a análise confere a sequência gerada pela semente.
-- **Custo da segurança**: HMAC por datagrama e handshake medidos no Node durante o experimento, e `BENCH CRYPTO` em cada placa (Probe, Nodes, Pico W e computador).
-- **Máquina de estados parametrizável**: `L`, `H` e `T` ajustáveis na compilação, publicados pela Probe (`[GW] CONFIG`) e conferidos pela coleta.
-- **Desenho fatorial** com 30 repetições, sementes e ordem sorteada; análise com IC 95 %, Wilson, g de Hedges, delta de Cliff e Mann-Whitney com Holm; relatório, CSV e figuras regenerados dos registros brutos.
-
-Na TUI, `/` abre a tela de pesquisa (fora da barra de teclas) e `k` abre o lançador de comandos para enviar `ECHO`, `FAULT LOAD`, `CONFIG` ou `BENCH CRYPTO`.
-
-```bash
-cd Pesquisa
-../Codigo/scripts/build_network_sim.sh /tmp/sim_network
-python3 -m iocpesquisa coletar desenhos/bancada_virtual.json --binario /tmp/sim_network -j 4
-python3 -m iocpesquisa analisar resultados/bancada_virtual
-```
-
-## TUI
-
-A interface é uma aplicação Textual em tela cheia organizada por assunto, sem a antiga concentração de topologia, telemetria, comandos e logs na mesma visão. A navegação principal é:
+## Como as peças se ligam
 
 ```text
-Início
-├── Módulo CAN NN
-│   └── Sensor NN.CC
-│       └── Espectro FFT        # com sessão autenticada no plano de dados
-├── Comandos
-├── Rede CAN
-├── Mensagens
-├── Sensores sem fio
-├── Métricas da rede
-├── Ensaios
-└── Ajuda
+ Sensor de vibração ┐                    ┌─ Módulo CAN 1 ─┐
+ Sensor acústico    ├── rádio ─────────► ├─ Módulo CAN 2 ─┼══ barramento CAN ══ Probe 00 ── USB ── computador (TUI)
+ Painel de operação ┘  (BLE + Wi-Fi)     └─ Módulo CAN 3 ─┘
 ```
 
-A tela inicial responde primeiro ao estado geral do sistema e ao que requer atenção. Cada módulo e cada sensor possui uma tela própria. Comandos ficam centralizados em uma única tela declarativa. Mensagens completas ficam em uma tela separada e o painel de mensagens recentes na tela inicial é opcional.
+| Peça | Função | Hardware |
+|---|---|---|
+| **Módulo CAN** (Node) | forma a rede: elege um líder, vigia os demais e atende os sensores sem fio | ESP32 + controlador CAN MCP2515 |
+| **Probe 00** | instrumento de bancada: observa o barramento e leva comandos do computador; a rede funciona sem ela | ESP32 + MCP2515, ligado ao computador por USB |
+| **Sensor de vibração** | mede vibração de máquinas e estruturas | Raspberry Pi Pico W + acelerômetro MPU6050 |
+| **Sensor acústico** | mede nível sonoro, exposição ao ruído, o som de máquinas e eventos sonoros | Pico W ou Pico 2 W + microfone INMP441 |
+| **Painel de operação** | mostra a situação da rede no local, sem computador | ESP32-2432S028, tela de 2,8" com toque |
+| **TUI** | estação de operação: telas de supervisão, comandos, medições e ensaios | computador com Python, no terminal |
 
-A associação wireless não depende de um atalho oculto. `F7` ou `w` abre **Sensores sem fio**, que apresenta candidatos disponíveis, observações por Node, recomendação de RSSI, vínculos ativos, associação explícita e desassociação. `Ctrl+A` permanece apenas como alias de compatibilidade. Os comandos internos `:wireless`, `:bind` e `:unbind` ficam disponíveis no campo manual avançado, mas não são necessários para o fluxo normal.
+## O que o sistema faz
 
-Teclas globais:
+- **Rede que se organiza sozinha.** Os módulos elegem um líder, percebem quando um deles some e escolhem outro líder se o atual falhar.
+- **Sensores escolhidos pelo operador.** Vários módulos podem ouvir o mesmo sensor; a estação mostra qual o ouve melhor, mas quem decide o responsável é o operador.
+- **Canal de dados autenticado.** Sensor e módulo provam um ao outro que conhecem a mesma chave antes de trocar qualquer dado. Dados adulterados ou repetidos são descartados.
+- **Reassociação automática.** Com a autorização do operador, o líder passa um sensor a outro módulo quando o responsável sai do ar ou deixa de alcançá-lo.
+- **Dados de sensores sem atrapalhar a rede.** No CAN, as mensagens dos sensores têm a menor prioridade: nunca atrasam a coordenação entre os módulos.
+- **Relógio comum.** A estação ajusta a hora de toda a rede pela Probe 00.
+- **Medição e ensaios.** A estação mede a ocupação do barramento e os tempos de resposta, e provoca falhas controladas (queda de módulo, carga no barramento) para ver como a rede reage.
+- **Laboratório virtual.** O firmware real dos módulos roda no computador, em vários módulos simulados ao mesmo tempo, para testar tudo sem hardware.
 
-| Tecla | Ação |
-|---|---|
-| `F1` ou `?` | Ajuda |
-| `F2` ou `i` | Início |
-| `F3` ou `p` | Conexão |
-| `F4` ou `c` | Comandos |
-| `F5` ou `r` | Rede CAN |
-| `F6` ou `m` | Mensagens |
-| `F7` ou `w` | Sensores sem fio |
-| `F8` ou `b` | Métricas da rede |
-| `F9` ou `e` | Ensaios |
-| `F10` ou `q` | Sair |
-| `Esc` | Voltar |
+## Estado atual
 
-A interface usa a paleta industrial **Aço industrial**: superfícies neutras em repouso, azul para interação, âmbar para atenção e vermelho para condições críticas. Toda condição é indicada por símbolo e palavra, não apenas por cor. O layout passa de duas colunas para uma conforme a largura e foi estruturado para evitar truncamento horizontal.
+Todo o código é verificado automaticamente no computador a cada mudança: testes das bibliotecas, simulação do canal de dados, a bancada virtual com o firmware real dos módulos e os testes da estação. A compilação de todos os firmwares é conferida na integração contínua.
 
-A especificação completa da interface está em [`Documentacao/interface/tui.md`](Documentacao/interface/tui.md).
+Na bancada física, a rede CAN, a descoberta e a associação de sensores, o canal de dados com um sensor de vibração e uma reassociação automática já funcionaram. As correções posteriores na abertura do canal de dados, o sensor acústico, o painel na ESP32-2432S028 e o relógio da rede foram verificados só na bancada virtual e ainda precisam ser conferidos com o hardware. O detalhe está em [Validação](Documentacao/validacao.md).
 
-## Estrutura do repositório
+## Primeiros passos
 
-```text
-iot-over-can/
-├── Front/                       TUI Python/Textual e testes
-├── Codigo/
-│   ├── common/                  código C compartilhado: autenticação do enlace e dados no CAN
-│   ├── node-can/                firmware ESP32 + MCP2515
-│   ├── node-wifi/               firmware Raspberry Pi Pico W (vibração) e módulos comuns dos sensores
-│   ├── node-audio/              firmware do sensor acústico INMP441 (Pico W e Pico 2 W)
-│   └── scripts/                 build, upload, testes e segurança
-├── Documentacao/                documentação técnica oficial
-├── .github/workflows/           integração contínua
-├── README.md
-└── MANIFEST.json
-```
-
-A estrutura detalhada está em [`Documentacao/estrutura-do-projeto.md`](Documentacao/estrutura-do-projeto.md).
-
-## Instalação, execução e testes
-
-A TUI usa Python 3.11+ e as versões fixadas em `Front/pyproject.toml`: Textual 8.2.8, Rich 15.0.0 e pySerial 3.5.
+Para conhecer a estação sem nenhum hardware (Linux ou macOS, com Python 3.11 ou mais novo):
 
 ```bash
-./Codigo/scripts/setup_tui.sh
-./Codigo/scripts/test_tui.sh
-./Codigo/scripts/run_tui.sh
+git clone https://github.com/marcelo-carvalhop/iot-over-can.git
+cd iot-over-can
+./Codigo/scripts/setup_tui.sh                  # cria o ambiente Python e instala a estação
+Front/.venv/bin/iot-over-can-tui --demo        # abre com uma rede de demonstração
 ```
 
-Para iniciar já apontando para a Probe 00:
-
-```bash
-./Codigo/scripts/run_tui.sh /dev/ttyUSB0
-```
-
-A TUI continua abrindo sem hardware. `F3` ou `p` permite escolher a porta depois.
-
-Sem hardware, a TUI também reproduz uma sessão gravada da bancada virtual, com métricas e ensaios:
-
-```bash
-cd Front && python -m pico_tui --replay replays/owner_failover.log --replay-speed 4
-```
-
-Build de um Node CAN com ID 1:
-
-```bash
-./Codigo/scripts/build_esp32_can_node.sh 1
-```
-
-Upload de um Node CAN com ID 2:
-
-```bash
-./Codigo/scripts/upload_esp32_can_node.sh 2 /dev/ttyUSB0
-```
-
-O ID é fornecido ao build pelo script por meio de `IOT_NODE_ID`; não é necessário editar o código-fonte. O ID 0 é reservado à Probe 00.
-
-Build do Pico W, de bancada ou com as chaves derivadas para um sensor:
-
-```bash
-./Codigo/scripts/build_pico.sh
-./Codigo/scripts/build_pico.sh --sensor E6616408432B6F39
-```
-
-Build do sensor acústico (INMP441), para Pico W ou Pico 2 W:
-
-```bash
-./Codigo/scripts/build_pico.sh pico_w --audio
-./Codigo/scripts/build_pico.sh pico2_w --audio --sensor <UUID64>
-```
-
-Testes nativos:
-
-```bash
-./Codigo/scripts/test_native_firmware.sh
-```
-
-O mesmo script executa a bancada virtual. Para rodar um cenário e ver o que cada Node escreve:
-
-```bash
-./Codigo/scripts/build_network_sim.sh /tmp/sim_network
-/tmp/sim_network leader_failure --verbose
-```
-
-Os procedimentos completos estão em [`Documentacao/build_e_teste.md`](Documentacao/build_e_teste.md).
-
-## Segurança operacional
-
-A TUI, o firmware do sensor e o enlace entre sensor e Node aplicam controles em fronteiras diferentes. Leitura permanece disponível conforme o modo operacional; comandos mutáveis passam pelo `SecurityManager`, e comandos mutáveis do sensor direto também precisam ser autorizados pelo firmware. Eleição, administração de Node, ajuste de liveness, associação/desassociação wireless, política de reassociação, ensaios de falha (`FAULT ...`) e comandos `CMD ...` são classificados como ações mutáveis na TUI. Os comandos de ensaio existem para bancada; fora dela, os Nodes devem ser compilados com `-D IOT_FAULT_INJECTION=0`.
-
-Arquivos locais:
-
-```text
-<raiz>/.env.local                         # token de manutenção e chave mestra do enlace
-<raiz>/.env.sensor-<UUID>.local           # chaves derivadas para um sensor
-~/.config/iot-over-can/security.json
-~/.config/iot-over-can/tui.json          # preferências não sensíveis
-```
-
-Os três primeiros contêm material de segurança e devem permanecer fora do Git; em POSIX, os arquivos sensíveis usam permissão `0600`. `tui.json` contém apenas preferências visuais.
-
-Provisionamento e verificação:
-
-```bash
-./Codigo/scripts/provision_sensor_security.sh
-./Codigo/scripts/provision_sensor_security.sh --check
-./Codigo/scripts/provision_sensor_security.sh --add-link-key       # instalação anterior à v0.17
-./Codigo/scripts/provision_sensor_security.sh --sensor <UUID64>
-```
-
-Detalhes em [`Documentacao/modelo_de_seguranca.md`](Documentacao/modelo_de_seguranca.md).
+O [Guia de uso](Documentacao/guia-de-uso.md) mostra também como reproduzir uma sessão gravada, rodar o laboratório virtual e montar a bancada com o hardware.
 
 ## Documentação
 
-O índice oficial está em [`Documentacao/README.md`](Documentacao/README.md). O material destinado ao livro do projeto é marcado nos próprios documentos e listado em [`Documentacao/livro.md`](Documentacao/livro.md). A arquitetura fica em [`Documentacao/arquitetura/arquitetura.md`](Documentacao/arquitetura/arquitetura.md), o protocolo em [`Documentacao/protocolo/protocolo.md`](Documentacao/protocolo/protocolo.md), os requisitos em [`Documentacao/requisitos.md`](Documentacao/requisitos.md) e a TUI em [`Documentacao/interface/tui.md`](Documentacao/interface/tui.md).
+| Documento | Para quem | Conteúdo |
+|---|---|---|
+| [Guia de uso](Documentacao/guia-de-uso.md) | quem vai montar e operar | hardware, instalação, gravação, colocar a rede no ar, operação, solução de problemas |
+| [Arquitetura](Documentacao/arquitetura.md) | quem quer entender como funciona | papéis, rede CAN, sensores sem fio, canal de dados, reassociação, painel, relógio, medição, CAN FD |
+| [Protocolo](Documentacao/protocolo.md) | quem desenvolve | mapa de identificadores CAN, formatos das mensagens, comandos e linhas da Probe 00 |
+| [Integração](Documentacao/integracao.md) | quem vai fazer um fork ou estender | mapa do código, como acrescentar sensores, mensagens e telas, convenções |
+| [TUI](Documentacao/tui.md) | operadores e desenvolvedores | todas as telas, teclas e arquivos da estação de operação |
+| [Sensor acústico](Documentacao/sensor-acustico.md) | quem usa ou estende o sensor de som | hardware, aquisição, medição, modos e análises |
+| [Segurança](Documentacao/seguranca.md) | todos | chaves, autorização de comandos, ameaças consideradas e limites |
+| [Validação](Documentacao/validacao.md) | quem testa | testes automáticos, bancada virtual, laboratório virtual e bancada física |
+| [Desafios](Documentacao/desafios.md) | quem desenvolve | problemas encontrados e como foram resolvidos |
 
-## Itens ainda a implementar
+Documentos de etapas anteriores ficam, sem revisão, em [`Documentacao/historico/`](Documentacao/historico/). A ferramenta de pesquisa tem a própria documentação em [`Pesquisa/`](Pesquisa/README.md).
 
-- validação em bancada do plano de dados wireless e da autenticação do enlace;
-- validação em bancada das métricas, da vigilância do líder, da reassociação automática e dos ensaios de falha;
-- ajuste, com medição em bancada, dos tempos de espera do sensor que limitam a reassociação (hoje cerca de 25 s);
-- detecção, pelo próprio Node, de que ele está isolado do barramento, para liberar os sensores;
-- monitoramento da alimentação de cada Node (motivo do último reinício, contagem de reinícios e, com um divisor resistivo, tensão de entrada), com aviso na TUI; e ajustes de consumo no firmware (potência do Wi-Fi, partida escalonada dos rádios);
-- autenticação de origem dos comandos e dados no barramento CAN;
-- comissionamento de sensores sem compilação: firmware único, código de instalação na etiqueta e chave entregue pela rede após a aprovação do operador (proposta em [`Documentacao/arquitetura/comissionamento-de-sensores.md`](Documentacao/arquitetura/comissionamento-de-sensores.md));
-- verificação FIDO2/OTP real da chave física do operador;
-- validação em bancada do sensor acústico (calibração, ocupação do DSP nas duas placas, níveis e doses contra um medidor de referência, tacômetro e eventos);
-- validação em bancada do painel PaperColor (tempo e corrente do redesenho, BLE do ESP32-S3 com a M5Stack, sono pelo RTC, CardKB);
-- experimento comparativo em CAN FD com MCP2518FD, com as métricas e os ensaios atuais como linha de base;
-- *(prioridade muito baixa)* ferramentas de simulação complementares à bancada virtual: ponte com SocketCAN (`vcan`) para rodar os mesmos testes no barramento virtual e no físico, GNU Octave para análise e varreduras de parâmetros, OMNeT++/FiCo4OMNeT para estudos de escala (recomendação em [`Documentacao/arquitetura/metricas-e-ensaios.md`](Documentacao/arquitetura/metricas-e-ensaios.md), seção 8.1).
+## Licença
+
+Copyright (C) 2026 Marcelo de Carvalho Pereira.
+
+Este projeto é software livre, distribuído sob a **GNU General Public License, versão 3** ([`LICENSE`](LICENSE)). Você pode usar, estudar, modificar e redistribuir o código. Quem distribuir uma versão modificada precisa mantê-la sob a mesma licença e oferecer o código-fonte dela. O projeto é oferecido sem garantia; os termos exatos estão na licença.

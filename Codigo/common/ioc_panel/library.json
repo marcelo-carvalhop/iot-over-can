@@ -2,6 +2,7 @@
   "name": "ioc_panel",
   "version": "0.20.0",
   "description": "iot-over-can: painel em papel eletrônico (protocolo, retrato do Node, visão da rede e composição da página)",
+  "license": "GPL-3.0-only",
   "frameworks": "*",
   "platforms": "*",
   "build": {

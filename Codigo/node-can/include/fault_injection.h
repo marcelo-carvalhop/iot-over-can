@@ -21,7 +21,7 @@
  *
  * O recurso existe para ensaio em bancada. Compilar com
  * -D IOT_FAULT_INJECTION=0 remove o tratamento dos comandos nos Nodes; ver
- * Documentacao/arquitetura/metricas-e-ensaios.md.
+ * Documentacao/arquitetura.md (Medição e ensaios).
  */
 
 #ifndef IOT_FAULT_INJECTION

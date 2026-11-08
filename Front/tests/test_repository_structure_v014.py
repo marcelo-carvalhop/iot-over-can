@@ -12,15 +12,23 @@ def test_operational_scripts_live_under_codigo():
 
 def test_documentation_is_consolidated_in_portuguese_paths():
     expected = [
-        "Documentacao/arquitetura/arquitetura.md",
-        "Documentacao/protocolo/protocolo.md",
-        "Documentacao/build_e_teste.md",
-        "Documentacao/modelo_de_seguranca.md",
-        "Documentacao/estrutura-do-projeto.md",
-        "Documentacao/descrição-do-projeto.md",
+        "README.md",
+        "LICENSE",
+        "Documentacao/guia-de-uso.md",
+        "Documentacao/arquitetura.md",
+        "Documentacao/protocolo.md",
+        "Documentacao/integracao.md",
+        "Documentacao/tui.md",
+        "Documentacao/sensor-acustico.md",
+        "Documentacao/seguranca.md",
+        "Documentacao/validacao.md",
+        "Documentacao/desafios.md",
     ]
     for path in expected:
         assert (ROOT / path).exists(), path
+    # Um documento por assunto, todos em Documentacao/; o que é antigo fica em historico/.
+    current = sorted(p.name for p in (ROOT / "Documentacao").glob("*.md"))
+    assert current == sorted(Path(p).name for p in expected if p.startswith("Documentacao/"))
     assert not (ROOT / "Documentacao" / "architecture").exists()
     assert not (ROOT / "Documentacao" / "protocol").exists()
 

@@ -1,6 +1,6 @@
 # Pesquisa: o projeto como instrumento de medição
 
-Ferramentas para planejar, coletar e analisar experimentos com a rede, na bancada virtual ou na física. A metodologia (pergunta, métricas, relógios, estatística, ameaças à validade) está em [`Documentacao/pesquisa/metodologia.md`](../Documentacao/pesquisa/metodologia.md).
+Ferramentas para planejar, coletar e analisar experimentos com a rede, na bancada virtual ou na física. A metodologia (pergunta, métricas, relógios, estatística, ameaças à validade) está em [`metodologia.md`](metodologia.md).
 
 Só usam a biblioteca padrão do Python (3.11+). O `pyserial` só é necessário na bancada física (é o mesmo da TUI) e o `matplotlib` só para as figuras.
 
@@ -46,7 +46,7 @@ resultados/<campanha>/
   relatorio/figuras/*.png         cauda do eco (por carga e prioridade) e variação do sinal de presença
 ```
 
-Um exemplo completo dessa saída (a campanha virtual de validação do método, com o que ela encontrou) está em [`Documentacao/pesquisa/validacao-virtual/`](../Documentacao/pesquisa/validacao-virtual/README.md).
+Um exemplo completo dessa saída (a campanha virtual de validação do método, com o que ela encontrou) está em [`validacao-virtual/`](validacao-virtual/README.md).
 
 O relatório inteiro sai dos registros brutos: apagar `relatorio/` e rodar `analisar` reproduz os mesmos números. As métricas de cada execução ficam em cache (`metricas.json`), calculadas em paralelo e refeitas sozinhas quando o código das métricas muda.
 
@@ -84,7 +84,7 @@ O relatório inteiro sai dos registros brutos: apagar `relatorio/` e rodar `anal
 
 ## Na TUI
 
-A tecla `/` abre a tela **Pesquisa**, fora da barra de teclas: eco LOCAL e SENSOR com média, IC 95 %, mediana, p95 e p99, variação do sinal de presença, ocupação e carga de fundo, custo da criptografia e da ponte nos Nodes, `BENCH CRYPTO` da Probe e os parâmetros da compilação. A tecla `k` abre o lançador de comandos, para enviar `ECHO`, `FAULT LOAD`, `CONFIG` ou `BENCH CRYPTO` sem sair da tela. Os números são da sessão e servem para acompanhar um experimento na bancada; a análise da campanha continua aqui. Detalhes em [`Documentacao/interface/tui.md`](../Documentacao/interface/tui.md).
+A tecla `/` abre a tela **Pesquisa**, fora da barra de teclas: eco LOCAL e SENSOR com média, IC 95 %, mediana, p95 e p99, variação do sinal de presença, ocupação e carga de fundo, custo da criptografia e da ponte nos Nodes, `BENCH CRYPTO` da Probe e os parâmetros da compilação. A tecla `k` abre o lançador de comandos, para enviar `ECHO`, `FAULT LOAD`, `CONFIG` ou `BENCH CRYPTO` sem sair da tela. Os números são da sessão e servem para acompanhar um experimento na bancada; a análise da campanha continua aqui. Detalhes em [`Documentacao/tui.md`](../Documentacao/tui.md#medições-de-pesquisa).
 
 ## Comandos novos do firmware
 

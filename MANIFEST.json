@@ -7,28 +7,32 @@
     "can_firmware": "Codigo/node-can",
     "wireless_firmware": "Codigo/node-wifi",
     "acoustic_firmware": "Codigo/node-audio",
+    "panel_firmware": "Codigo/node-paper",
+    "shared_firmware": "Codigo/common",
     "scripts": "Codigo/scripts",
     "documentation": "Documentacao",
-    "book_outline": "Documentacao/livro.md",
-    "architecture": "Documentacao/arquitetura/arquitetura.md",
-    "protocol": "Documentacao/protocolo/protocolo.md",
-    "acoustic_sensor": "Documentacao/sensor-acustico/sensor-acustico.md",
-    "security": "Documentacao/modelo_de_seguranca.md",
-    "build_and_test": "Documentacao/build_e_teste.md",
-    "shared_firmware": "Codigo/common",
-    "wireless_data_plane": "Documentacao/arquitetura/plano-de-dados-wireless.md",
-    "metrics_and_experiments": "Documentacao/arquitetura/metricas-e-ensaios.md",
-    "can_fd_readiness": "Documentacao/arquitetura/predisposicao-can-fd.md",
+    "user_guide": "Documentacao/guia-de-uso.md",
+    "architecture": "Documentacao/arquitetura.md",
+    "protocol": "Documentacao/protocolo.md",
+    "integration_guide": "Documentacao/integracao.md",
+    "tui_reference": "Documentacao/tui.md",
+    "acoustic_sensor": "Documentacao/sensor-acustico.md",
+    "security": "Documentacao/seguranca.md",
+    "validation": "Documentacao/validacao.md",
+    "challenges": "Documentacao/desafios.md",
+    "history": "Documentacao/historico",
     "virtual_bench": "Codigo/node-can/test/host/sim_network.cpp",
+    "virtual_lab": "Simulacao",
     "replays": "Front/replays",
     "research_toolkit": "Pesquisa",
-    "research_methodology": "Documentacao/pesquisa/metodologia.md"
+    "research_methodology": "Pesquisa/metodologia.md"
   },
   "hardware": {
     "probe": "ESP32 + MCP2515, Node ID 0, instrumentação externa",
     "can_nodes": "ESP32 + MCP2515, IDs funcionais explícitos",
     "wireless_sensor": "Raspberry Pi Pico W + MPU6050",
-    "acoustic_sensor": "Raspberry Pi Pico W (RP2040) ou Pico 2 W (RP2350) + microfone MEMS INMP441 (I2S)"
+    "acoustic_sensor": "Raspberry Pi Pico W (RP2040) ou Pico 2 W (RP2350) + microfone MEMS INMP441 (I2S)",
+    "panel": "ESP32-2432S028 (\"Cheap Yellow Display\"): LCD 320×240 com toque resistivo"
   },
   "network": {
     "can": "CAN clássico 500 kbit/s no hardware atual",
@@ -43,7 +47,8 @@
     "bus_metrics": "Probe 00: ocupação pela duração exata dos quadros (CRC-15 e bits de preenchimento reconstruídos) e período por identificador",
     "wireless_failover": "reassociação decidida pelo líder a partir dos estados de vínculo e das observações de RSSI; autorização por sensor",
     "leader_supervision": "Probe 00 (4 períodos) e seguidores (6 períodos, escalonados pelo identificador)",
-    "fault_injection": "comando 0x305, estado 0x306; carga artificial em 0x010 e 0x7F0; removível com IOT_FAULT_INJECTION=0"
+    "fault_injection": "comando 0x305, estado 0x306; carga artificial em 0x010 e 0x7EF; removível com IOT_FAULT_INJECTION=0",
+    "network_clock": "hora UTC em 0x120 + NODE_ID; o terminal ajusta pela Probe 00 (TIME_SYNC), quem não tem hora pede e respondem a Probe e o líder"
   },
   "implemented": [
     "eleição e liveness lease dos Nodes CAN",
@@ -75,13 +80,14 @@
     "sensor acústico INMP441 no Pico W e no Pico 2 W: I2S mestre na PIO, DMA em anel e DSP no segundo núcleo",
     "modos acústicos LEVEL (níveis ponderados, Ln, doses NR-15 e NHO-01), MACHINE (assinatura em bandas de oitava, fundamental e anomalia) e EVENTS (STA/LTA, classificação e SEL)",
     "análises acústicas na TUI: projeção de dose, curva NC, conversa, tacômetro com hipóteses de motor, estatística de eventos e calibração assistida",
-    "marcação dos trechos do livro na documentação e montagem do rascunho (Documentacao/livro.md, extrair_livro.py)",
     "supervisório na TUI: até cinco painéis (rede, módulos CAN e sensores), com alarme na borda e uso do barramento por módulo",
     "alarmes por limiar definidos pelo operador para cada sensor, com histerese, intercorrências e persistência",
     "gravação das sessões seriais reais no formato de --replay, com segredos mascarados",
     "fuzz determinístico dos decodificadores do enlace e do plano de dados (ASan/UBSan) e das linhas da TUI",
     "vínculos dos sensores gravados na NVS dos Nodes e retomados depois de um reinício, sem disputar o que outro Node assumiu",
-    "instrumento de pesquisa: carimbos t_us da Probe, eco no plano de dados com amostragem de Poisson e fase da janela sorteada por repetição, carga com semente e prioridade MID/MIX, custo da criptografia no Node e BENCH CRYPTO nas placas, parâmetros L/H/T da máquina de estados, desenho fatorial com sementes, coleta com proveniência e análise com IC, Wilson, Hedges, Cliff e Holm"
+    "instrumento de pesquisa: carimbos t_us da Probe, eco no plano de dados com amostragem de Poisson e fase da janela sorteada por repetição, carga com semente e prioridade MID/MIX, custo da criptografia no Node e BENCH CRYPTO nas placas, parâmetros L/H/T da máquina de estados, desenho fatorial com sementes, coleta com proveniência e análise com IC, Wilson, Hedges, Cliff e Holm",
+    "relógio da rede: hora do terminal divulgada pela Probe 00, pedido de hora na partida e pelo painel",
+    "painel de operação na ESP32-2432S028 (CYD), com o mesmo PanelApp do enlace autenticado"
   ],
   "pending": [
     "validação em bancada do plano de dados wireless",
@@ -99,5 +105,6 @@
     "automated": "testes nativos (incluindo o DSP acústico e o fuzz dos decodificadores), simulação do plano de dados, simulação da PIO I2S, bancada virtual com dezessete cenários e suíte da TUI",
     "compiled": "sensor acústico para pico_w e pico2_w (Pico SDK 2.3.1, sem avisos de compilação) e sensor de vibração para pico_w; firmware do Node CAN e da Probe 00 compilado no computador pela bancada virtual, e para ESP32 (arduino-esp32 2.0.17) pela integração contínua",
     "hardware": "plano de dados wireless, métricas, reassociação, ensaios e sensor acústico ainda não validados em bancada"
-  }
+  },
+  "license": "GPL-3.0-only"
 }
