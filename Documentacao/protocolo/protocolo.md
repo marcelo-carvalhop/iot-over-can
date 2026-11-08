@@ -72,6 +72,23 @@ Quadros CAN:
 
 Tipos: `1` POWER_CYCLE, `2` SILENCE, `3` AP_OUTAGE, `4` DROP_SESSION, `0x0F` CANCEL. Estados: `1` iniciado, `2` encerrado, `3` recusado. Os Nodes compilados com `IOT_FAULT_INJECTION=0` ignoram `0x305`.
 
+## Relógio da rede
+
+A rede mantém uma hora UTC comum (Probe com `TIME_SYNC` em `FEATURES`). Cada Node e a Probe 00 contam o tempo pelo `millis()` a partir da última hora recebida. Hoje nenhum deles tem relógio de tempo real; o formato já prevê um.
+
+Quadro CAN de 8 bytes, um identificador por transmissor: `0x120 + NODE_ID` (`0x120` é a Probe 00; `0x121..0x13F`, os Nodes). A faixa perde para eleição, controle e sinal de presença e vence todo o tráfego dos sensores. Formato em [`ioc_time.h`](../../Codigo/common/ioc_link/ioc_time.h).
+
+```text
+tipo(1) | fonte(1) | segundos UTC (4, LE) | milissegundos (2, LE)
+tipo:  1 hora, 2 pedido de hora
+fonte: 0 sem hora, 1 terminal, 2 relógio de tempo real (RTC), 3 operador
+```
+
+- **Terminal.** A TUI envia `TIME <ms UTC desde 1970>` à Probe 00 ao conectar, se a Probe anuncia `TIME_SYNC`, e a cada 10 minutos. A Probe adota a hora, divulga-a no `0x120` e responde `[GW] TIME_SYNC node=0 fonte=TERMINAL epoch=<s.ms> ajuste_ms=<ms|NA>`. `TIME` sem argumento mostra a hora da Probe.
+- **Pedido.** Quem não tem hora a pede 5 s depois da partida; o Node também pede quando um painel quer a hora e ele não tem. O pedido leva a fonte e a hora de quem pede. Respondem a Probe 00 e o líder, se tiverem uma hora que o solicitante adotaria. A Probe relata cada pedido como `[GW] TIME_REQ node=<n>`.
+- **Adoção.** A hora recebida é adotada quando não há hora ou quando vem de uma fonte melhor (número menor). Da mesma fonte, só quando difere mais de 50 ms nos Nodes, ou mais de 2 s no painel. Assim cada ressincronização corrige a deriva dos cristais sem que os Nodes fiquem trocando correções.
+- **Painel.** O HELLO do painel leva o sinal `IOC_PANEL_HELLO_TIME` (`0x02`) a cada conexão. Se o Node tem hora, responde com o próprio quadro de hora num lote à parte, antes do retrato. Se não tem, pergunta ao barramento, e a resposta chega ao painel no encaminhamento ao vivo, como qualquer quadro. Cada divulgação do terminal também chega ao painel ao vivo. O RTC do PaperColor cede à hora do terminal, e a hora ajustada à mão (`/hora`, `/data`) cede à do terminal e à de um RTC.
+
 ## Função local do Node CAN
 
 A telemetria local de demonstração produz um byte `0xAA`. A TUI associa esse valor ao Node físico que o originou. O valor atual, a rodada e a idade da amostra são estado contínuo e não devem produzir eventos repetitivos na tela principal.

@@ -58,6 +58,12 @@ class LegacyGatewayDecoder:
         r"\[GW\]\s+WIRELESS_FAILOVER\s+uuid=(?P<uuid>0x[0-9A-Fa-f]{16})\s+from=(?P<from>\d+)\s+"
         r"to=(?P<to>\d+)\s+reason=(?P<reason>[A-Z_]+)(?:\s+rssi=(?P<rssi>-?\d+))?"
     )
+    # Relógio da rede: ajuste da hora (pelo terminal ou por outro Node) e pedidos de hora.
+    TIME_SYNC = re.compile(
+        r"\[GW\]\s+TIME_SYNC\s+node=(?P<node>\d+)\s+fonte=(?P<source>[A-Z]+)\s+epoch=(?P<epoch>\d+)\.\d+"
+        r"\s+ajuste_ms=(?P<delta>-?\d+|NA)"
+    )
+    TIME_REQ = re.compile(r"\[GW\]\s+TIME_REQ\s+node=(?P<node>\d+)")
     BUS_STATS = re.compile(r"\[GW\]\s+BUS_STATS\s+")
     ID_STATS = re.compile(r"\[GW\]\s+ID_STATS\s+")
     FAULT_TX = re.compile(r"\[GW\]\s+FAULT_TX\s+")
@@ -142,6 +148,20 @@ class LegacyGatewayDecoder:
         self.bus = bus
 
     async def decode(self, line: str) -> bool:
+        if match := self.TIME_SYNC.search(line):
+            source = {"TERMINAL": "do terminal", "RTC": "de um relógio de tempo real", "OPERADOR": "ajustada à mão"}
+            node = int(match.group("node"))
+            origin = "pela Probe 00" if node == 0 else f"pelo Node {node:02d}"
+            delta = match.group("delta")
+            change = "" if delta == "NA" else f" (ajuste de {int(delta)} ms)"
+            text = f"Relógio da rede: hora {source.get(match.group('source'), match.group('source'))}, {origin}{change}"
+            # A ressincronização periódica quase não mexe no relógio: fica no nível de depuração.
+            level = "DEBUG" if delta != "NA" and abs(int(delta)) < 1000 else "INFO"
+            await self.bus.publish(LogEvent(level, text, "RELOGIO"))
+            return True
+        if match := self.TIME_REQ.search(line):
+            await self.bus.publish(LogEvent("DEBUG", f"Node {int(match.group('node')):02d} pediu a hora da rede", "RELOGIO"))
+            return True
         if self.BUS_STATS.search(line):
             return await self._bus_stats(line)
         if self.ID_STATS.search(line):

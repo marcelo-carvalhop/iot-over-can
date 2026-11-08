@@ -33,7 +33,7 @@ if [[ -n "${IOC_SIM_CXXFLAGS:-}" ]]; then
   done
 fi
 SOURCES=(main.ino comandos.cpp falhas.cpp wireless_discovery.cpp wireless_link.cpp
-         net_metrics.cpp fault_injection.cpp pesquisa.cpp)
+         net_metrics.cpp fault_injection.cpp pesquisa.cpp relogio.cpp)
 
 python3 "$ROOT/Simulacao/gen_sim_factories.py" \
   --max-nodes "${IOC_SIM_MAX_NODES:-6}" \
@@ -58,7 +58,7 @@ run() {
   fi
 }
 
-for src in ioc_sha256 ioc_link ioc_wdata ioc_canbits ioc_failover ioc_bindstore ioc_bench; do
+for src in ioc_sha256 ioc_link ioc_wdata ioc_canbits ioc_failover ioc_bindstore ioc_bench ioc_time; do
   run cc -std=c11 -O1 -Wall -Wextra -Werror -I"$LINK" -c "$LINK/$src.c" -o "$OBJ_DIR/$src.o"
 done
 for src in ioc_panel_proto ioc_panel_cache ioc_view ioc_page; do

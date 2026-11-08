@@ -23,6 +23,16 @@
 
 #define CAN_ID_HEARTBEAT     0x100
 
+/* =========================================================
+ * RELOGIO DA REDE
+ *
+ * Hora UTC e pedido de hora, um identificador por transmissor:
+ *   BASE + NODE_ID -> 0x120 Probe 00, 0x121..0x13F Nodes 1..31.
+ * Formato em Codigo/common/ioc_link/ioc_time.h.
+ * ========================================================= */
+#define CAN_ID_TIME_BASE     0x120
+#define CAN_ID_TIME_LAST     0x13F
+
 
 /* =========================================================
  * DESCOBERTA WIRELESS DISTRIBUIDA (CAN CLASSICO)
@@ -88,8 +98,8 @@
 #define CAN_ID_TEST_LOAD_HIGH             0x010
 #define CAN_ID_TEST_LOAD_LOW              0x7EF
 /*
- * Carga intermediaria (pesquisa): perde para eleicao, controle e sinal de
- * presenca e vence o trafego dos sensores (0x200, descoberta, associacao e
+ * Carga intermediaria (pesquisa): perde para eleicao, controle, sinal de
+ * presenca e relogio e vence o trafego dos sensores (0x200, descoberta, associacao e
  * plano de dados). Separa o efeito da carga sobre a coordenacao do efeito
  * sobre a integracao sem fio.
  */

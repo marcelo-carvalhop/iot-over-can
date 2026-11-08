@@ -40,6 +40,10 @@ def describe(can_id: int) -> MessageInfo:
         return MessageInfo(can_id, "Controle e estado dos módulos", "Coordenação")
     if can_id == HEARTBEAT_ID:
         return MessageInfo(can_id, "Sinal de presença do líder", "Coordenação")
+    if 0x120 <= can_id <= 0x13F:
+        node = can_id - 0x120
+        origin = "Probe 00" if node == 0 else f"Módulo {node:02d}"
+        return MessageInfo(can_id, f"Relógio da rede, {origin}", "Coordenação", node or None)
     if can_id == LOCAL_SENSOR_ID:
         return MessageInfo(can_id, "Sensor local dos módulos", "Dados")
     if 0x280 <= can_id <= 0x2BF:

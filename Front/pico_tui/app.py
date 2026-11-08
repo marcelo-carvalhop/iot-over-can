@@ -31,6 +31,7 @@ from pico_tui.core.events import (
     ConnectionModeDetected,
     ConnectionOpened,
     DtcReceived,
+    GatewayDetected,
     LogEvent,
     RawLineReceived,
     SpectrumReceived,
@@ -91,6 +92,8 @@ from pico_tui.supervisor import SupervisorScreen
 from pico_tui.widgets import MessageEntry
 
 REFRESH_SECONDS = 0.5
+# Relógio da rede: a hora do computador vai à Probe 00 ao conectar e com este intervalo.
+TIME_SYNC_SECONDS = 600.0
 
 
 class SessionClock:
@@ -258,6 +261,8 @@ class PicoTuiApp(App[None]):
         self._last_mode = mode
         self._last_ping_sent: float | None = None
         self._device_auth_until = 0.0
+        # A Probe 00 anunciou TIME_SYNC: a TUI mantém o relógio da rede (ver _sync_network_clock).
+        self._probe_time_sync = False
         self._pending_device_command: str | None = None
         # Comandos mutáveis emitidos enquanto a autenticação do firmware está em
         # curso: são enviados em ordem logo após OK AUTH_UNLOCKED.
@@ -299,6 +304,7 @@ class PicoTuiApp(App[None]):
         self.run_worker(self._process_lines(), group="decoder", exclusive=True)
         self.set_interval(REFRESH_SECONDS, self._refresh_ui)
         self.set_interval(1.0, self._expire_fragment_transfers)
+        self.set_interval(TIME_SYNC_SECONDS, self._sync_network_clock)
         self._boot()
 
     async def on_unmount(self) -> None:
@@ -334,6 +340,7 @@ class PicoTuiApp(App[None]):
     def _register_event_handlers(self) -> None:
         self.bus.subscribe(LogEvent, self._on_log_event)
         self.bus.subscribe(ConnectionModeDetected, self._on_mode_detected)
+        self.bus.subscribe(GatewayDetected, self._on_gateway_detected)
         self.bus.subscribe(RawLineReceived, self._on_raw_line)
         self.bus.subscribe(CommandAck, self._on_command_ack)
         self.bus.subscribe(TransferCompleted, self._on_transfer_completed)
@@ -587,6 +594,7 @@ class PicoTuiApp(App[None]):
         client = self.serial_client
         self.serial_client = None
         self._device_auth_until = 0.0
+        self._probe_time_sync = False
         self._pending_device_command = None
         self._pending_device_queue.clear()
         self._device_auth_inflight = False
@@ -677,6 +685,19 @@ class PicoTuiApp(App[None]):
                     pass
         if event.source == "ALARME" and event.level == "WARNING":
             self.notify(event.message, title="Alarme", severity="warning", timeout=8)
+
+    async def _on_gateway_detected(self, event: GatewayDetected) -> None:
+        self._probe_time_sync = "TIME_SYNC" in event.features.split(",")
+        self._sync_network_clock()
+
+    def _sync_network_clock(self) -> None:
+        """Envia a hora do computador à Probe 00, que a divulga a todos os Nodes.
+
+        Vai ao conectar e a cada TIME_SYNC_SECONDS, para corrigir a deriva dos
+        relógios dos Nodes, que contam o tempo pelo próprio cristal.
+        """
+        if self._probe_time_sync and self.serial_client is not None and not self.replaying:
+            self._send_raw(f"TIME {time.time_ns() // 1_000_000}")
 
     async def _on_mode_detected(self, event: ConnectionModeDetected) -> None:
         if self.serial_client:

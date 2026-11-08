@@ -456,11 +456,19 @@ void drawButton(int i, const char* label, uint32_t bg) {
 void drawUi(bool force) {
   const ioc_view& v = app.view();
   const uint8_t level = app.level();
-  char right[32];
-  if (transport == Transport::Usb) snprintf(right, sizeof(right), "USB");
-  else if (app.sessionUp()) snprintf(right, sizeof(right), "Módulo %02u", app.parentNode());
-  else if (!haveNetworkKey) snprintf(right, sizeof(right), "sem chave");
-  else snprintf(right, sizeof(right), "%s", joinedNode ? "conectando" : "procurando");
+  char where[24];
+  if (transport == Transport::Usb) snprintf(where, sizeof(where), "USB");
+  else if (app.sessionUp()) snprintf(where, sizeof(where), "Módulo %02u", app.parentNode());
+  else if (!haveNetworkKey) snprintf(where, sizeof(where), "sem chave");
+  else snprintf(where, sizeof(where), "%s", joinedNode ? "conectando" : "procurando");
+  char right[40];
+  if (hal.clockValid()) {  // hora local, vinda da rede ou da USB
+    const int64_t local = hal.epochNow() + static_cast<int64_t>(app.tzMin()) * 60;
+    const int s = static_cast<int>(((local % 86400) + 86400) % 86400);
+    snprintf(right, sizeof(right), "%s  %02d:%02d", where, s / 3600, s / 60 % 60);
+  } else {
+    snprintf(right, sizeof(right), "%s", where);
+  }
   lineCount = 0;
   if (!app.sessionUp() && !app.snapshotReceived()) {
     addLine(C_FG, 0, 1, "Sem dados da rede");
@@ -620,7 +628,7 @@ void handleHostLine(char* line) {
                   PANEL_FW_VERSION);
   } else if (strncmp(cmd, "TIME ", 5) == 0) {
     const int64_t epoch = atoll(cmd + 5);
-    if (epoch > 1700000000LL) hal.setClock(epoch);
+    app.setClockFrom(epoch, IOC_TIME_SRC_TERMINAL);
   } else if (strncmp(cmd, "LINK ", 5) == 0) {
     usbLink = cmd[5] == '1';
   } else if (strncmp(cmd, "OFFER ", 6) == 0) {

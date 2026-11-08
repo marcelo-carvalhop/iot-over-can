@@ -10,6 +10,7 @@
 #include "net_metrics.h"
 #include "fault_injection.h"
 #include "pesquisa.h"
+#include "relogio.h"
 
 /* =========================================================
  * VARIAVEIS EXTERNAS DO .ino
@@ -82,7 +83,7 @@ static void printHexByte(uint8_t value) {
 
 static void printProbeVersion() {
   Serial.println("PROBE_VERSION FIRMWARE=0.21.0 PROTOCOL=CAN_CLASSIC_V1 NODE=0 "
-                 "FEATURES=WIRELESS_DATA,ACOUSTIC_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER,RESEARCH");
+                 "FEATURES=WIRELESS_DATA,ACOUSTIC_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER,RESEARCH,TIME_SYNC");
 }
 
 static void printProbeStatus() {
@@ -287,6 +288,10 @@ void handleSerialCommands() {
       }
 
       if (pesquisaHandleSerialCommand(buffer)) {
+        return;
+      }
+
+      if (relogioHandleSerialCommand(buffer)) {
         return;
       }
 

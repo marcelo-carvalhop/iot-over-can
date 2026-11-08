@@ -140,6 +140,13 @@ typedef struct {
     uint8_t  snapshot_done;
     uint32_t last_batch_ms;
 
+    /* Último quadro de hora (ioc_time.h): hora UTC no instante time_at_ms. */
+    int64_t  time_utc_ms;
+    uint32_t time_at_ms;
+    uint8_t  time_source;
+    uint8_t  time_node;
+    uint16_t time_count;
+
     uint8_t  self_node;
     uint8_t  self_child;
     ioc_wd_rx rx[IOC_VIEW_NODES];

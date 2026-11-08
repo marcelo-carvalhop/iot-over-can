@@ -30,6 +30,8 @@
 #include "ioc_canbits.h"
 #include "ioc_panel_cache.h"
 #include "ioc_panel_proto.h"
+#include "ioc_time.h"
+#include "relogio.h"
 
 // Estruturas do protocolo do sensor. O arquivo pertence ao firmware do Pico W
 // e é a única definição do formato dos payloads internos. A inclusão é por
@@ -1317,6 +1319,22 @@ void panelSendSnapshot(Link& link) {
   sendToSensor(link, sink.buf, sink.used);
 }
 
+// Hora pedida no HELLO: a do Node, num lote próprio (sem as marcas de retrato
+// ou ao vivo, para não entrar na ocupação do barramento medida pelo painel).
+// Sem hora, o Node pergunta ao barramento; a resposta segue ao vivo.
+void panelSendTime(Link& link) {
+  ioc_panel_frame frame = {0, static_cast<uint16_t>(CAN_ID_TIME_BASE + NODE_ID), 1, IOC_TIME_LEN, {0}};
+  if (!relogioOwnFrame(frame.data)) {
+    relogioRequest();
+    return;
+  }
+  uint8_t buf[IOC_PANEL_FRAMES_HEADER + IOC_PANEL_FRAME_MAX];
+  ioc_panel_frames_hdr hdr = {0, link.tapSeq++, 0, 0, 0};
+  size_t used = ioc_panel_frames_begin(buf, sizeof(buf), &hdr);
+  used = used ? ioc_panel_frames_add(buf, sizeof(buf), used, &frame) : 0;
+  if (used) sendToSensor(link, buf, used);
+}
+
 void panelToCan(const Link& link, uint8_t type, const uint8_t* body, size_t len) {
   uint8_t raw[IOC_WD_MAX_PAYLOAD];
   if (len + 1 > sizeof(raw)) return;
@@ -1334,6 +1352,7 @@ void handlePanelPayload(Link& link, uint8_t cmd, const uint8_t* body, size_t len
     link.panelSleepS = hello.sleep_s;
     link.panelAsleep = false;
     tapReset(link, IOC_PANEL_FR_LIVE);
+    if (hello.flags & IOC_PANEL_HELLO_TIME) panelSendTime(link);
     if (hello.flags & IOC_PANEL_HELLO_SNAPSHOT) panelSendSnapshot(link);
     link.panelSubscribed = true;
     link.panelEverSubscribed = true;

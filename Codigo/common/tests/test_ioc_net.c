@@ -14,6 +14,7 @@
 #include "ioc_canbits.h"
 #include "ioc_failover.h"
 #include "ioc_secpdu.h"
+#include "ioc_time.h"
 #include "ioc_wdata.h"
 
 static int g_failures = 0;
@@ -494,6 +495,42 @@ static void test_bindstore(void) {
     CHECK(ioc_bs_encode(5, in, 3, buf, 10) == 0);
 }
 
+/* Relógio da rede: formato do quadro e regra de adoção. */
+static void test_time(void) {
+    uint8_t d[IOC_TIME_LEN];
+    ioc_time_msg in = {IOC_TIME_KIND_TIME, IOC_TIME_SRC_TERMINAL, 1793000000999LL}, out;
+    ioc_time_encode(&in, d);
+    CHECK(d[0] == 1 && d[1] == 1 && d[6] == 0xE7 && d[7] == 0x03);
+    CHECK(ioc_time_decode(d, sizeof(d), &out) && out.kind == in.kind && out.source == in.source &&
+          out.utc_ms == in.utc_ms);
+    CHECK(!ioc_time_decode(d, 7, &out));                    /* tamanho errado */
+    d[6] = 0xE8;                                             /* 1000 ms */
+    CHECK(!ioc_time_decode(d, sizeof(d), &out));
+    in.source = IOC_TIME_SRC_NONE;
+    ioc_time_encode(&in, d);
+    CHECK(!ioc_time_decode(d, sizeof(d), &out));             /* hora sem fonte */
+    in.source = IOC_TIME_SRC_RTC;
+    in.utc_ms = 1000;
+    ioc_time_encode(&in, d);
+    CHECK(!ioc_time_decode(d, sizeof(d), &out));             /* relógio nunca ajustado */
+    const ioc_time_msg req = {IOC_TIME_KIND_REQUEST, IOC_TIME_SRC_NONE, 0};
+    ioc_time_encode(&req, d);
+    CHECK(ioc_time_decode(d, sizeof(d), &out) && out.kind == IOC_TIME_KIND_REQUEST &&
+          out.source == IOC_TIME_SRC_NONE && out.utc_ms == 0);
+    d[0] = 3;
+    CHECK(!ioc_time_decode(d, sizeof(d), &out));             /* tipo desconhecido */
+
+    const int64_t t = 1793000000000LL;
+    CHECK(ioc_time_adopt(IOC_TIME_SRC_NONE, 0, IOC_TIME_SRC_OPERATOR, t, 50));
+    CHECK(ioc_time_adopt(IOC_TIME_SRC_RTC, t, IOC_TIME_SRC_TERMINAL, t + 1, 50));
+    CHECK(!ioc_time_adopt(IOC_TIME_SRC_TERMINAL, t, IOC_TIME_SRC_RTC, t + 60000, 50));
+    CHECK(!ioc_time_adopt(IOC_TIME_SRC_TERMINAL, t, IOC_TIME_SRC_TERMINAL, t + 50, 50));
+    CHECK(ioc_time_adopt(IOC_TIME_SRC_TERMINAL, t, IOC_TIME_SRC_TERMINAL, t - 51, 50));
+    CHECK(!ioc_time_adopt(IOC_TIME_SRC_NONE, 0, IOC_TIME_SRC_NONE, t, 50));
+    CHECK(!ioc_time_adopt(IOC_TIME_SRC_NONE, 0, IOC_TIME_SRC_TERMINAL, 1000, 50));
+    CHECK(strcmp(ioc_time_source_name(IOC_TIME_SRC_RTC), "RTC") == 0);
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--vectors") == 0) {
         print_vectors();
@@ -505,6 +542,7 @@ int main(int argc, char **argv) {
     test_assoc_flags();
     test_failover();
     test_bindstore();
+    test_time();
     if (g_failures) {
         fprintf(stderr, "ioc_net: %d falha(s)\n", g_failures);
         return 1;

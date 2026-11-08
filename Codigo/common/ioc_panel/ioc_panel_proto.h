@@ -8,7 +8,7 @@
  * mensagens do sensor, vêm magic (0xAA55, LE) e o tipo do comando:
  *
  *   0x30 FRAMES    Node -> painel  quadros CAN observados pelo Node (tap)
- *   0x31 HELLO     painel -> Node  pede o retrato e declara o intervalo de sono
+ *   0x31 HELLO     painel -> Node  pede o retrato e a hora e declara o intervalo de sono
  *   0x32 STATUS    painel -> Node  bateria, ambiente, página, sono, desligamento
  *   0x33 MARK      painel -> Node  marca do operador (botão, nota, roteiro)
  *   0x34 MARK_ACK  Node -> painel  marca entregue ao CAN
@@ -92,6 +92,9 @@ int ioc_panel_frames_next(const uint8_t *buf, size_t len, size_t *offset, ioc_pa
 
 #define IOC_PANEL_HELLO_LEN      7
 #define IOC_PANEL_HELLO_SNAPSHOT 0x01
+/* Pede a hora da rede: o Node responde com o próprio quadro de hora (ioc_time.h)
+   ou, sem hora, pergunta ao barramento e a resposta segue ao vivo. */
+#define IOC_PANEL_HELLO_TIME     0x02
 
 typedef struct {
     uint8_t  version;

@@ -74,7 +74,7 @@ class PaperColorNativeTests(unittest.TestCase):
         fixture = ROOT / "Codigo/node-paper/tests/test_panel_reconnect.cpp"
         files = [
             link / "ioc_sha256.c", link / "ioc_link.c",
-            link / "ioc_wdata.c", link / "ioc_canbits.c",
+            link / "ioc_wdata.c", link / "ioc_canbits.c", link / "ioc_time.c",
             panel / "ioc_panel_proto.c", panel / "ioc_panel_cache.c",
             panel / "ioc_view.c", panel / "ioc_page.c",
         ]

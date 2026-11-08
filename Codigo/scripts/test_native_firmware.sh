@@ -39,7 +39,7 @@ cc -std=c11 -O2 -Wall -Wextra -Werror -D_POSIX_C_SOURCE=200809L \
 cc -std=c11 -Wall -Wextra -Werror \
   -I"$LINK" \
   "$LINK/ioc_sha256.c" "$LINK/ioc_wdata.c" "$LINK/ioc_canbits.c" \
-  "$LINK/ioc_secpdu.c" "$LINK/ioc_failover.c" "$LINK/ioc_bindstore.c" \
+  "$LINK/ioc_secpdu.c" "$LINK/ioc_failover.c" "$LINK/ioc_bindstore.c" "$LINK/ioc_time.c" \
   "$REPO_ROOT/Codigo/common/tests/test_ioc_net.c" \
   -lm -o "$OUT_DIR/test_ioc_net"
 "$OUT_DIR/test_ioc_net"
@@ -53,7 +53,7 @@ if echo 'int main(void){return 0;}' | cc -x c -fsanitize=address,undefined - -o 
   PANEL_FLAGS+=(-fsanitize=address,undefined -fno-sanitize-recover=all)
 fi
 cc "${PANEL_FLAGS[@]}" -I"$LINK" -I"$PANEL" \
-  "$LINK/ioc_sha256.c" "$LINK/ioc_wdata.c" "$LINK/ioc_canbits.c" \
+  "$LINK/ioc_sha256.c" "$LINK/ioc_wdata.c" "$LINK/ioc_canbits.c" "$LINK/ioc_time.c" \
   "$PANEL/ioc_panel_proto.c" "$PANEL/ioc_panel_cache.c" "$PANEL/ioc_view.c" "$PANEL/ioc_page.c" \
   "$REPO_ROOT/Codigo/common/tests/test_ioc_panel.c" \
   -lm -o "$OUT_DIR/test_ioc_panel"

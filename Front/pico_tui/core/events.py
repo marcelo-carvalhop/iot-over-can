@@ -44,6 +44,7 @@ class ConnectionModeDetected(Event):
 class GatewayDetected(Event):
     firmware_version: str = ""
     protocol_version: str = ""
+    features: str = ""
 
 
 @dataclass(slots=True)

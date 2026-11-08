@@ -210,7 +210,7 @@ def test_c_bus_measurement_matches_python_reference(tmp_path: Path) -> None:
     subprocess.run(
         ["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", f"-I{LINK}",
          *(str(LINK / name) for name in ("ioc_sha256.c", "ioc_wdata.c", "ioc_canbits.c", "ioc_secpdu.c", "ioc_failover.c",
-                                         "ioc_bindstore.c")),
+                                         "ioc_bindstore.c", "ioc_time.c")),
          str(CODE / "common/tests/test_ioc_net.c"), "-lm", "-o", str(binary)],
         check=True,
     )

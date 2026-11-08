@@ -15,6 +15,7 @@
 #include "ioc_link.h"
 #include "ioc_page.h"
 #include "ioc_panel_proto.h"
+#include "ioc_time.h"
 #include "ioc_view.h"
 #include "panel_signal.h"
 
@@ -121,6 +122,12 @@ class PanelApp {
   /* Contexto da página agora (relógio, sensores, marcas): telas que compõem a
    * própria página, como a da CYD, usam-no com ioc_page_assess. */
   void fillCtx(ioc_page_ctx& ctx, uint32_t now);
+  /* Hora vinda de fora da rede (ioc_time.h): o computador pela USB, por exemplo.
+   * Segue a mesma regra da hora da rede: fonte melhor sempre, a mesma só se
+   * diferir mais de 2 s. */
+  bool setClockFrom(int64_t epoch, uint8_t source);
+  uint8_t clockSource() const { return clockSource_; }
+  int16_t tzMin() const { return cfg_.tzMin; }
   uint32_t sleepSeconds() const;
   bool unacked() const { return unacked_; }
   uint16_t alertsAnnounced() const { return alertsAnnounced_; }
@@ -140,6 +147,7 @@ class PanelApp {
   void sendPanelHello();
   void sendStatus(uint8_t extraFlags, uint16_t sleepS);
   void handleData(const uint8_t* inner, size_t len);
+  void adoptNetworkTime(uint32_t now);
   void maintainLink(uint32_t now);
   void flushMarks(uint32_t now);
   void addMark(uint8_t kind, uint8_t step, const char* text, uint32_t createdMs);
@@ -197,6 +205,8 @@ class PanelApp {
   ioc_page_item items_[IOC_PAGE_MAX_ITEMS];
   int itemCount_ = 0;
   uint8_t level_ = 0;
+  uint8_t clockSource_ = 0;   // IOC_TIME_SRC_*: de onde veio a hora do relógio
+  uint16_t timeSeen_ = 0;     // último view_.time_count tratado
   uint8_t page_ = PAGE_SITUATION;
   bool forceRefresh_ = true;
   bool pageChanged_ = false;

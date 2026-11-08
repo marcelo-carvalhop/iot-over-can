@@ -123,11 +123,15 @@ void PanelApp::begin(PanelHal* hal, const PanelConfig& cfg) {
   memset(sessionKey_, 0, sizeof(sessionKey_));
   const uint32_t now = hal_->millis();
   bootMs_ = now;
+  // Hora válida na partida só pode ter vindo do relógio de tempo real.
+  if (!hal_->clockValid()) clockSource_ = IOC_TIME_SRC_NONE;
+  else if (clockSource_ == IOC_TIME_SRC_NONE) clockSource_ = IOC_TIME_SRC_RTC;
   lastActivityMs_ = now;
   rng_ ^= static_cast<uint32_t>(cfg_.uuid) ^ static_cast<uint32_t>(cfg_.uuid >> 32) ^ now ^
           static_cast<uint32_t>(hal_->epochNow());
   if (rng_ == 0) rng_ = 1;
   ioc_view_init(&view_, now);
+  timeSeen_ = 0;  // a contagem de quadros de hora recomeça com a visão
   memset(&refresh_, 0, sizeof(refresh_));
   ioc_dl_clear(&dl_);
   ioc_dl_clear(&drawn_);
@@ -279,7 +283,7 @@ void PanelApp::sendHello() {
 void PanelApp::sendPanelHello() {
   ioc_panel_hello hello;
   hello.version = IOC_PANEL_VERSION;
-  hello.flags = IOC_PANEL_HELLO_SNAPSHOT;
+  hello.flags = IOC_PANEL_HELLO_SNAPSHOT | IOC_PANEL_HELLO_TIME;  // pede a hora a cada conexão
   uint8_t bat = 255; uint16_t mv = 0; int16_t t = IOC_PANEL_NA_I16; uint16_t rh = IOC_PANEL_NA_U16; bool usb = false;
   hal_->readSensors(bat, mv, t, rh, usb);
   hello.sleep_s = (cfg_.canSleep && !usb) ? static_cast<uint16_t>(sleepSeconds()) : 0;
@@ -370,6 +374,7 @@ void PanelApp::handleData(const uint8_t* inner, size_t len) {
       if (ioc_view_batch(&view_, inner, len, now) >= 0) {
         lastDataMs_ = now;
         noDataDrawn_ = false;
+        if (view_.time_count != timeSeen_) adoptNetworkTime(now);
       }
       break;
     case IOC_PANEL_CMD_MARK_ACK:
@@ -389,6 +394,25 @@ void PanelApp::handleData(const uint8_t* inner, size_t len) {
     default:
       break;
   }
+}
+
+bool PanelApp::setClockFrom(int64_t epoch, uint8_t source) {
+  const uint8_t mine = hal_->clockValid() ? clockSource_ : static_cast<uint8_t>(IOC_TIME_SRC_NONE);
+  if (!ioc_time_adopt(mine, hal_->epochNow() * 1000, source, epoch * 1000, 2000)) return false;
+  hal_->setClock(epoch);
+  clockSource_ = source;
+  return true;
+}
+
+// Quadro de hora recebido do Node (resposta ao HELLO ou divulgação ao vivo).
+void PanelApp::adoptNetworkTime(uint32_t now) {
+  timeSeen_ = view_.time_count;
+  const int64_t rxMs = view_.time_utc_ms + static_cast<int32_t>(now - view_.time_at_ms);
+  if (!setClockFrom((rxMs + 500) / 1000, view_.time_source)) return;
+  char line[72];
+  snprintf(line, sizeof(line), "relogio pela rede: node=%u fonte=%s", static_cast<unsigned>(view_.time_node),
+           ioc_time_source_name(view_.time_source));
+  hal_->log(line);
 }
 
 void PanelApp::maintainLink(uint32_t now) {
@@ -569,6 +593,7 @@ bool PanelApp::slashCommand(const char* text) {
   int64_t midnight = local - ((local % 86400) + 86400) % 86400;
   if (sscanf(text, "/hora %d:%d", &hh, &mm) == 2 && hh >= 0 && hh < 24 && mm >= 0 && mm < 60) {
     hal_->setClock(midnight + hh * 3600 + mm * 60 - static_cast<int64_t>(cfg_.tzMin) * 60);
+    clockSource_ = IOC_TIME_SRC_OPERATOR;
     snprintf(flash_, sizeof(flash_), "Relógio ajustado para %02d:%02d", hh, mm);
     return true;
   }
@@ -576,6 +601,7 @@ bool PanelApp::slashCommand(const char* text) {
     const int64_t seconds = ((local % 86400) + 86400) % 86400;
     hal_->setClock(daysFromCivil(y, static_cast<unsigned>(mo), static_cast<unsigned>(d)) * 86400 + seconds -
                    static_cast<int64_t>(cfg_.tzMin) * 60);
+    clockSource_ = IOC_TIME_SRC_OPERATOR;
     snprintf(flash_, sizeof(flash_), "Data ajustada: %04d-%02d-%02d", y, mo, d);
     return true;
   }

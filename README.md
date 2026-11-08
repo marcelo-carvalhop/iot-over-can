@@ -76,7 +76,8 @@ O papel colorido leva de 15 a 30 s por redesenho e não acompanhou bem a rede ao
 - **Controlador da tela.** A versão com USB-C e micro-USB usa ST7789, com cores invertidas (padrão). A versão só com micro-USB usa ILI9341: acrescente `-D CYD_PANEL_ILI9341=1` em `build_flags`. Na partida aparecem barras vermelha, verde, azul e branca; se as cores saírem trocadas, ajuste `CYD_INVERT` ou `CYD_RGB_ORDER`; se a imagem sair espelhada ou de lado, `CYD_ROTATION` (0 a 7).
 - **Toque.** A calibração roda na primeira partida e fica gravada; para refazê-la, ligue a placa com o botão BOOT pressionado.
 - **Alimentação.** Pela USB do hub. A porta USB-C dessa versão não liga com cabo C-C: use um cabo USB-A para USB-C ou a micro-USB.
-- **Limites.** Sem teclado não há notas com texto nem os comandos `/hora`, `/data` e `/sono`; sem RTC o relógio só vale quando vem da ponte USB, e o painel mostra tempos relativos.
+- **Hora.** Sem RTC, a placa pede a hora à rede a cada conexão e a mostra no cabeçalho. A hora vem do terminal: a TUI envia a do computador à Probe 00 ao conectar e a cada 10 minutos (ver [Relógio da rede](Documentacao/protocolo/protocolo.md#relógio-da-rede)). Sem terminal na rede, o painel mostra tempos relativos.
+- **Limites.** Sem teclado não há notas com texto nem os comandos `/hora`, `/data` e `/sono`.
 
 ## Pesquisa
 

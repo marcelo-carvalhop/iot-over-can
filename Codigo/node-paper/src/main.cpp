@@ -618,7 +618,7 @@ void handleHostLine(char* line) {
                   PANEL_FW_VERSION);
   } else if (strncmp(cmd, "TIME ", 5) == 0) {
     const int64_t epoch = atoll(cmd + 5);
-    if (epoch > 1700000000LL && (!clockOk || llabs(epoch - hal.epochNow()) > 2)) hal.setClock(epoch);
+    app.setClockFrom(epoch, IOC_TIME_SRC_TERMINAL);
   } else if (strncmp(cmd, "LINK ", 5) == 0) {
     usbLink = cmd[5] == '1';
   } else if (strncmp(cmd, "OFFER ", 6) == 0) {

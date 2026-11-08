@@ -13,6 +13,7 @@
 #include "net_metrics.h"
 #include "fault_injection.h"
 #include "pesquisa.h"
+#include "relogio.h"
 
 /* =========================================================
  * CONFIGURACAO LOCAL DO NO
@@ -1665,6 +1666,10 @@ void handleReceivedCanMessage(const CANMessage& rx) {
     return;
   }
 
+  if (relogioHandleCanMessage(rx)) {
+    return;
+  }
+
   if (rx.id == CAN_ID_ELECTION) {
     handleElectionMessage(rx);
   }
@@ -1770,7 +1775,7 @@ void setup() {
     Serial.println("[GW] Iniciar eleicao: 22 00 FF 01");
     Serial.println("[GW] Solicitar status: 22 20 FF 00");
     Serial.println("[GW] Velocidade heartbeat: 22 30 FF 01..05");
-    Serial.println("[PROBE 00] FIRMWARE=0.21.0 FEATURES=WIRELESS_DATA,ACOUSTIC_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER,RESEARCH");
+    Serial.println("[PROBE 00] FIRMWARE=0.21.0 FEATURES=WIRELESS_DATA,ACOUSTIC_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER,RESEARCH,TIME_SYNC");
     pesquisaPrintConfig();
   } else {
     state = STATE_IDLE;
@@ -1839,6 +1844,7 @@ void loop() {
    */
   wirelessLinkPoll();
   wirelessDiscoveryPoll();
+  relogioPoll(state == STATE_LEADER);
 
   CANMessage rx;
 

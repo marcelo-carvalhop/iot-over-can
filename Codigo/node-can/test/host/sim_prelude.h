@@ -35,6 +35,7 @@
 #include "ioc_failover.h"
 #include "ioc_link.h"
 #include "ioc_sha256.h"
+#include "ioc_time.h"
 #include "ioc_wdata.h"
 #include "ioc_panel_proto.h"
 #include "ioc_panel_cache.h"

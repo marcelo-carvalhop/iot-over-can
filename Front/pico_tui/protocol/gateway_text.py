@@ -52,6 +52,7 @@ class GatewayTextDecoder:
                 GatewayDetected(
                     firmware_version=payload.get("FIRMWARE", ""),
                     protocol_version=payload.get("PROTOCOL", ""),
+                    features=payload.get("FEATURES", ""),
                 )
             )
             await self.bus.publish(LogEvent("INFO", line, "PROBE"))

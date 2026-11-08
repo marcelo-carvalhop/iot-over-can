@@ -8,6 +8,7 @@
 #include "ioc_panel_canids.h"
 #include "ioc_panel_proto.h"
 #include "ioc_view.h"
+#include "ioc_time.h"
 #include "ioc_wdata.h"
 
 #include "../../node-can/include/can_ids.h"
@@ -22,6 +23,8 @@ static void test_ids(void) {
     CHECK(IOC_ID_LEADER == CAN_ID_LEADER);
     CHECK(IOC_ID_CONTROL == CAN_ID_CONTROL);
     CHECK(IOC_ID_HEARTBEAT == CAN_ID_HEARTBEAT);
+    CHECK(IOC_ID_TIME_BASE == CAN_ID_TIME_BASE);
+    CHECK(IOC_ID_TIME_LAST == CAN_ID_TIME_LAST);
     CHECK(IOC_ID_SENSOR == CAN_ID_SENSOR);
     CHECK(IOC_ID_DISCOVERY_BASE == CAN_ID_WIRELESS_DISCOVERY_BASE);
     CHECK(IOC_ID_ASSOC_STATUS_BASE == CAN_ID_WIRELESS_ASSOC_STATUS_BASE);
@@ -381,6 +384,31 @@ static void test_logo(void) {
                                  IOC_PANEL_ST_CLOCK | IOC_PANEL_ST_KEYBOARD)) == 0);
 }
 
+/* Hora no painel: o quadro de hora vale no instante em que saiu do Node. */
+static void test_view_time(void) {
+    static ioc_view v;
+    ioc_view_init(&v, 1000);
+    uint8_t d[IOC_TIME_LEN];
+    const ioc_time_msg req = {IOC_TIME_KIND_REQUEST, IOC_TIME_SRC_NONE, 0};
+    ioc_time_encode(&req, d);
+    ioc_view_frame(&v, IOC_ID_TIME_BASE + 2, d, sizeof(d), 1000);
+    CHECK(v.time_count == 0);  /* pedido não é hora */
+    const ioc_time_msg t = {IOC_TIME_KIND_TIME, IOC_TIME_SRC_TERMINAL, 1793000000123LL};
+    ioc_time_encode(&t, d);
+    uint8_t buf[64];
+    const ioc_panel_frames_hdr hdr = {IOC_PANEL_FR_LIVE, 7, 200, 0, 0};
+    size_t used = ioc_panel_frames_begin(buf, sizeof(buf), &hdr);
+    ioc_panel_frame f = {1500, IOC_ID_TIME_BASE, 0, IOC_TIME_LEN, {0}};
+    memcpy(f.data, d, sizeof(d));
+    used = ioc_panel_frames_add(buf, sizeof(buf), used, &f);
+    CHECK(used > 0);
+    CHECK(ioc_view_batch(&v, buf, used, 5000) >= 0);
+    CHECK(v.time_count == 1 && v.time_source == IOC_TIME_SRC_TERMINAL && v.time_node == 0);
+    CHECK(v.time_utc_ms == 1793000000123LL && v.time_at_ms == 3500);
+    /* Só ao vivo: o retrato do Node não guarda uma hora que envelhece. */
+    CHECK(ioc_pcache_classify(IOC_ID_TIME_BASE + 5, d, sizeof(d), NULL) == IOC_PCLASS_LIVE);
+}
+
 int main(void) {
     test_logo();
     test_ids();
@@ -388,6 +416,7 @@ int main(void) {
     test_dl();
     test_cache_and_view();
     test_refresh();
+    test_view_time();
     if (failures) {
         fprintf(stderr, "test_ioc_panel: %d falha(s)\n", failures);
         return 1;

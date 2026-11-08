@@ -377,6 +377,7 @@ PROBE_TEXT_COMMANDS = {
     "ECHO": "trem de eco no plano de dados (pesquisa)",
     "CONFIG": "parâmetros da compilação (pesquisa)",
     "BENCH": "custo da criptografia na placa (pesquisa)",
+    "TIME": "relógio da rede: TIME mostra a hora da Probe; TIME <ms UTC> ajusta e divulga (a TUI envia sozinha)",
 }
 
 

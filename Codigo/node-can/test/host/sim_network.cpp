@@ -1966,6 +1966,32 @@ int scenarioPanel() {
   CHECK(runUntilTrue([&] { return panel->panel.leds[0] == ledRgb(0, 24, 0); }, 3000));
   CHECK(!app()->unacked());
 
+  // Relógio da rede. Sem terminal, ninguém tem hora: os Nodes pediram na
+  // partida e o Node 2 pediu de novo quando o painel conectou. A hora do
+  // terminal (uma hora à frente do relógio do painel) chega pela Probe, vale
+  // para todos os Nodes e segue ao painel no encaminhamento ao vivo; o
+  // relógio de tempo real do painel cede à fonte melhor.
+  CHECK(logHas(probe(), "[GW] TIME_REQ node=2"));
+  CHECK(app()->clockSource() == IOC_TIME_SRC_RTC);
+  {
+    const uint32_t t0 = nowMs();
+    const long long terminalMs = (SIM_EPOCH + 3600) * 1000LL + nowMs();
+    probeCommand("TIME " + std::to_string(terminalMs));
+    CHECK(runUntilTrue([t0] {
+      return logHas(probe(), "[GW] TIME_SYNC node=0 fonte=TERMINAL", t0) &&
+             logHas(node(1), "[RELOGIO] TIME_SYNC node=0 fonte=TERMINAL", t0) &&
+             logHas(node(3), "[RELOGIO] TIME_SYNC node=0 fonte=TERMINAL", t0);
+    }, 1000));
+    CHECK(runUntilTrue([&] { return app()->clockSource() == IOC_TIME_SRC_TERMINAL; }, 2000));
+    CHECK(std::llabs(panel->panel.clockOffset - 3600) <= 1);
+    // A mesma hora reenviada não mexe em quem já está dentro da tolerância.
+    const uint32_t t1 = nowMs();
+    probeCommand("TIME " + std::to_string(terminalMs + (t1 - t0)));
+    runFor(500);
+    CHECK(!logHas(node(2), "[RELOGIO]", t1));
+    note("painel: hora do terminal em %u ms", nowMs() - t0);
+  }
+
   // Nota no CardKB: a primeira tecla abre a marca naquele instante (LED da
   // direita ciano); o texto termina depois, e a marca chega à Probe com a
   // idade contada desde a primeira tecla, confirmada pelo Node.

@@ -13,6 +13,8 @@
 #define IOC_ID_LEADER          0x060
 #define IOC_ID_CONTROL         0x080
 #define IOC_ID_HEARTBEAT       0x100
+#define IOC_ID_TIME_BASE       0x120
+#define IOC_ID_TIME_LAST       0x13F
 #define IOC_ID_SENSOR          0x200
 #define IOC_ID_DISCOVERY_BASE  0x280
 #define IOC_ID_DISCOVERY_LAST  0x2BF

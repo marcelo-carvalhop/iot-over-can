@@ -4,6 +4,7 @@
 
 #include "ioc_canbits.h"
 #include "ioc_panel_canids.h"
+#include "ioc_time.h"
 
 static int32_t since(uint32_t now, uint32_t then) { return (int32_t)(now - then); }
 
@@ -243,6 +244,15 @@ void ioc_view_frame(ioc_view *v, uint16_t id, const uint8_t *d, uint8_t len, uin
         if (since(at, v->last_heartbeat_ms) > 0 || v->last_heartbeat_ms == 0) v->last_heartbeat_ms = at;
         touch_node(v, leader, at);
         set_leader(v, leader, at);
+    } else if (id >= IOC_ID_TIME_BASE && id <= IOC_ID_TIME_LAST) {
+        ioc_time_msg t;
+        if (ioc_time_decode(d, len, &t) && t.kind == IOC_TIME_KIND_TIME) {
+            v->time_utc_ms = t.utc_ms;
+            v->time_at_ms = at;
+            v->time_source = t.source;
+            v->time_node = (uint8_t)(id - IOC_ID_TIME_BASE);
+            v->time_count++;
+        }
     } else if (id == IOC_ID_LEADER && len >= 1) {
         touch_node(v, d[0], at);
         set_leader(v, d[0], at);
