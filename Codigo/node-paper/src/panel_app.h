@@ -118,6 +118,9 @@ class PanelApp {
   uint16_t marksAcked() const { return marksAcked_; }
   bool composing() const { return composing_; }
   bool snapshotReceived() const { return view_.snapshot_done != 0; }
+  /* Contexto da página agora (relógio, sensores, marcas): telas que compõem a
+   * própria página, como a da CYD, usam-no com ioc_page_assess. */
+  void fillCtx(ioc_page_ctx& ctx, uint32_t now);
   uint32_t sleepSeconds() const;
   bool unacked() const { return unacked_; }
   uint16_t alertsAnnounced() const { return alertsAnnounced_; }
@@ -158,7 +161,6 @@ class PanelApp {
   void composeDraft(const ioc_page_ctx& ctx);
   void composeNoData(const ioc_page_ctx& ctx, uint32_t lastMs);
   void composeShutdown(const ioc_page_ctx& ctx);
-  void fillCtx(ioc_page_ctx& ctx, uint32_t now);
   uint32_t msFromEpoch(uint32_t epoch, uint32_t now) const;
   uint32_t epochFromMs(uint32_t ms, uint32_t now) const;
   void restoreRefresh(uint32_t now);

@@ -64,6 +64,20 @@ Front/.venv/bin/python Simulacao/usb_panel_bridge.py --port /dev/ttyACM0 --node 
 
 Sem o aparelho, `SENSOR ADD <uuid> PANEL` (ou o formulário do Studio) cria um painel virtual com o mesmo PanelApp do firmware; o cenário `panel_papercolor` da bancada virtual o exercita.
 
+### Painel na CYD (ESP32-2432S028)
+
+O papel colorido leva de 15 a 30 s por redesenho e não acompanhou bem a rede ao vivo, por isso o painel passa a ter também uma versão em LCD: a ESP32-2432S028, conhecida como "Cheap Yellow Display" (ESP32 sem PSRAM, tela de 2,8" com 320×240 e toque resistivo). O `PanelApp` é o mesmo, e com ele o enlace autenticado, o retrato, a relevância, as marcas, o LED e os sons; muda o hardware (`Codigo/node-paper/src/cyd/`). A tela compõe a própria página, compacta, a partir da visão da rede e dos itens de relevância, e só redesenha o que mudou, no máximo uma vez por segundo. Sem teclado, a barra de toque tem quatro botões: Situação e Rede (páginas), Marcar (marca o instante ou dá ciência) e Ciente.
+
+```bash
+./Codigo/scripts/build_paper.sh --cyd                         # chave de bancada (.env.local), UUID pelo MAC
+./Codigo/scripts/build_paper.sh --cyd --upload /dev/ttyUSB0   # compila e grava
+```
+
+- **Controlador da tela.** A versão com USB-C e micro-USB usa ST7789, com cores invertidas (padrão). A versão só com micro-USB usa ILI9341: acrescente `-D CYD_PANEL_ILI9341=1` em `build_flags`. Na partida aparecem barras vermelha, verde, azul e branca; se as cores saírem trocadas, ajuste `CYD_INVERT` ou `CYD_RGB_ORDER`; se a imagem sair espelhada ou de lado, `CYD_ROTATION` (0 a 7).
+- **Toque.** A calibração roda na primeira partida e fica gravada; para refazê-la, ligue a placa com o botão BOOT pressionado.
+- **Alimentação.** Pela USB do hub. A porta USB-C dessa versão não liga com cabo C-C: use um cabo USB-A para USB-C ou a micro-USB.
+- **Limites.** Sem teclado não há notas com texto nem os comandos `/hora`, `/data` e `/sono`; sem RTC o relógio só vale quando vem da ponte USB, e o painel mostra tempos relativos.
+
 ## Pesquisa
 
 Material para o TCC, fora do escopo da entrega da disciplina de IoT. A instrumentação (vinda do ramo `modelo-pesquisa`) transforma a bancada num instrumento de medição para uma pergunta comparativa: quanto a integração de sensores sem fio autenticados custa ao tráfego determinístico do CAN, em função da carga de fundo e da prioridade dela, e com que rapidez a rede reage a falhas do enlace. A metodologia está em [`Documentacao/pesquisa/metodologia.md`](Documentacao/pesquisa/metodologia.md); as ferramentas, em [`Pesquisa/`](Pesquisa/README.md).
