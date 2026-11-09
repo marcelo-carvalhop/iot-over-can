@@ -205,7 +205,7 @@ class StudioState:
             return request(self.socket,command,timeout=20)
 
     def panel_page(self,uuid:str)->dict[str,Any]:
-        """Página do painel: a que está no papel (virtual) ou o espelho do PaperColor USB."""
+        """Página do painel: a do painel virtual ou o espelho do painel USB."""
         command=build_command({'type':'panel.page','uuid':uuid})
         assert self.socket
         with self.command_lock:

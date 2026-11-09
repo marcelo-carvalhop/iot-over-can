@@ -26,7 +26,8 @@ iot-over-can/
 │   │   └── test/host/     simulações: plano de dados e bancada virtual
 │   ├── node-wifi/         firmware do sensor de vibração e módulos comuns dos sensores (Pico SDK)
 │   ├── node-audio/        firmware do sensor acústico (Pico SDK)
-│   ├── node-paper/        firmware do painel (PlatformIO)
+│   ├── node-paper/        firmware do painel, ESP32-2432S028 (PlatformIO)
+│   ├── leitor/            leitor da documentação, M5Stack PaperColor (PlatformIO)
 │   └── scripts/           gravação, testes e credenciais
 ├── Front/                 estação de operação (TUI, Python)
 │   ├── pico_tui/  replays/  tests/
@@ -91,7 +92,11 @@ O sensor de vibração os implementa em `edge_app_vibration.c`; o acústico, em 
 
 ### Firmware do painel (`Codigo/node-paper`)
 
-`panel_app.*` reúne a lógica do painel sem depender de placa; `panel_signal.*`, o LED e os sons. O hardware entra pela interface `PanelHal`. A versão em uso é a da ESP32-2432S028, em `src/cyd/` (ambiente `cyd` do PlatformIO). `src/main.cpp` é o firmware anterior, para o M5Stack PaperColor, descontinuado como painel.
+`panel_app.*` reúne a lógica do painel sem depender de placa; `panel_signal.*`, o LED e os sons. O hardware entra pela interface `PanelHal`, implementada para a ESP32-2432S028 em `src/cyd/` (ambiente `cyd` do PlatformIO) e, na bancada virtual, por `sim_network.cpp`.
+
+### Leitor da documentação (`Codigo/leitor`)
+
+Firmware à parte, sem relação com a rede. `tools/documentos.py` converte o README e os documentos de `Documentacao/` num cabeçalho C (`src/documentos.h`, gerado a cada compilação e fora do repositório): um bloco por linha, com o tipo do bloco no primeiro byte e marcas de negrito, código e itálico. A lista de documentos fica em `DOCUMENTOS`, nesse script; um caractere sem equivalente na fonte do leitor faz o teste falhar e deve ser acrescentado a `TROCAS`. `src/leitor_layout.*` quebra as linhas e pagina sem depender de placa; `src/main.cpp` desenha as telas, lê os botões e guarda a posição na NVS. `tests/` roda a diagramação e o firmware no computador, sobre imitações das bibliotecas da placa.
 
 ### Estação de operação (`Front/pico_tui`)
 
@@ -120,7 +125,8 @@ python3 -m unittest discover -s Simulacao/tests
 ./Codigo/scripts/build_esp32_can_node.sh 1     # firmware de um módulo
 ./Codigo/scripts/build_pico.sh                 # sensor de vibração
 ./Codigo/scripts/build_pico.sh pico_w --audio  # sensor acústico
-./Codigo/scripts/build_paper.sh --cyd          # painel
+./Codigo/scripts/build_paper.sh                # painel
+./Codigo/scripts/build_leitor.sh               # leitor da documentação
 ```
 
 A bancada virtual é a principal ferramenta de desenvolvimento: roda o firmware real e mostra o que cada módulo escreve.
@@ -209,11 +215,12 @@ Os pinos do MCP2515 (SPI, `MCP_CS`, `MCP_INT`), o cristal (`MCP_QUARTZ_HZ`, 8 MH
 
 | Trabalho | O que verifica |
 |---|---|
-| `tui-tests` | testes da estação e `test_native_firmware.sh` (bibliotecas, fuzz dos decodificadores, sensor acústico, simulações e bancada virtual) |
+| `tui-tests` | testes da estação e `test_native_firmware.sh` (bibliotecas, fuzz dos decodificadores, sensor acústico, simulações, bancada virtual e leitor) |
 | `usb-hil-regressions` | laboratório virtual (`Simulacao/tests`) |
 | `pico-firmware` | sensor de vibração (Pico W) e sensor acústico (Pico W e Pico 2 W) |
 | `esp32-platformio` | Probe 00 e módulos |
-| `paper-firmware` | painel (PaperColor e CYD) |
+| `panel-firmware` | painel (ESP32-2432S028), com e sem chave |
+| `reader-firmware` | leitor da documentação (M5Stack PaperColor) |
 | `research-toolkit` | ferramenta de pesquisa |
 
 Para acrescentar um cenário à bancada virtual, escreva a função em `sim_network.cpp` com os auxiliares existentes (`formNetwork`, `bindSensorA`, `probeCommand`, `runUntilTrue`, `logHas`, `CHECK`) e inclua-a na tabela de cenários. `test_native_firmware.sh` executa todos; refaça as gravações em seguida.

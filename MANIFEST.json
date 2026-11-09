@@ -8,6 +8,7 @@
     "wireless_firmware": "Codigo/node-wifi",
     "acoustic_firmware": "Codigo/node-audio",
     "panel_firmware": "Codigo/node-paper",
+    "reader_firmware": "Codigo/leitor",
     "shared_firmware": "Codigo/common",
     "scripts": "Codigo/scripts",
     "documentation": "Documentacao",
@@ -32,7 +33,8 @@
     "can_nodes": "ESP32 + MCP2515, IDs funcionais explícitos",
     "wireless_sensor": "Raspberry Pi Pico W + MPU6050",
     "acoustic_sensor": "Raspberry Pi Pico W (RP2040) ou Pico 2 W (RP2350) + microfone MEMS INMP441 (I2S)",
-    "panel": "ESP32-2432S028 (\"Cheap Yellow Display\"): LCD 320×240 com toque resistivo"
+    "panel": "ESP32-2432S028 (\"Cheap Yellow Display\"): LCD 320×240 com toque resistivo",
+    "reader": "M5Stack PaperColor (E Ink Spectra 6, 400×600): leitor da documentação, fora da rede"
   },
   "network": {
     "can": "CAN clássico 500 kbit/s no hardware atual",

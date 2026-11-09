@@ -33,6 +33,20 @@ def test_documentation_is_consolidated_in_portuguese_paths():
     assert not (ROOT / "Documentacao" / "protocol").exists()
 
 
+def test_reader_carries_every_document():
+    # O leitor da documentação (Codigo/leitor) leva o README e cada documento de Documentacao/.
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("leitor_documentos", ROOT / "Codigo/leitor/tools/documentos.py")
+    documentos = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = documentos  # as dataclasses do módulo procuram o próprio módulo aqui
+    spec.loader.exec_module(documentos)
+    carried = sorted(path for path, _title, _summary in documentos.DOCUMENTOS)
+    expected = sorted(["README.md"] + [f"Documentacao/{p.name}" for p in (ROOT / "Documentacao").glob("*.md")])
+    assert carried == expected
+
+
 def test_front_dependencies_have_single_source():
     pyproject = (ROOT / "Front" / "pyproject.toml").read_text()
     assert '"textual==8.2.8"' in pyproject

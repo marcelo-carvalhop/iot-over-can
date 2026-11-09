@@ -45,7 +45,7 @@ typedef enum {
     IOC_WD_KIND_LINK      = 5,
     IOC_WD_KIND_CONFIG    = 6,
     IOC_WD_KIND_ACOUSTIC  = 7,  /* relatório do sensor acústico (v0.19) */
-    IOC_WD_KIND_PANEL     = 8,  /* STATUS e MARK do painel em papel eletrônico (v0.20) */
+    IOC_WD_KIND_PANEL     = 8,  /* STATUS e MARK do painel (v0.20) */
     IOC_WD_KIND_LINKSTATS = 9,  /* medidas de pesquisa do enlace (v0.21), após cada LINK */
     IOC_WD_KIND_LINK_EVENT = 10 /* etapas da criação do canal de dados (v0.22) */
 } ioc_wd_kind;

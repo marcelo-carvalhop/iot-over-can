@@ -65,7 +65,7 @@ for src in ioc_panel_proto ioc_panel_cache ioc_view ioc_page; do
   run cc -std=c11 -O1 -Wall -Wextra -Werror -I"$LINK" -I"$PANEL" -c "$PANEL/$src.c" -o "$OBJ_DIR/$src.o"
 done
 run c++ "${CXXFLAGS[@]}" -c "$HOST/sim_network.cpp" -o "$OBJ_DIR/sim_network.o"
-# Lógica do PaperColor (a mesma do firmware), para o painel virtual da bancada.
+# Lógica do painel (a mesma do firmware), para o painel virtual da bancada.
 run c++ "${CXXFLAGS[@]}" -c "$PAPER/panel_app.cpp" -o "$OBJ_DIR/panel_app.o"
 run c++ "${CXXFLAGS[@]}" -c "$PAPER/panel_signal.cpp" -o "$OBJ_DIR/panel_signal.o"
 for entry in "${INSTANCES[@]}"; do

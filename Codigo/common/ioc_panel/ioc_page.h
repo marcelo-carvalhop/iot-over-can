@@ -28,7 +28,7 @@ extern "C" {
 #define IOC_DL_ITEMS  220
 #define IOC_DL_TEXT   4096
 
-/* As seis tintas do Spectra 6. */
+/* As seis tintas da página; cada placa as traduz para as cores da sua tela. */
 enum { IOC_INK_BLACK = 0, IOC_INK_WHITE = 1, IOC_INK_YELLOW = 2, IOC_INK_RED = 3, IOC_INK_BLUE = 4, IOC_INK_GREEN = 5 };
 enum { IOC_DL_FILL = 1, IOC_DL_FRAME = 2, IOC_DL_TEXT_OP = 3, IOC_DL_LINE = 4, IOC_DL_SYMBOL = 5 };
 enum { IOC_SYM_DOT = 0, IOC_SYM_TRIANGLE = 1, IOC_SYM_CROSS = 2, IOC_SYM_CHECK = 3, IOC_SYM_STAR = 4 };

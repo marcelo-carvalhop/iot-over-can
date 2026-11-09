@@ -10,6 +10,7 @@ Como o projeto é verificado, do teste de uma função à bancada com o hardware
 | fuzz dos decodificadores | entradas aleatórias e mensagens válidas alteradas, com AddressSanitizer e UBSan | idem |
 | simulação do canal de dados | o código real do canal de dados de um módulo, com rádio, Wi-Fi e CAN substituídos | idem |
 | bancada virtual | o firmware completo de vários módulos num processo, com barramento, rádios e sensores simulados | idem |
+| leitor da documentação | conversão dos documentos, diagramação de todas as páginas e o firmware sobre imitações da placa: telas dentro dos 400×600, navegação, posição guardada, sono e desligamento | idem |
 | testes da estação | decodificadores, estado, telas, segurança, métricas e ensaios, alimentados pelas gravações da bancada virtual | idem |
 | compilação | todos os firmwares para as placas reais | idem |
 | bancada física | comportamento com o hardware: rádio, alimentação, tempos reais | em sessões de bancada |
@@ -17,13 +18,13 @@ Como o projeto é verificado, do teste de uma função à bancada com o hardware
 ## 2. Testes automatizados
 
 ```bash
-./Codigo/scripts/test_native_firmware.sh          # bibliotecas, fuzz, sensor acústico, simulações e bancada virtual
+./Codigo/scripts/test_native_firmware.sh          # bibliotecas, fuzz, sensor acústico, simulações, bancada virtual e leitor
 ./Codigo/scripts/test_tui.sh                      # estação de operação
 python3 -m unittest discover -s Simulacao/tests   # laboratório virtual
 python3 -m unittest discover -s Pesquisa/tests    # ferramenta de pesquisa
 ```
 
-`test_native_firmware.sh` precisa de `cc` e `c++` e executa, em ordem: a validação de configuração do sensor; os testes de `ioc_link` (criptografia, canal de dados, segmentação, relatório acústico, custo da criptografia); a parte de rede de `ioc_link` (duração de quadro, mensagem autenticada, segmentação em quadros maiores, reassociação, tabela de vínculos, relógio); os testes do painel; o fuzz dos decodificadores; o processamento do sensor acústico; a simulação do canal de dados; e a bancada virtual com todos os cenários.
+`test_native_firmware.sh` precisa de `cc` e `c++` e executa, em ordem: a validação de configuração do sensor; os testes de `ioc_link` (criptografia, canal de dados, segmentação, relatório acústico, custo da criptografia); a parte de rede de `ioc_link` (duração de quadro, mensagem autenticada, segmentação em quadros maiores, reassociação, tabela de vínculos, relógio); os testes do painel; o fuzz dos decodificadores; o processamento do sensor acústico; a simulação do canal de dados; a bancada virtual com todos os cenários; e o leitor da documentação.
 
 Os testes da estação percorrem as telas em 48×18, 60×24, 80×24, 100×30 e 160×48 para garantir que nada seja cortado, conferem a biblioteca C contra implementações independentes em Python e reproduzem o exemplo publicado da análise de tempo de resposta. Um deles refaz as gravações da bancada virtual e as compara com as versionadas.
 
@@ -62,7 +63,7 @@ Os testes da estação percorrem as telas em 48×18, 60×24, 80×24, 100×30 e 1
 | `restart_keeps_binding` | o módulo reinicia e retoma da memória o vínculo gravado |
 | `handshake_slow_radio` | dois sensores no mesmo módulo com 3,6 s de atraso de rádio; cada sessão abre em cerca de 5 s |
 | `acoustic_sensor` | o sensor acústico de ponta a ponta |
-| `panel_papercolor` | o painel: retrato, marcas, alerta e ciência, sono na bateria e relógio da rede |
+| `panel` | o painel: retrato, marcas, alerta e ciência, sono na bateria e relógio da rede |
 
 Uma verificação que falha encerra o cenário com erro e informa o instante simulado. `Codigo/scripts/record_network_scenarios.sh` grava a saída de cada cenário em `Front/replays/`, que os testes da estação usam e que a estação reproduz com `--replay`.
 
@@ -103,7 +104,7 @@ A ponte não contorna a autorização do firmware: use `--passive` se o sensor j
 
 ## 5. Integração contínua
 
-A cada envio, `.github/workflows/ci.yml` roda os testes da estação, os testes nativos (com a bancada virtual), os testes do laboratório e da ferramenta de pesquisa e a compilação de todos os firmwares: sensor de vibração, sensor acústico (Pico W e Pico 2 W), Probe 00 e módulos, e painel. A lista dos trabalhos está em [Integração](integracao.md#8-testes-e-integração-contínua).
+A cada envio, `.github/workflows/ci.yml` roda os testes da estação, os testes nativos (com a bancada virtual), os testes do laboratório e da ferramenta de pesquisa e a compilação de todos os firmwares: sensor de vibração, sensor acústico (Pico W e Pico 2 W), Probe 00 e módulos, painel e leitor da documentação. A lista dos trabalhos está em [Integração](integracao.md#8-testes-e-integração-contínua).
 
 ## 6. Bancada física
 
@@ -126,6 +127,7 @@ Depois dessa sessão, a abertura do canal de dados foi corrigida: o nonce passou
 | ensaios de falha | modo somente escuta do MCP2515, volta do ponto de acesso, carga que a Probe sustenta |
 | sensor acústico | calibração com calibrador de 94 dB, ocupação do processamento nas duas placas, níveis e doses contra um medidor de referência |
 | painel CYD | cores, toque, LED e som, tempo de redesenho, hora vinda da rede |
+| leitor da documentação | fontes e cores na tela, botões, sono e despertar, desligamento e volta à página sem redesenho, CardKB |
 | relógio da rede | ajuste ao conectar a estação; hora no painel; pedidos sem resposta sem terminal |
 
 ### Roteiro

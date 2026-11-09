@@ -83,7 +83,7 @@ constexpr uint16_t ACK_DETAIL_BUSY = 0xFFFC;             // eco anterior ainda s
 constexpr uint32_t ECHO_TIMEOUT_US = 2000000;            // eco pelo sensor sem PONG
 constexpr uint8_t  MAX_RX_DATAGRAMS_PER_POLL = 4;
 constexpr uint8_t  PROBE_PENDING_LEN = 12;
-// Painel em papel eletrônico (perfil 0x04).
+// Painel (perfil 0x04).
 constexpr uint32_t TAP_FLUSH_MS = 200;            // lote ao vivo de quadros CAN para o painel
 constexpr uint32_t PANEL_SLEEP_MARGIN_MS = 30000; // folga sobre o sono declarado
 constexpr uint32_t PANEL_OFF_LEASE_MS = 12UL * 3600UL * 1000UL; // desligado pelo operador
@@ -1239,7 +1239,7 @@ void handleUrgentDtc(Link& link, const uint8_t* inner, size_t len) {
   queueTransfer(link.childId, IOC_WD_KIND_DTC, raw, sizeof(raw));
 }
 
-/* ------------------------------------------------ painel em papel eletrônico */
+/* ------------------------------------------------------------------ painel */
 
 // O contrato entre Node e painel é o próprio barramento: o Node encaminha os
 // quadros que observa (os recebidos e os que ele mesmo transmite, que o

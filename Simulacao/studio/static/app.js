@@ -138,7 +138,7 @@
         'aria-label':`Sensor ${sensor.uuid} ${sensor.profile}`});
       putSVG(group,'rect',{x:x-12,y:y-7,width:145,height:65,rx:9,fill:sensor.powered?'#283f55':'#363942',stroke:sensor.powered?'#6fa9d5':'#7d8188','stroke-width':1.5});
       putSVG(group,'circle',{cx:x+7,cy:y+12,r:4,fill:sensor.powered?'#6fa9d5':'#ec8e90'});
-      putSVG(group,'text',{x:x+62,y:y+17,'text-anchor':'middle',class:'map-label'},sensor.profile==='ACOUSTIC'?'SENSOR ACÚSTICO':sensor.profile==='PANEL'?'PAINEL PAPERCOLOR':'SENSOR VIBRAÇÃO');
+      putSVG(group,'text',{x:x+62,y:y+17,'text-anchor':'middle',class:'map-label'},sensor.profile==='ACOUSTIC'?'SENSOR ACÚSTICO':sensor.profile==='PANEL'?'PAINEL':'SENSOR VIBRAÇÃO');
       putSVG(group,'text',{x:x+62,y:y+35,'text-anchor':'middle',class:'map-sub'},sensor.uuid.slice(-8));
       putSVG(group,'text',{x:x+62,y:y+48,'text-anchor':'middle',class:'map-sub'},sensor.parent?`Pai lógico: Node ${sensor.parent}`:'Não associado');
       group.addEventListener('click',()=>select({kind:'sensor',uuid:sensor.uuid}));
@@ -216,7 +216,7 @@
     }
     const s=model.sensors.find(v=>v.uuid===selected.uuid);
     if(!s){root.textContent='Sensor removido da bancada.';return;}
-    root.append(elt('div',{class:'inspector-title'},s.profile==='ACOUSTIC'?'Sensor acústico':s.profile==='PANEL'?'Painel em papel eletrônico':'Sensor de vibração'));
+    root.append(elt('div',{class:'inspector-title'},s.profile==='ACOUSTIC'?'Sensor acústico':s.profile==='PANEL'?'Painel':'Sensor de vibração'));
     if(s.profile==='PANEL')renderPanelSection(root,s);
     row(root,'UUID',s.uuid);row(root,'Energia',s.powered?'Ligado':'Desligado');
     row(root,'Responsável lógico',s.parent?`Node ${s.parent}`:'Sem associação');
@@ -277,8 +277,8 @@
   }
 
 
-  // Painel em papel eletrônico: a página que está no papel (painel virtual) ou o
-  // espelho do PaperColor ligado pela USB, desenhada a partir da lista de desenho.
+  // Painel: a página do painel virtual ou o espelho do painel físico ligado
+  // pela USB, desenhada a partir da lista de desenho.
   const PAPER_INK=['#1c1c1c','#f4f1ea','#e8c33a','#b8312f','#4a3fd0','#3f7d3f'];
   const panelCache=new Map();
   async function fetchPanel(uuid){
@@ -315,9 +315,9 @@
   }
   function renderPanelSection(root,s){
     const section=elt('section',{class:'editor-section'});root.append(section);
-    heading(section,'Página no papel');
+    heading(section,'Página do painel');
     const info=elt('p',{class:'wireless-hint'},'Carregando a página…');section.append(info);
-    // Os dois LEDs do topo do PaperColor (a cor é ampliada para ficar visível na tela).
+    // Os LEDs do painel (a cor é ampliada para ficar visível na tela).
     const ledRow=elt('div',{style:'display:flex;gap:10px;align-items:center;margin:4px 0 8px'});
     const ledDots=[0,1].map(()=>elt('span',{style:'width:18px;height:18px;border-radius:50%;background:#222;border:1px solid #556;display:inline-block'}));
     const ledText=elt('span',{class:'wireless-hint'},'LEDs: rede · painel');
@@ -339,7 +339,7 @@
       drawPaper(canvas,page);showLeds(page);
       if(!page){info.textContent='Página indisponível.';return;}
       const levels=['rede normal','a rede está tratando','atenção','requer você'];
-      info.textContent=(page.source==='MIRROR'?'Espelho do PaperColor físico (USB). ':page.source==='VIRTUAL'?'Painel virtual (firmware na bancada). ':
+      info.textContent=(page.source==='MIRROR'?'Espelho do painel físico (USB). ':page.source==='VIRTUAL'?'Painel virtual (firmware na bancada). ':
         page.source==='PAPER'?'Painel desligado: o papel guarda a última tela. ':'Painel desligado. ')+
         `Nível: ${levels[page.level]||'?'} · sessão ${page.session?'ativa com o Node '+page.node:'inativa'} · ${page.renders} desenhos · ${page.beeps} alertas sonoros.`;
     });

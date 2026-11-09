@@ -363,7 +363,7 @@ _ROLE_LABELS = {"LEADER": "Líder", "FOLLOWER": "Seguidor", "GATEWAY": "Gateway"
 _PROFILE_LABELS = {
     "VIBRATION": "Vibração",
     "ACOUSTIC": "Acústico",
-    "PANEL": "Painel em papel eletrônico",
+    "PANEL": "Painel de operação",
     "DEMO_BYTE": "Byte de demonstração",
     "NONE": "Nenhum",
     "": "Perfil não informado",

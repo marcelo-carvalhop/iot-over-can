@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
-# Compila (e, com --upload <porta>, grava) o firmware do painel M5Stack PaperColor.
+# Compila (e, com --upload <porta>, grava) o firmware do painel (ESP32-2432S028, "CYD").
 #   build_paper.sh                       bancada: chave mestra de .env.local, UUID pelo MAC
 #   build_paper.sh --sensor <UUID64>     chaves derivadas de .env.sensor-<UUID>.local
-#   build_paper.sh --upload /dev/ttyACM0 grava depois de compilar
-#   build_paper.sh --cyd                 painel na ESP32-2432S028 (CYD) em vez do PaperColor
+#   build_paper.sh --upload /dev/ttyUSB0 grava depois de compilar
+# --cyd continua aceito (é o único painel). O leitor da documentação no
+# M5Stack PaperColor tem o próprio script: build_leitor.sh.
 # Sem chave nenhuma o painel ainda funciona pela USB com o Simulation Studio.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FW_DIR="$REPO_ROOT/Codigo/node-paper"
 UUID=""
 PORT=""
-PIO_ENV=()
+PIO_ENV=(-e cyd)
 while [ $# -gt 0 ]; do
   case "$1" in
     --sensor) UUID="${2:-}"; shift 2 ;;
     --upload) PORT="${2:-}"; shift 2 ;;
-    --cyd) PIO_ENV=(-e cyd); shift ;;
+    --cyd) shift ;;
     *) echo "Uso: $0 [--cyd] [--sensor <UUID64>] [--upload <porta>]" >&2; exit 2 ;;
   esac
 done

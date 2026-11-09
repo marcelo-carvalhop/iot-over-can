@@ -1,10 +1,10 @@
 #pragma once
 /*
- * Lógica do painel em papel eletrônico, sem dependência de hardware.
+ * Lógica do painel, sem dependência de hardware.
  *
- * Roda no PaperColor (main.cpp fornece o PanelHal com M5Unified, Wi-Fi, BLE,
- * USB e CardKB) e na bancada virtual (sim_network.cpp fornece um PanelHal
- * simulado). Tudo o que decide o comportamento — enlace autenticado com o
+ * Roda na ESP32-2432S028 (src/cyd/main_cyd.cpp fornece o PanelHal com a tela,
+ * o toque, o Wi-Fi, o BLE e a USB) e na bancada virtual (sim_network.cpp
+ * fornece um PanelHal simulado). Tudo o que decide o comportamento — enlace autenticado com o
  * Node, retrato, relevância, página, política de atualização, marcas,
  * roteiros, teclado, sono e desligamento — está aqui e é exercitado pelos
  * cenários da bancada.
@@ -98,7 +98,7 @@ class PanelApp {
   void onKey(uint8_t code);
   void onButton(char button);
   void onPowerClick(bool doubleClick);
-  /* Estado do botão de energia (lido do M5PM1): segurar 1,5 s desliga. */
+  /* Estado do botão de energia, nas placas que têm um: segurar 1,5 s desliga. */
   void onPowerPressed(bool pressed);
   void onPowerHold() { shutdown(); }
   /* Tempo de tela forçado (por exemplo, ao entrar na USB). */

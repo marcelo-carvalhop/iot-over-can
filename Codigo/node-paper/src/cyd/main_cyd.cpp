@@ -1,10 +1,10 @@
 /*
  * Painel IoT-over-CAN na ESP32-2432S028 ("Cheap Yellow Display", CYD).
  *
- * Mesmo PanelApp do PaperColor (enlace, retrato, relevância, marcas, sinais);
- * muda o hardware: LCD de 2,8" com 320x240 e toque resistivo XPT2046, sem
- * teclado, sem bateria e sem RTC. A tela não usa a lista de desenho de
- * 400x600 do papel: compõe a própria página, compacta, a partir da visão da
+ * O PanelApp (enlace, retrato, relevância, marcas, sinais) é o mesmo da
+ * bancada virtual; aqui entra o hardware: LCD de 2,8" com 320x240 e toque
+ * resistivo XPT2046, sem teclado, sem bateria e sem RTC. A tela não usa a
+ * lista de desenho de 400x600 da página padrão: compõe a própria página, compacta, a partir da visão da
  * rede e dos itens de relevância (ioc_page_assess), e só redesenha o que mudou.
  *
  * Placa: a versão com USB-C e micro-USB usa ST7789 (padrão aqui, com cores
@@ -306,7 +306,7 @@ class CydHal : public PanelHal {
     udp.write(data, len);
     return udp.endPacket() == 1;
   }
-  // A página de 400x600 do papel não é usada: o aviso só pede um redesenho.
+  // A página padrão de 400x600 não é usada: o aviso só pede um redesenho.
   void render(const ioc_dl&) override { uiDirty = true; }
   bool renderBusy() override { return false; }
   void leds(uint32_t rgb0, uint32_t rgb1) override { ledRgb(rgb0 ? rgb0 : rgb1); }

@@ -1,6 +1,6 @@
 /**
  * @file ioc_panel_proto.h
- * @brief Painel em papel eletrônico (perfil 0x04): formatos do enlace e do CAN.
+ * @brief Painel (perfil 0x04): formatos do enlace e do CAN.
  *
  * O painel é um filho wireless como os sensores: anuncia o perfil no BLE,
  * recebe a oferta assinada, autentica-se por HELLO/CHALLENGE/CONFIRM e troca

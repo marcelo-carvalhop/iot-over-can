@@ -1,6 +1,6 @@
-"""PaperColor pela USB na bancada virtual, de ponta a ponta.
+"""Painel pela USB na bancada virtual, de ponta a ponta.
 
-Um PaperColor de mentira, escrito aqui em Python a partir da especificação
+Um painel de mentira, escrito aqui em Python a partir da especificação
 (oferta, HELLO/CHALLENGE/CONFIRM, envelope com HMAC-SHA256, mensagens do
 painel), fala com a ponte usb_panel_bridge.py exatamente como o firmware fala
 pela USB; do outro lado está o executável real da bancada, com o firmware dos
@@ -41,7 +41,7 @@ def seal(key: bytes, kind: int, counter: int, payload: bytes) -> bytes:
     return header + payload + mac(key, header + payload)[:8]
 
 
-class FakePaperColor:
+class FakePanel:
     """O lado do painel no protocolo de linha da USB."""
 
     def __init__(self) -> None:
@@ -170,7 +170,7 @@ class UsbPanelBridgeTest(unittest.TestCase):
     def ask(self, command: str) -> str:
         return request(self.socket, command, timeout=10)
 
-    def run_until(self, bridge: PanelBridge, fake: FakePaperColor, condition, seconds: float) -> bool:
+    def run_until(self, bridge: PanelBridge, fake: FakePanel, condition, seconds: float) -> bool:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             fake.tick()
@@ -181,7 +181,7 @@ class UsbPanelBridgeTest(unittest.TestCase):
         return False
 
     def test_physical_panel_reaches_the_virtual_node_over_usb(self) -> None:
-        fake = FakePaperColor()
+        fake = FakePanel()
         bridge = PanelBridge(fake, self.ask, node=2, rssi=-50, extra=[(3, -70)], log=lambda _line: None)
         uuid = bridge.attach()
         self.assertEqual(uuid, f"0x{UUID:016X}")

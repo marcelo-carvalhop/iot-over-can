@@ -318,8 +318,8 @@ struct Sensor;
 void panelStep(Sensor& s);
 void panelDatagram(Sensor& s, const ::SimDatagram& d);
 
-// Painel em papel eletrônico (perfil 0x04). Virtual: o PanelApp do firmware
-// roda aqui, com um PanelHal simulado. USB: o PaperColor físico está do outro
+// Painel (perfil 0x04). Virtual: o PanelApp do firmware roda aqui, com um
+// PanelHal simulado. USB: o painel físico está do outro
 // lado da ponte (Simulacao/usb_panel_bridge.py); a bancada só leva ofertas e
 // datagramas, e mantém um espelho da página para o Studio.
 struct PanelState {
@@ -1920,7 +1920,7 @@ int scenarioAcousticSensor() {
 }
 
 
-// Painel em papel eletrônico (perfil 0x04): o PanelApp do firmware do PaperColor
+// Painel (perfil 0x04): o PanelApp do firmware do painel,
 // associado ao Node 2, com o retrato, o tap ao vivo, uma nota digitada que chega
 // à Probe, o agravamento quando o Node 1 cai (com poucos redesenhos e sem perder
 // a sessão durante os 20 s de cada desenho) e o sono declarado na bateria, com a
@@ -2344,7 +2344,7 @@ const Scenario SCENARIOS[] = {
   {"silence_leader_with_sensor", scenarioSilenceLeaderWithSensor, "lider retoma de uma parada longa sem reassociar"},
   {"acoustic_sensor", scenarioAcousticSensor, "sensor acustico INMP441: niveis, maquina, eventos e espectro"},
   {"restart_keeps_binding", scenarioRestartKeepsBinding, "Node reinicia e retoma o vinculo gravado na NVS"},
-  {"panel_papercolor", scenarioPanel, "painel em papel eletronico: retrato, nota, queda de Node e sono na bateria"},
+  {"panel", scenarioPanel, "painel: retrato, nota, queda de Node e sono na bateria"},
   {"handshake_slow_radio", scenarioHandshakeSlowRadio, "dois sensores no mesmo Node com 3,6 s de atraso no radio"},
 };
 
@@ -2366,7 +2366,7 @@ void simPanelAdded(Sensor& s) {
   panelBoot(s);
 }
 
-// Painel USB: o PaperColor físico faz o enlace; a bancada só leva os datagramas.
+// Painel USB: o painel físico faz o enlace; a bancada só leva os datagramas.
 bool simPanelSource(Sensor& s, bool usb) {
   if (s.profile != IOC_PANEL_PROFILE) return false;
   s.panel.usb = usb;

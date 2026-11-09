@@ -1,7 +1,7 @@
-"""Painel em papel eletrônico (perfil PANEL) visto pela TUI.
+"""Painel (perfil PANEL) visto pela TUI.
 
-A gravação ``panel_papercolor.log`` é a saída da Probe 00 na bancada virtual,
-com o firmware do PaperColor (o mesmo PanelApp do aparelho) associado ao Node 2.
+A gravação ``panel.log`` é a saída da Probe 00 na bancada virtual, com o
+firmware do painel (o mesmo PanelApp do aparelho) associado ao Node 2.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from pico_tui.presentation import DATA_LINK_LABELS
 from pico_tui.protocol.router import DecoderRouter
 from pico_tui.services.controller import DomainController
 
-REPLAY = Path(__file__).resolve().parents[1] / "replays" / "panel_papercolor.log"
+REPLAY = Path(__file__).resolve().parents[1] / "replays" / "panel.log"
 
 
 def _run(lines: list[str], tmp_path: Path):

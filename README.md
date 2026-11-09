@@ -67,6 +67,8 @@ O [Guia de uso](Documentacao/guia-de-uso.md) mostra também como reproduzir uma 
 | [Validação](Documentacao/validacao.md) | quem testa | testes automáticos, bancada virtual, laboratório virtual e bancada física |
 | [Desafios](Documentacao/desafios.md) | quem desenvolve | problemas encontrados e como foram resolvidos |
 
+Para ler esta documentação longe do computador, há um leitor de papel eletrônico: o M5Stack PaperColor com o firmware de [`Codigo/leitor`](Codigo/leitor), que traz este README e todos os documentos acima ([Guia de uso, seção 9](Documentacao/guia-de-uso.md#9-leitor-da-documentação)).
+
 Documentos de etapas anteriores ficam, sem revisão, em [`Documentacao/historico/`](Documentacao/historico/). A ferramenta de pesquisa tem a própria documentação em [`Pesquisa/`](Pesquisa/README.md).
 
 ## Licença

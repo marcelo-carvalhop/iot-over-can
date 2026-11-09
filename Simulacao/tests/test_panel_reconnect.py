@@ -1,4 +1,4 @@
-"""Regressões da reconexão do M5Stack PaperColor por USB e HMAC no firmware."""
+"""Regressões da reconexão do painel por USB e HMAC no firmware."""
 from __future__ import annotations
 
 import shutil
@@ -66,7 +66,7 @@ class PanelBootstrapTests(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("cc") and shutil.which("c++"), "Compiladores C e C++ indisponíveis")
-class PaperColorNativeTests(unittest.TestCase):
+class PanelAppNativeTests(unittest.TestCase):
     def test_retries_and_reauthentication_from_actual_panel_app(self):
         link = ROOT / "Codigo/common/ioc_link"
         panel = ROOT / "Codigo/common/ioc_panel"

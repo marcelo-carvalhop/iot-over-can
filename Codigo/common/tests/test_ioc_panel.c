@@ -1,4 +1,4 @@
-/* Painel em papel eletrônico: formatos, retrato do Node, visão da rede, página e política. */
+/* Painel: formatos, retrato do Node, visão da rede, página e política. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

@@ -144,7 +144,7 @@ class WirelessEventReceived(Event):
 
 @dataclass(slots=True)
 class PanelReported(Event):
-    """Relato do painel em papel eletrônico (perfil PANEL) encaminhado pelo Node.
+    """Relato do painel (perfil PANEL) encaminhado pelo Node.
 
     ``kind`` é ``STATUS`` (bateria, ambiente, página, sono) ou ``MARK`` (marca
     do operador: botão, nota digitada, passo ou resultado de roteiro).

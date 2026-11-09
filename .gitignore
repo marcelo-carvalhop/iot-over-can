@@ -30,7 +30,7 @@ logs/
 *.jsonl
 *.binlog
 # Tabelas do relatório de validação do método (pequenas, geradas de registros com proveniência).
-!Documentacao/pesquisa/validacao-virtual/*.csv
+!Pesquisa/validacao-virtual/*.csv
 
 # Editors / OS
 .vscode/
@@ -49,6 +49,8 @@ yubikey_*.txt
 .pio/
 .pioenvs/
 .piolibdeps/
+# Gerado do README e de Documentacao/ a cada compilação do leitor.
+Codigo/leitor/src/documentos.h
 
 # Conteúdo mantido apenas na estação local de desenvolvimento
 Codigo/node-can/legacy/

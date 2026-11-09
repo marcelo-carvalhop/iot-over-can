@@ -4,7 +4,7 @@
  * Contrato: linhas #CTRL sao controle; linhas @<ms> sao saida da Probe 00.
  */
 
-// Painel em papel eletronico (perfil 0x04): implementado em sim_network.cpp,
+// Painel (perfil 0x04): implementado em sim_network.cpp,
 // depois deste arquivo. Os testes do controle compilam versoes vazias.
 const char* simProfileName(const Sensor& s);
 void simPanelAdded(Sensor& s);
@@ -103,10 +103,10 @@ void simPrintHelp() {
   puts("#CTRL HELP NODE <id> TX ON|OFF");
   puts("#CTRL HELP NODE <id> BUDGET <1..100>  (percentual de passos do loop)");
   puts("#CTRL HELP SENSOR ADD <uuid> VIBRATION|ACOUSTIC|PANEL");
-  puts("#CTRL HELP PANEL PAGE <uuid>  (pagina no papel ou espelho do painel USB)");
+  puts("#CTRL HELP PANEL PAGE <uuid>  (pagina do painel virtual ou espelho do painel USB)");
   puts("#CTRL HELP PANEL KEY <uuid> <codigo> | PANEL BUTTON <uuid> A|B|C|P|PP|H (H: segurar energia) | PANEL NOTE <uuid> <texto>");
   puts("#CTRL HELP PANEL BATTERY <uuid> ON|OFF  (painel virtual dorme entre verificacoes)");
-  puts("#CTRL HELP PANEL POLL|JOIN|LEAVE|UP <uuid> ...  (ponte USB do PaperColor)");
+  puts("#CTRL HELP PANEL POLL|JOIN|LEAVE|UP <uuid> ...  (ponte USB do painel)");
   puts("#CTRL HELP SENSOR REMOVE <uuid>");
   puts("#CTRL HELP SENSOR SOURCE <uuid> USB|SYNTH");
   puts("#CTRL HELP SENSOR SAMPLE <uuid> KEY=NUMERIC ...  (somente fonte USB)");

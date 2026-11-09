@@ -44,7 +44,7 @@ cc -std=c11 -Wall -Wextra -Werror \
   -lm -o "$OUT_DIR/test_ioc_net"
 "$OUT_DIR/test_ioc_net"
 
-# 3-painel. Painel em papel eletrônico: formatos, retrato do Node, visão da
+# 3-painel. Painel: formatos, retrato do Node, visão da
 #     rede, composição da página e política de atualização (ASan/UBSan quando há).
 PANEL="$REPO_ROOT/Codigo/common/ioc_panel"
 PANEL_FLAGS=(-std=c11 -O1 -g -Wall -Wextra -Werror)
@@ -111,5 +111,17 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror \
 while IFS=$'\t' read -r scenario _description; do
   "$OUT_DIR/sim_network" "$scenario" > /dev/null
 done < <("$OUT_DIR/sim_network" --list)
+
+# 6. Leitor da documentação (Codigo/leitor): conversão dos .md, diagramação de
+#    todos os documentos e o firmware sobre stubs da placa (telas dentro dos
+#    400x600, navegação, NVS, sono e desligamento).
+LEITOR="$REPO_ROOT/Codigo/leitor"
+python3 "$LEITOR/tools/documentos.py" --saida "$OUT_DIR/leitor/documentos.h" --silencioso --estrito
+LEITOR_FLAGS=(-std=c++17 -O1 -g -Wall -Wextra -Werror -pthread -I "$LEITOR/src" -I "$OUT_DIR/leitor")
+c++ "${LEITOR_FLAGS[@]}" "$LEITOR/src/leitor_layout.cpp" "$LEITOR/tests/test_leitor.cpp" -o "$OUT_DIR/test_leitor"
+"$OUT_DIR/test_leitor" > /dev/null
+c++ "${LEITOR_FLAGS[@]}" -I "$LEITOR/tests/stubs" "$LEITOR/src/leitor_layout.cpp" "$LEITOR/tests/test_firmware.cpp" \
+  -o "$OUT_DIR/test_leitor_firmware"
+"$OUT_DIR/test_leitor_firmware" > /dev/null
 
 echo "native firmware validation tests: PASS"

@@ -57,7 +57,7 @@ bool wirelessLinkIsPresent(uint64_t uuid);
 bool wirelessLinkSensorWaiting();
 
 /*
- * Painel em papel eletrônico: todo quadro observado pelo Node passa por aqui
+ * Painel: todo quadro observado pelo Node passa por aqui
  * (recebidos em handleReceivedCanMessage, transmitidos em canSend), para o
  * retrato, a caixa postal e o encaminhamento ao vivo.
  */

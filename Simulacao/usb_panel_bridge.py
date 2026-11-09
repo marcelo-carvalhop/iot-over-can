@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Liga o painel M5Stack PaperColor físico, pela USB, à bancada virtual.
+"""Liga o painel físico (ESP32-2432S028), pela USB, à bancada virtual.
 
-A USB faz o papel do Wi-Fi: o PaperColor executa o próprio firmware (enlace
-HMAC-SHA256, retrato, página, teclado, botões) e troca com o Node virtual os
+A USB faz o papel do Wi-Fi: o painel executa o próprio firmware (enlace
+HMAC-SHA256, retrato, página, toque) e troca com o Node virtual os
 mesmos datagramas autenticados que trocaria pelo ponto de acesso IOC-NN. A
 bancada entrega ao painel as ofertas BLE assinadas dos Nodes que o "ouvem",
 anuncia o perfil PANEL em nome dele e mantém um espelho da página para o
@@ -85,7 +85,7 @@ class PanelBridge:
         boot_lines: list[str] = []
         while self.uuid is None:
             if time.monotonic() > deadline:
-                raise RuntimeError("o painel não respondeu: confira a porta e se o firmware é o do PaperColor")
+                raise RuntimeError("o painel não respondeu: confira a porta e se o firmware é o do painel")
             if time.monotonic() >= next_bridge:
                 self.write("#IOC BRIDGE 1")
                 next_bridge = time.monotonic() + 1.0
@@ -203,8 +203,8 @@ def parse_extra(values: list[str]) -> list[tuple[int, int]]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Painel PaperColor físico (USB) na bancada virtual")
-    ap.add_argument("--port", required=True, help="Porta USB do PaperColor (ex.: /dev/ttyACM0)")
+    ap = argparse.ArgumentParser(description="Painel físico (USB) na bancada virtual")
+    ap.add_argument("--port", required=True, help="Porta USB do painel (ex.: /dev/ttyUSB0)")
     ap.add_argument("--socket", help="Socket CONTROL; omitir se houver uma única simulação ativa")
     ap.add_argument("--node", type=int, default=1, help="Node virtual que ouve o painel (padrão: 1)")
     ap.add_argument("--rssi", type=int, default=-55, help="RSSI modelado (padrão: -55 dBm)")

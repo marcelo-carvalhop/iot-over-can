@@ -13,6 +13,7 @@ Este guia leva da caixa de peças à rede funcionando: o que comprar, como ligar
 | Raspberry Pi Pico W + acelerômetro MPU6050 | 1 por sensor de vibração | |
 | Raspberry Pi Pico W ou Pico 2 W + microfone INMP441 | 1 por sensor acústico | |
 | ESP32-2432S028 ("Cheap Yellow Display") | opcional, 1 por painel | a versão com USB-C e micro-USB |
+| M5Stack PaperColor | opcional | leitor desta documentação; não faz parte da rede ([seção 9](#9-leitor-da-documentação)) |
 | Hub USB com fonte própria | 1 | alimenta os módulos; ver [Alimentação](#alimentação) |
 | Computador com USB | 1 | roda a estação de operação (TUI) e grava as placas |
 
@@ -21,7 +22,7 @@ Este guia leva da caixa de peças à rede funcionando: o que comprar, como ligar
 | Para | Programa |
 |---|---|
 | Estação de operação (TUI) | Python 3.11 ou mais novo |
-| Gravar a Probe 00, os módulos e o painel | PlatformIO Core: `python3 -m pip install platformio` |
+| Gravar a Probe 00, os módulos, o painel e o leitor | PlatformIO Core: `python3 -m pip install platformio` |
 | Gravar os sensores (Pico W e Pico 2 W) | Pico SDK 2.3.1 com submódulos, a variável `PICO_SDK_PATH` apontando para ele, CMake 3.13 ou mais novo e o compilador `arm-none-eabi-gcc` |
 
 ## 2. Ligações
@@ -72,7 +73,7 @@ O painel não precisa de ligações além da alimentação. A porta USB-C dessa 
 
 Cada módulo consome de 100 a 200 mA em média, com picos de 300 a 500 mA quando o rádio transmite ou calibra. Três módulos ligados juntos passam de 1 A nos picos. Um power bank comum não sustenta isso: a tensão cai e as placas reiniciam juntas, repetindo o pico.
 
-Na bancada, alimente os módulos por um hub USB com fonte própria (o projeto usa um hub Acasis) ou por uma fonte de 5 V com 3 A ou mais, com cabos curtos. Se as placas dividirem a mesma alimentação, um capacitor eletrolítico de 470 a 1000 µF entre 5 V e GND perto de cada uma ajuda. Para confirmar um problema de alimentação, veja a [solução de problemas](#10-solução-de-problemas).
+Na bancada, alimente os módulos por um hub USB com fonte própria (o projeto usa um hub Acasis) ou por uma fonte de 5 V com 3 A ou mais, com cabos curtos. Se as placas dividirem a mesma alimentação, um capacitor eletrolítico de 470 a 1000 µF entre 5 V e GND perto de cada uma ajuda. Para confirmar um problema de alimentação, veja a [solução de problemas](#11-solução-de-problemas).
 
 ## 3. Preparar o computador
 
@@ -163,7 +164,7 @@ O arquivo gerado é `Codigo/node-audio/build/edge_audio_firmware.uf2`; no Pico 2
 ### Painel
 
 ```bash
-./Codigo/scripts/build_paper.sh --cyd --upload /dev/ttyUSB0
+./Codigo/scripts/build_paper.sh --upload /dev/ttyUSB0
 ```
 
 Na primeira partida:
@@ -179,6 +180,7 @@ Na primeira partida:
 | credenciais renovadas (`--renew`) | todos os módulos e todos os sensores |
 | código dos sensores | os sensores |
 | código do painel | os painéis |
+| a documentação | o leitor, se quiser o texto novo nele ([seção 9](#9-leitor-da-documentação)) |
 | só a estação de operação | nada; basta reabri-la |
 
 ## 6. Colocar a rede no ar
@@ -228,7 +230,30 @@ O painel mostra a situação da rede no local, sem computador. Ele recebe do mó
 - **LED e avisos sonoros:** verde com a rede normal; azul pulsando quando a rede está tratando um problema sozinha (1 bipe); amarelo piscando em atenção (2 bipes, repetidos a cada 5 min); vermelho em "requer você" (3 bipes, repetidos a cada minuto). Ciente para os bipes e registra o tempo de reação na estação ("Ciente em 80 s: Node 1 sem sinal").
 - **Hora:** o painel não tem relógio próprio. Ele pede a hora à rede ao conectar; sem estação conectada à rede, mostra tempos relativos ("há 3 min").
 
-## 9. Sem hardware
+## 9. Leitor da documentação
+
+O M5Stack PaperColor não faz parte da rede: é um leitor de bolso desta documentação. O README e todos os documentos de `Documentacao/` vão gravados no firmware, convertidos dos arquivos `.md` a cada compilação. A tela de papel eletrônico colorido guarda a imagem sem energia, então a página aberta continua à vista com o leitor desligado.
+
+```bash
+./Codigo/scripts/build_leitor.sh --upload /dev/ttyACM0
+```
+
+Quando a documentação mudar, grave de novo. O leitor guarda a página em que parou em cada documento; se o texto mudou, ele recomeça pela biblioteca.
+
+| Botão | Biblioteca | Seções de um documento | Leitura |
+|---|---|---|---|
+| A | sobe | sobe | página anterior |
+| B | abre o documento | abre a seção | mostra as seções |
+| C | desce | desce | próxima página |
+| segurar A ou C | sobe ou desce | dez de cada vez | seção anterior ou seguinte |
+| segurar B | nada | volta ao texto | volta à biblioteca |
+
+- **Tempo de desenho:** a tela colorida leva de 15 a 30 s para desenhar. Toques seguidos se somam: três toques em C avançam três páginas com um desenho só. Enquanto a tela desenha, o LED fica azul.
+- **Energia:** na bateria, depois de 20 s sem uso o leitor dorme com a página na tela, e qualquer botão o acorda. Depois de 30 min dormindo, ele se desliga. O botão de energia segue o padrão de fábrica: um toque liga, dois toques desligam. Ao ligar, o leitor volta à página em que estava, sem redesenhar a tela.
+- **Teclado (opcional):** um M5Stack CardKB na Port A. As setas para os lados viram a página e as setas para cima e para baixo pulam de seção; Enter abre, Esc volta e, na biblioteca, as teclas 1 a 0 abrem os documentos direto.
+- **Pela USB:** no monitor serial (115200), `a`, `b` e `c` tocam os botões, `A`, `B` e `C` os seguram e `s` mostra onde o leitor está.
+
+## 10. Sem hardware
 
 ### Demonstração
 
@@ -264,7 +289,7 @@ python3 Simulacao/studio/server.py --binary /tmp/ioc_sim_network --browser    # 
 
 Um sensor real pode participar do laboratório pela USB, no lugar do rádio: `Front/.venv/bin/python Simulacao/usb_sensor_bridge.py --port /dev/ttyACM0 --node 1 --rssi -55`. `./Simulacao/iniciar_laboratorio.py` abre Studio, estação e ponte em três terminais de uma vez. Detalhes em [Validação](validacao.md#4-laboratório-virtual).
 
-## 10. Solução de problemas
+## 11. Solução de problemas
 
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
