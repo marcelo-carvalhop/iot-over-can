@@ -12,7 +12,9 @@ A proteção atua em três pontos, de forma independente: a estação não é a 
 | console USB do sensor | comandos que alteram o sensor | sessão de manutenção com token |
 | canal de dados sensor ↔ módulo | identidade do sensor e integridade dos dados | chave por dispositivo, desafio-resposta e código de autenticação em cada mensagem |
 
-O barramento CAN é tratado como domínio confiável: os quadros não têm autenticação de origem (seção 7).
+Além de proteger, a estação registra **quem agiu**: cada alteração e cada autorização de sensor entra no histórico com o nome de quem a fez (seção 5).
+
+O barramento CAN é tratado como domínio confiável: os quadros não têm autenticação de origem (seção 8).
 
 ## 2. Chaves
 
@@ -76,9 +78,72 @@ MEASURE, BASELINE, CAL                                              console de u
 | `otp` | bloqueia tudo até existir verificação criptográfica de OTP/FIDO2 |
 | `off` | sem autorização na estação, para a bancada; deve ser pedido explicitamente |
 
-Desligar a autorização na estação não remove as proteções do firmware.
+Desligar a autorização na estação não remove as proteções do firmware. A autorização pela chave física e a identificação do operador (seção 5) são independentes e se somam: em `presence`, o comando precisa da chave conectada e, havendo operadores cadastrados, de um operador que tenha entrado.
 
-## 5. Console do sensor
+## 5. Identificação do operador
+
+A autorização da seção 4 responde se a estação pode enviar o comando. Ela não responde quem o pediu. Para o histórico saber quem alterou a rede ou autorizou a entrada de um sensor, a estação identifica a pessoa que a usa e grava o nome dela junto de cada ação. A identificação não depende de chave física: o FIDO2 ainda não existe no projeto, e quando existir entra no mesmo ponto (seção 5.5).
+
+### 5.1 Como funciona
+
+- **Cadastro.** Cada pessoa tem nome de acesso, senha e perfil no arquivo `~/.config/iot-over-can/operators.json`. O arquivo guarda só o resultado do `scrypt` da senha, nunca a senha. Como o `security.json`, ele é recusado se pertencer a outro usuário ou puder ser lido por outros (permissão `0600`).
+- **Entrada.** A pessoa tecla `o` (ou `:login`) e informa nome e senha. A senha não aparece na tela e não vai para nenhum registro. Depois de cinco erros seguidos, a entrada espera 30 s, o dobro a cada bloqueio seguinte.
+- **Sessão.** Vale enquanto houver teclado, mouse ou comando. Expira após 15 minutos sem atividade (`--operator-idle`, em minutos; `0` desliga a expiração). Trocar a senha, desativar ou remover o operador na CLI encerra a sessão aberta dele em até 5 s, ou no próximo comando.
+- **Perfis.** `operator` altera a rede. `observer` acompanha, mas não altera nada: as tentativas são recusadas e registradas.
+
+### 5.2 Modos
+
+| `--operator-mode` | Comportamento |
+|---|---|
+| `auto` (padrão) | Com operadores cadastrados, o login é exigido para alterar a rede. Sem cadastro, o responsável é o usuário do sistema operacional (`sys:marcelo`): nada muda para quem não configurou, e o histórico já sabe qual conta estava na estação |
+| `required` | O login é sempre exigido. Sem operador cadastrado, nada que altere a rede é enviado |
+| `off` | Sem identificação nem registro de ações. É o comportamento anterior, para ensaios automatizados |
+
+Consultas (`STATUS`, `GET`, `22 20`) continuam livres: sem login a pessoa pode olhar, não alterar. Um cadastro ilegível ou com permissões erradas bloqueia as alterações em vez de liberá-las: apagar ou estragar o arquivo não desliga o login.
+
+### 5.3 O que fica registrado
+
+Cada ação vira um evento da faixa **AUDIT** do histórico (tecla `h`), com instante, autor, comando sem segredos e resultado.
+
+| Registro | Quando |
+|---|---|
+| `SESSION_START` | a estação é aberta, com o modo de identificação e o usuário do sistema |
+| `LOGIN`, `LOGIN_FAILED`, `LOGOUT` | entrada, tentativa recusada e saída |
+| `SESSION_EXPIRED`, `SESSION_REVOKED` | inatividade; senha trocada ou operador desativado |
+| `SENSOR_BIND`, `SENSOR_UNBIND`, `SENSOR_POLICY` | autorização de entrada, remoção e política de reassociação de um sensor |
+| `SENSOR_CONFIG`, `NETWORK_COMMAND`, `FAULT_COMMAND`, `WIFI_PROVISION` e outros | os demais comandos que alteram a rede |
+| `ALARM_LIMITS` | mudança dos limites de alarme de um sensor, com o valor anterior e o novo |
+| `COMMAND_DENIED`, `COMMAND_FAILED` | comando recusado (sem login, observador, chave ausente) ou que não chegou a sair |
+
+A resposta do firmware a uma associação (`ASSOCIATING`, `BOUND`, `ONLINE`) é atribuída a quem enviou o comando, por até 2 minutos (`authorized_by`). O que a rede faz sozinha, como um sensor que some ou uma reassociação automática, fica sem autor, que é o retrato correto.
+
+Senhas, tokens e chaves nunca entram nos registros: `AUTH UNLOCK ***`, `NET WIFI PROVISION rede ***`, campos `KEY=`, `TOKEN=` e `PASS=` mascarados. Uma tentativa de entrada recusada grava o nome digitado só se ele existir no cadastro, porque um engano comum é digitar a senha no campo do nome. As mesmas ações vão também para o arquivo da sessão (`logs/session_*.jsonl`, fonte `AUDITORIA`), uma segunda cópia independente do banco.
+
+### 5.4 Cadastro e consulta
+
+```bash
+iot-over-can-operators add ana --display "Ana Souza"   # pede a senha no terminal
+iot-over-can-operators add visita --role observer
+iot-over-can-operators list
+iot-over-can-operators passwd ana                      # encerra as sessões abertas dela
+iot-over-can-operators disable visita                  # enable, role, remove
+iot-over-can-operators check                           # confere formato e permissões
+iot-over-can-operators audit --operator ana --since 24h
+iot-over-can-operators audit --verify                  # confere a cadeia de hashes
+```
+
+No repositório, `./Codigo/scripts/operadores.sh` faz o mesmo no ambiente virtual da estação e na pasta onde o histórico é gravado; use-o no lugar de `iot-over-can-operators` se o comando não estiver no `PATH`. A senha é sempre pedida no terminal, sem eco (ou lida da entrada padrão com `--password-stdin`, para scripts). Nunca vai como argumento: ficaria no histórico do shell e na lista de processos. Tem de 8 a 256 caracteres; uma frase longa vale mais que uma palavra com símbolos.
+
+### 5.5 Garantias e limites
+
+- **Separa pessoas, não resiste a administradores.** A identificação distingue quem fez o quê entre pessoas que dividem a bancada e deixa um rastro. Quem tem acesso de administrador à estação pode trocar o código da TUI, ler a memória do processo, editar o cadastro ou apagar o banco.
+- **Cadeia de hashes.** Cada registro de auditoria traz o SHA-256 do anterior mais o seu conteúdo. Editar ou apagar um registro do meio quebra a cadeia, e `audit --verify` aponta onde. Apagar os últimos registros, ou o banco inteiro, não é detectado; para isso existe a segunda cópia no arquivo da sessão.
+- **Usuário do sistema é declarado, não verificado.** Sem cadastro, o registro leva a conta do sistema (`sys:...`). Se a conta é compartilhada, o nome identifica a conta, não a pessoa.
+- **Só vê o que passa pela estação.** Comandos digitados direto no console USB de um sensor, ou enviados por outra estação, não são registrados por esta. Marcas feitas no painel físico continuam na faixa `OPERATOR`, sem autor: o painel não identifica quem o toca.
+- **Tentativas limitadas por processo.** Reiniciar a TUI zera o contador de erros. Quem consegue ler o `operators.json` ainda precisa quebrar o `scrypt`, que é caro de propósito.
+- **Ponto de extensão para o FIDO2.** Cada registro guarda o método de identificação (`method`) e se ele foi verificado (`verified`). Um verificador FIDO2 devolve o mesmo `Actor`, com `method="fido2"`, e o histórico, a tela e a CLI continuam como estão ([Integração](integracao.md#identificação-do-operador)).
+
+## 6. Console do sensor
 
 Comandos de leitura não pedem autorização. Comandos que alteram o sensor exigem uma sessão de manutenção:
 
@@ -90,7 +155,7 @@ AUTH LOCK
 
 A sessão expira sozinha. `RESET` pede confirmação em duas etapas no próprio firmware. A estação busca o token só quando precisa e nunca o grava em registro.
 
-## 6. Canal de dados
+## 7. Canal de dados
 
 **Garantias:**
 
@@ -116,14 +181,14 @@ A sessão expira sozinha. `RESET` pede confirmação em duas etapas no próprio 
 
 Interferência em 2,4 GHz interrompe o canal; o protocolo garante que isso não resulte em dados ou comandos falsos.
 
-## 7. Limites conhecidos
+## 8. Limites conhecidos
 
 - **CAN sem autenticação de origem.** Qualquer equipamento ligado ao barramento pode emitir comandos (`0x080`, `0x304`, `0x305`), pedidos de associação e reassociação ou dados falsos (`0x380 + N`). Com isso pode mover um sensor entre módulos ou deixá-lo sem responsável, mas não consegue ler os dados do sensor nem se passar por ele, porque a sessão continua exigindo `K_dev`. A autenticação no barramento está preparada em biblioteca ([Arquitetura](arquitetura.md#9-preparação-para-can-fd)).
 - **Chave mestra em todos os módulos.** A extração da memória de um módulo compromete o canal de todos os sensores. Entregar `K_dev` pela estação na associação eliminaria isso; é a base da proposta de comissionamento sem compilação.
 - **Sem elemento seguro.** As chaves ficam na memória flash dos microcontroladores.
 - **Código de autenticação de 64 bits**, adequado ao volume e à duração das sessões do projeto, não um parâmetro para uso geral.
-- **Chave física verificada só pela presença.** A verificação FIDO2/OTP ainda não existe; o modo `otp` permanece bloqueado.
+- **Chave física verificada só pela presença.** A verificação FIDO2/OTP ainda não existe; o modo `otp` permanece bloqueado. Enquanto isso, quem opera se identifica por senha (seção 5), com os limites descritos ali.
 
-## 8. Ensaios de falha
+## 9. Ensaios de falha
 
 Os comandos `FAULT` derrubam módulos, desligam pontos de acesso e ocupam o barramento. Na estação eles pedem autorização e confirmação, mostrando o comando. No barramento, o quadro `0x305` não é autenticado. Fora da bancada, compile os módulos com `-D IOT_FAULT_INJECTION=0`, que remove o tratamento do comando, e não deixe a Probe 00 ligada a uma rede em operação: ela continua capaz de gerar carga. Cada ensaio dura no máximo 120 s, e um módulo aceita um ensaio por vez.

@@ -22,6 +22,9 @@ O programa instalado é `Front/.venv/bin/iot-over-can-tui`. Opções:
 | `--replay <arquivo> [--replay-speed N]` | reproduz uma sessão gravada |
 | `--sim [--sim-binary <arquivo>]` | abre o laboratório virtual e se conecta a ele |
 | `--security-mode off\|presence\|otp` | autorização dos comandos (padrão: `presence`) |
+| `--operator-mode auto\|required\|off` | identificação de quem opera (padrão: `auto`; ver [Segurança](seguranca.md#5-identificação-do-operador)) |
+| `--operators-file <arquivo>` | cadastro de operadores (padrão: `~/.config/iot-over-can/operators.json`) |
+| `--operator-idle <minutos>` | inatividade até a sessão do operador expirar (padrão: 15; `0` desliga) |
 | `--messages`, `--no-messages` | mostra ou oculta as mensagens recentes no Início |
 | `--ascii` | símbolos simples, para terminais sem Unicode |
 | `--no-file-log` | não grava a sessão em arquivo |
@@ -72,9 +75,10 @@ Início
 | `F12` ou `v` | Supervisório |
 | `F10` ou `q` | Sair |
 | `k` | lançador de comandos |
+| `o` | operador: entrar, sair da sessão ou ver quem está identificado |
 | `/` | medições de pesquisa |
 
-Com um campo de texto em foco, as letras são texto, não atalhos. `k` e `/` não aparecem na barra de teclas; estão na Ajuda.
+Com um campo de texto em foco, as letras são texto, não atalhos. `k`, `o` e `/` não aparecem na barra de teclas (`o` aparece no Início); estão na Ajuda.
 
 ## 4. Telas
 
@@ -111,7 +115,7 @@ A estação não cria nem remove sensores por conta própria: o sensor aparece q
 
 ### Comandos
 
-O lugar dos comandos operacionais. O alvo pode ser a rede, um módulo ou um sensor; `t` troca o alvo. As ações, agrupadas em Consultar, Operar e Manutenção, trazem descrição, parâmetro guiado, a linha CAN quando houver e a exigência de autorização. Depois do envio, a tela volta para onde foi aberta. `a` abre o campo de **comando manual**, para diagnóstico: texto sem `:` vai ao equipamento conectado; com `:`, executa um comando interno, por exemplo `:status`, `:node 04.01`, `:can 22 20 FF 00`, `:bind`, `:unbind`, `:policy`, `:metrics`, `:ensaios`, `:tel`, `:fft`, `:dtc`, `:config`, `:measure`, `:baseline`, `:cal`, `:connect`, `:snapshot`, `:security`, `:lock` e `:quit`.
+O lugar dos comandos operacionais. O alvo pode ser a rede, um módulo ou um sensor; `t` troca o alvo. As ações, agrupadas em Consultar, Operar e Manutenção, trazem descrição, parâmetro guiado, a linha CAN quando houver e a exigência de autorização. Depois do envio, a tela volta para onde foi aberta. `a` abre o campo de **comando manual**, para diagnóstico: texto sem `:` vai ao equipamento conectado; com `:`, executa um comando interno, por exemplo `:status`, `:node 04.01`, `:can 22 20 FF 00`, `:bind`, `:unbind`, `:policy`, `:metrics`, `:ensaios`, `:tel`, `:fft`, `:dtc`, `:config`, `:measure`, `:baseline`, `:cal`, `:connect`, `:snapshot`, `:security`, `:lock`, `:login`, `:logout`, `:operador` e `:quit`.
 
 O **lançador de comandos** (`k`) é uma linha de entrada rápida: o operador digita, por exemplo, `22 00 FF 01`, a janela explica o que vai acontecer e `Enter` envia. As setas recuperam os últimos 50 comandos. As regras de autorização são as mesmas.
 
@@ -206,12 +210,19 @@ O layout tem quatro faixas: abaixo de 60 colunas, uma coluna sem bordas laterais
 
 Antes de enviar um comando que altera a rede, a estação consulta o `SecurityManager`. São tratados assim os comandos de eleição (`22 00`), administração de módulos (`22 10`), período do sinal de presença (`22 30`), associação (`WIRELESS BIND`, `UNBIND`, `POLICY`), comandos a sensores (`CMD`), ensaios (`FAULT`) e as alterações no console USB de um sensor. Sem autorização, o comando é bloqueado. Consultas (`22 20`), medições (`METRICS`) e o ajuste do relógio (`TIME`) são livres. O modelo completo está em [Segurança](seguranca.md).
 
+### Quem está operando
+
+A estação sabe quem a usa e grava o nome de quem agiu no histórico. Com operadores cadastrados (`./Codigo/scripts/operadores.sh add NOME`), a faixa de status mostra `Operador sem login` até alguém teclar `o`, informar nome e senha e entrar; dali em diante mostra o nome. Sem login, a pessoa vê tudo e não altera nada: o comando é recusado e a tentativa fica registrada. A sessão expira depois de 15 minutos sem teclado, mouse ou comando; `o` de novo mostra a sessão e permite sair. Sem nenhum cadastro, o responsável é o usuário do sistema operacional, marcado como `(sistema)`.
+
+No histórico (`h`), as ações aparecem na faixa `AUDIT`, com o autor na lista e em **Responsável** nos detalhes. A resposta do firmware a uma associação aparece em **Autorizado por**, com o nome de quem pediu. Como cadastrar operadores, consultar e conferir a auditoria: [Segurança](seguranca.md#5-identificação-do-operador).
+
 ## 9. Arquivos da estação
 
 | Arquivo | Conteúdo |
 |---|---|
 | `~/.config/iot-over-can/tui.json` | preferências: mensagens no Início, depuração, símbolos ASCII, painéis do supervisório, limites de alarme |
 | `~/.config/iot-over-can/security.json` | token de manutenção (segredo; permissão só do dono) |
+| `~/.config/iot-over-can/operators.json` | operadores cadastrados, com a senha em hash (permissão só do dono) |
 | `logs/` | registro da sessão, gravações, histórico (`historico.sqlite3`) e capturas |
 | `exports/` | métricas e ensaios exportados |
 

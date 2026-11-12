@@ -24,6 +24,7 @@ dev = [
 
 [project.scripts]
 iot-over-can-tui = "pico_tui.__main__:main"
+iot-over-can-operators = "pico_tui.operators_cli:run"
 
 [tool.setuptools.packages.find]
 where = ["."]

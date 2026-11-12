@@ -17,11 +17,20 @@ from textual import work
 from textual.app import App
 from textual.binding import Binding
 from textual.css.query import NoMatches
-from textual.events import Key, Resize
+from textual.events import Event as TextualEvent
+from textual.events import Key, MouseDown, Resize
 from textual.screen import ModalScreen, Screen
 from textual.theme import Theme
 
 from pico_tui import acoustics, alarms, commands, palette
+from pico_tui.audit import (
+    AuthorizationLedger,
+    classify_command,
+    command_action,
+    log_event_for,
+    make_action,
+    redact_command,
+)
 from pico_tui import presentation as pres
 from pico_tui.command_catalog import ACTIONS_BY_KEY, CommandAction, Parameter, can_command
 from pico_tui.core.event_bus import EventBus
@@ -54,6 +63,7 @@ from pico_tui.dialogs import (
     ConfigScreen,
     ConfirmScreen,
     ConnectScreen,
+    OperatorScreen,
     ParameterScreen,
     WirelessNodeScreen,
 )
@@ -82,7 +92,16 @@ from pico_tui.screens import (
     SensorScreen,
     WirelessScreen,
 )
-from pico_tui.security import SecurityManager
+from pico_tui.operators import (
+    DEFAULT_IDLE_TIMEOUT_S,
+    MODE_OFF,
+    Actor,
+    LoginResult,
+    OperatorRegistry,
+    OperatorSession,
+    normalize_name,
+)
+from pico_tui.security import SecurityManager, is_mutating_command
 from pico_tui.serial_client import SerialClient
 from pico_tui.services.controller import DomainController
 from pico_tui.services.demo import DemoProducer
@@ -94,6 +113,7 @@ from pico_tui.widgets import MessageEntry
 REFRESH_SECONDS = 0.5
 # Relógio da rede: a hora do computador vai à Probe 00 ao conectar e com este intervalo.
 TIME_SYNC_SECONDS = 600.0
+OPERATOR_TICK_SECONDS = 5.0
 
 
 class SessionClock:
@@ -189,6 +209,7 @@ class PicoTuiApp(App[None]):
         # Fora da barra de teclas (listadas na Ajuda): lançador de comandos e
         # medições de pesquisa para o TCC.
         Binding("k", "command_launcher", "Enviar comando", show=False),
+        Binding("o", "operator", "Operador", show=False),
         Binding("slash", "show_research", "Pesquisa", show=False),
     ]
 
@@ -208,6 +229,9 @@ class PicoTuiApp(App[None]):
         preferences_path: str | Path | None = None,
         replay: str | Path | None = None,
         replay_speed: float = 1.0,
+        operator_mode: str = "off",
+        operators_path: str | Path | None = None,
+        operator_idle_s: float = DEFAULT_IDLE_TIMEOUT_S,
     ) -> None:
         super().__init__()
         self.replay_path = Path(replay) if replay else None
@@ -223,6 +247,16 @@ class PicoTuiApp(App[None]):
         self.enable_file_log = enable_file_log
         self.enable_raw_recording = enable_raw_recording
         self.security = SecurityManager(security_mode, security_config)
+        # Quem opera a estação. O padrão da classe é "off" (sem identificação), para que
+        # quem embute a TUI ou roda ensaios não mude de comportamento; a linha de comando
+        # usa "auto" (ver __main__).
+        mode = (operator_mode or MODE_OFF).lower()
+        self.operators = OperatorSession(
+            OperatorRegistry(operators_path) if mode != MODE_OFF else None,
+            mode=mode, idle_timeout_s=operator_idle_s,
+        )
+        self.ledger = AuthorizationLedger()
+        self._last_operator = ""
         self.preferences_path = preferences_path
         self.preferences, self._preferences_warning = load_preferences(preferences_path)
         # Opções de linha de comando valem só para a sessão e não alteram o arquivo.
@@ -296,11 +330,16 @@ class PicoTuiApp(App[None]):
         try:
             origin = "REPLAY" if self.replay_path is not None else ("DEMO" if self.demo_requested else "LIVE")
             db = HistoryStore(Path.cwd() / "logs" / "historico.sqlite3")
-            self.history = HistoryService(self.bus, db, self.session_id, origin=origin, port=self._last_port)
+            station = self.operators.station_actor.station if self.operators.kind != "off" else ""
+            self.history = HistoryService(self.bus, db, self.session_id, origin=origin, port=self._last_port,
+                                          station=station)
+            self.history.ledger = self.ledger
             self.captures = CaptureManager(self.bus, self.history)
         except Exception as exc:
             self.notify(f"Histórico indisponível: {exc}", severity="warning", timeout=8)
         self.set_interval(2.0, self._flush_history)
+        self.set_interval(OPERATOR_TICK_SECONDS, self._operator_tick)
+        self._audit_session_start()
         self.run_worker(self._process_lines(), group="decoder", exclusive=True)
         self.set_interval(REFRESH_SECONDS, self._refresh_ui)
         self.set_interval(1.0, self._expire_fragment_transfers)
@@ -855,8 +894,23 @@ class PicoTuiApp(App[None]):
             self.demo_producer.handle_command(command)
             return True
 
+        mutating = is_mutating_command(command)
+        self._operator_tick()
+        verdict = self.operators.authorize(mutating=mutating)
+        if not verdict.allowed:
+            self._audit_command(command, verdict.actor, outcome="DENIED", reason=verdict.reason)
+            self.run_worker(self.bus.publish(LogEvent("ERROR", f"Bloqueado: {command} — {verdict.reason}", "SECURITY")))
+            try:
+                self.notify(verdict.reason, title="Operador", severity="error")
+            except Exception:
+                pass
+            return False
+        actor = verdict.actor
+        self.operators.touch()  # um comando de uma sessão válida conta como atividade
+
         decision = self.security.authorize_command(command)
         if not decision.allowed:
+            self._audit_command(command, actor, outcome="DENIED", reason=decision.reason)
             self.run_worker(self.bus.publish(LogEvent("ERROR", f"Bloqueado: {command} — {decision.reason}", "SECURITY")))
             try:
                 self.notify(decision.reason, title="Segurança", severity="error")
@@ -915,10 +969,16 @@ class PicoTuiApp(App[None]):
             client.write_line(command)
         except (OSError, RuntimeError) as exc:
             self.run_worker(self.bus.publish(LogEvent("ERROR", f"Falha de envio: {exc}", "SERIAL")))
+            if mutating:
+                self._audit_command(command, actor, outcome="FAILED", reason=str(exc))
             return False
+        if mutating:
+            # Só aqui o comando de fato saiu: a trilha registra o que foi enviado, uma vez,
+            # mesmo quando ele esperou a autenticação do firmware.
+            self._audit_command(command, actor)
         if self.recorder is not None:
             self.recorder.command(command)
-        display_command = command
+        display_command = redact_command(command)
         if command.strip().upper().startswith("AUTH UNLOCK "):
             display_command = "AUTH UNLOCK <redacted>"
         self.state_store.set_last_action(display_command)
@@ -1039,6 +1099,15 @@ class PicoTuiApp(App[None]):
             await self.bus.publish(LogEvent("INFO", "TUI bloqueada pelo operador", "SECURITY"))
         elif cmd == "security":
             await self.bus.publish(LogEvent("INFO", self.security.status_label(), "SECURITY"))
+        elif cmd in {"login", "entrar"}:
+            self.action_operator()
+        elif cmd in {"logout", "saida", "saída"}:
+            if self.operators.kind != "login" or self.operators.current() is None:
+                await self.bus.publish(LogEvent("INFO", "Não há operador identificado por senha.", "OPERADOR"))
+            self.operator_logout()
+        elif cmd in {"operador", "operator", "quem", "whoami"}:
+            for line in self.operators.describe():
+                await self.bus.publish(LogEvent("INFO", line, "OPERADOR"))
         elif cmd == "config":
             await self._command_config(args)
         elif cmd in {"measure", "medicao", "medição"}:
@@ -1786,6 +1855,7 @@ class PicoTuiApp(App[None]):
                     ("F8/b", "Métricas", "app.show_metrics"),
                     ("F9/e", "Ensaios", "app.show_experiments"),
                     ("F11/h", "Histórico", "app.show_history"),
+                    ("o", "Operador", "app.operator"),
                     ("F12/v", "Supervisório", "app.show_supervisor"),
                 ]
             )
@@ -1794,6 +1864,105 @@ class PicoTuiApp(App[None]):
         if home:
             hints.append(("F10/q", "Sair", "app.exit_confirm"))
         return hints
+
+    # ------------------------------------------------------------------
+    # Operador (quem está na estação) e trilha de auditoria
+    # ------------------------------------------------------------------
+
+    def operator_label(self) -> str:
+        return self.operators.label()
+
+    def action_operator(self) -> None:
+        if not self._modal_open():
+            self.push_screen(OperatorScreen())
+
+    def _audit(self, action, actor: Actor | None) -> None:
+        """Publica a ação: histórico (categoria AUDIT), mensagens e JSONL da sessão."""
+
+        if self.operators.kind == "off":
+            return
+        self.run_worker(self.bus.publish(action))
+        self.run_worker(self.bus.publish(log_event_for(action, actor)))
+
+    def _audit_command(self, command: str, actor: Actor | None, *, outcome: str = "OK", reason: str = "") -> None:
+        # Falha na auditoria nunca pode impedir (nem desfazer) o envio de um comando.
+        try:
+            info = classify_command(command)
+            self._audit(command_action(info, actor, outcome=outcome, reason=reason), actor)
+            if outcome == "OK" and info.action in {"BIND", "UNBIND"}:
+                self.ledger.remember(info.node, info.uuid, info.action, actor)
+        except Exception as exc:
+            self.run_worker(self.bus.publish(LogEvent("ERROR", f"Falha ao registrar a ação do operador: {exc}", "AUDITORIA_FALHA")))
+
+    def _audit_session_start(self) -> None:
+        kind = self.operators.kind
+        if kind == "off":
+            return
+        registry = self.operators.registry
+        actor = self.operators.station_actor
+        self._audit(
+            make_action(
+                "SESSION_START", f"Estação iniciada por {actor.station}", actor,
+                identification=kind, mode=self.operators.mode, station=actor.station,
+                registered_operators=len(registry.records()) if registry else 0,
+                registry_error=registry.error if registry else "",
+            ),
+            actor,
+        )
+
+    def operator_login(self, name: str, password: str) -> LoginResult:
+        """Entra com nome e senha (modal de login). A senha nunca chega aos registros."""
+
+        result = self.operators.login(name, password)
+        if result.ok and result.actor is not None:
+            actor = result.actor
+            self._last_operator = actor.name
+            self._audit(make_action("LOGIN", f"Entrada de {actor.label()}", actor, role=actor.role), actor)
+            self.notify(f"{actor.label()} identificado.", title="Operador", timeout=4)
+        else:
+            registry = self.operators.registry
+            attempted = normalize_name(name)
+            # Só o nome de quem existe vai para o registro: um engano comum é digitar a senha no campo do nome.
+            known = registry is not None and registry.get(attempted) is not None
+            self._audit(
+                make_action("LOGIN_FAILED", "Tentativa de entrada recusada", None, outcome="DENIED",
+                            attempted=attempted if known else "", reason=result.reason),
+                None,
+            )
+        self.refresh_now()
+        return result
+
+    def operator_logout(self) -> None:
+        actor = self.operators.logout()
+        if actor is None:
+            return
+        self._audit(make_action("LOGOUT", f"Saída de {actor.label()}", actor), actor)
+        self.notify(f"{actor.label()} saiu.", title="Operador", timeout=4)
+        self.refresh_now()
+
+    def _operator_tick(self) -> None:
+        """Encerra a sessão que venceu (inatividade) ou perdeu o acesso no cadastro."""
+
+        ended = self.operators.poll()
+        if ended is None:
+            return
+        actor, reason = ended
+        if reason == "idle":
+            kind, title = "SESSION_EXPIRED", f"Sessão de {actor.label()} encerrada por inatividade"
+        else:
+            kind, title = "SESSION_REVOKED", f"Sessão de {actor.label()} encerrada: acesso alterado no cadastro"
+        self._audit(make_action(kind, title, actor, reason=reason), actor)
+        try:
+            self.notify(title, title="Operador", severity="warning", timeout=8)
+        except Exception:
+            pass
+        self.refresh_now()
+
+    async def on_event(self, event: TextualEvent) -> None:
+        # Teclado e mouse mantêm a sessão do operador viva.
+        if isinstance(event, (Key, MouseDown)):
+            self.operators.touch()
+        await super().on_event(event)
 
     def security_label(self) -> str:
         label = self.security.status_label()
@@ -1820,7 +1989,23 @@ class PicoTuiApp(App[None]):
     def set_alarm_limits(self, logical_id: str, limits: dict[str, float]) -> None:
         """Grava os limites de alarme de um sensor e os aplica já à última leitura."""
 
+        self._operator_tick()
+        verdict = self.operators.authorize(mutating=True)
+        if not verdict.allowed:
+            self._audit(
+                make_action("ALARM_LIMITS_DENIED", f"Recusado: limites de alarme do sensor {logical_id}", verdict.actor,
+                            outcome="DENIED", sensor_id=logical_id, reason=verdict.reason),
+                verdict.actor,
+            )
+            self.notify(verdict.reason, title="Operador", severity="error")
+            return
+        before = self.state_store.alarm_limits().get(logical_id)
         cleaned = self.state_store.set_alarm_limits(logical_id, limits)
+        self._audit(
+            make_action("ALARM_LIMITS", f"Limites de alarme do sensor {logical_id} alterados", verdict.actor,
+                        sensor_id=logical_id, before=before, after=dict(cleaned)),
+            verdict.actor,
+        )
         self.set_preference("alarm_limits", self.state_store.alarm_limits())
         self.run_worker(
             self.bus.publish(

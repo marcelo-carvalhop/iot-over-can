@@ -20,6 +20,24 @@ class LogEvent(Event):
 
 
 @dataclass(slots=True)
+class OperatorAction(Event):
+    """Algo que um operador fez (ou tentou fazer) na estação, para a trilha de auditoria.
+
+    ``actor`` é o identificador de quem agiu (``ana`` ou ``sys:marcelo``); ``None``
+    quando não havia ninguém identificado. ``outcome`` é OK, DENIED ou FAILED.
+    """
+
+    kind: str
+    title: str
+    outcome: str = "OK"
+    severity: str = "INFO"
+    actor: str | None = None
+    node_id: int | None = None
+    sensor_id: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class RawLineReceived(Event):
     line: str
 

@@ -183,13 +183,7 @@ class SecurityManager:
         return "SEC=UNKNOWN"
 
     def command_requires_auth(self, command: str) -> bool:
-        cmd = " ".join(command.strip().upper().split())
-        if not cmd:
-            return False
-        canonical = _canonical_can_command(cmd)
-        if canonical is not None and canonical != cmd and self._requires_auth(canonical):
-            return True
-        return self._requires_auth(cmd)
+        return is_mutating_command(command)
 
     @staticmethod
     def _requires_auth(cmd: str) -> bool:
@@ -235,6 +229,25 @@ class SecurityManager:
 
     def yubikey_present(self) -> bool:
         return _yubikey_present_sysfs() or _yubikey_present_serial_ports()
+
+
+def is_mutating_command(command: str) -> bool:
+    """O comando altera a rede, um sensor ou a configuração (e não apenas lê)?
+
+    É o mesmo critério que exige a YubiKey e o login do operador, e que decide
+    o que entra na trilha de auditoria.
+    """
+
+    cmd = " ".join(command.strip().upper().split())
+    if not cmd:
+        return False
+    canonical = _canonical_can_command(cmd)
+    if canonical is not None and canonical != cmd and SecurityManager._requires_auth(canonical):
+        return True
+    return SecurityManager._requires_auth(cmd)
+
+
+canonical_can_command = _canonical_can_command
 
 
 def _yubikey_present_sysfs() -> bool:

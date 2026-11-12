@@ -11,7 +11,7 @@ Como o projeto é verificado, do teste de uma função à bancada com o hardware
 | simulação do canal de dados | o código real do canal de dados de um módulo, com rádio, Wi-Fi e CAN substituídos | idem |
 | bancada virtual | o firmware completo de vários módulos num processo, com barramento, rádios e sensores simulados | idem |
 | leitor da documentação | conversão dos documentos, diagramação de todas as páginas e o firmware sobre imitações da placa: telas dentro dos 400×600, navegação, posição guardada, sono e desligamento | idem |
-| testes da estação | decodificadores, estado, telas, segurança, métricas e ensaios, alimentados pelas gravações da bancada virtual | idem |
+| testes da estação | decodificadores, estado, telas, segurança, identificação do operador e auditoria, métricas e ensaios, alimentados pelas gravações da bancada virtual | idem |
 | compilação | todos os firmwares para as placas reais | idem |
 | bancada física | comportamento com o hardware: rádio, alimentação, tempos reais | em sessões de bancada |
 
@@ -26,7 +26,7 @@ python3 -m unittest discover -s Pesquisa/tests    # ferramenta de pesquisa
 
 `test_native_firmware.sh` precisa de `cc` e `c++` e executa, em ordem: a validação de configuração do sensor; os testes de `ioc_link` (criptografia, canal de dados, segmentação, relatório acústico, custo da criptografia); a parte de rede de `ioc_link` (duração de quadro, mensagem autenticada, segmentação em quadros maiores, reassociação, tabela de vínculos, relógio); os testes do painel; o fuzz dos decodificadores; o processamento do sensor acústico; a simulação do canal de dados; a bancada virtual com todos os cenários; e o leitor da documentação.
 
-Os testes da estação percorrem as telas em 48×18, 60×24, 80×24, 100×30 e 160×48 para garantir que nada seja cortado, conferem a biblioteca C contra implementações independentes em Python e reproduzem o exemplo publicado da análise de tempo de resposta. Um deles refaz as gravações da bancada virtual e as compara com as versionadas.
+Os testes da estação percorrem as telas em 48×18, 60×24, 80×24, 100×30 e 160×48 para garantir que nada seja cortado, conferem a biblioteca C contra implementações independentes em Python e reproduzem o exemplo publicado da análise de tempo de resposta. Um deles refaz as gravações da bancada virtual e as compara com as versionadas. Outros cobrem a identificação do operador: senhas e cadastro (permissões, formato, adulteração), bloqueio de tentativas, expiração por inatividade, perfis, os três modos, a gravação do autor de cada ação no histórico, a atribuição da resposta de uma associação a quem a pediu, a ausência de segredos nos registros, a migração de bancos antigos e a detecção de registros de auditoria editados ou apagados.
 
 ## 3. Bancada virtual
 

@@ -24,13 +24,14 @@ from pico_tui.core.events import (
     FaultEventReceived,
     LogEvent,
     NetworkEventReceived,
+    OperatorAction,
     PanelReported,
     TransferFailed,
     WirelessAssociationReceived,
     WirelessFailoverReceived,
     WirelessLinkReceived,
 )
-from pico_tui.history.storage import HistoryStore
+from pico_tui.history.storage import AUDIT_CATEGORY, HistoryStore
 from pico_tui.services.recorder import redact
 
 BUS_SAMPLE_INTERVAL_S = 30.0
@@ -52,9 +53,9 @@ def mark_tags(text: str) -> list[str]:
 
 class HistoryService:
     def __init__(self, bus: EventBus, store: HistoryStore, session_id: str,
-                 *, origin: str = "LIVE", port: str = "") -> None:
+                 *, origin: str = "LIVE", port: str = "", station: str = "") -> None:
         self.bus, self.store, self.session_id = bus, store, session_id
-        self.started = store.start_session(session_id, origin=origin, port=port)
+        self.started = store.start_session(session_id, origin=origin, port=port, station=station)
         self.queue: deque[tuple[str, dict[str, Any]]] = deque()
         self.dropped = 0
         self.last_bus: dict[str, Any] | None = None
@@ -75,6 +76,8 @@ class HistoryService:
         self._can_bus_off = False
         self.closed = False
         self.capture_manager = None  # registrado pela camada de capturas (fase 2)
+        # Registrado pela TUI: diz quem pediu cada associação (AuthorizationLedger).
+        self.ledger: Any = None
         self._flush_lock = threading.Lock()
         self._queue_lock = threading.Lock()
         for event_type, handler in (
@@ -93,6 +96,7 @@ class HistoryService:
             (CommandAck, self._on_command_ack),
             (LogEvent, self._on_log),
             (PanelReported, self._on_panel),
+            (OperatorAction, self._on_operator_action),
         ):
             bus.subscribe(event_type, handler)
 
@@ -102,25 +106,38 @@ class HistoryService:
             if self.closed:
                 return
             if len(self.queue) >= MAX_QUEUE:
-                self.queue.popleft()
-                self.dropped += 1
+                self._drop_oldest()
             self.queue.append((category, entry))
+
+    def _drop_oldest(self) -> None:
+        """Descarta o registro mais antigo, poupando a auditoria enquanto houver outro para descartar."""
+
+        for index, (kind, entry) in enumerate(self.queue):
+            if not (kind == "event" and entry.get("category") == AUDIT_CATEGORY):
+                del self.queue[index]
+                break
+        else:
+            self.queue.popleft()
+        self.dropped += 1
 
     def _event(self, kind: str, category: str, severity: str, title: str,
                *, node_id: int | None = None, sensor_id: str | None = None,
-               details: dict[str, Any] | None = None, epoch: float | None = None) -> None:
+               details: dict[str, Any] | None = None, epoch: float | None = None,
+               actor: str | None = None, observe: bool = True) -> None:
         if self.closed:
             return
         payload = dict(details or {})
-        if self.last_bus is not None:
+        if observe and self.last_bus is not None:
             payload["bus_at_observation"] = self.last_bus.copy()
-        if sensor_id and sensor_id in self.last_link:
+        if observe and sensor_id and sensor_id in self.last_link:
             payload["link_at_observation"] = self.last_link[sensor_id].copy()
         record = {
             "epoch": time.time() if epoch is None else epoch, "kind": kind, "category": category,
             "severity": severity, "title": title,
             "node_id": node_id, "sensor_id": sensor_id, "details": payload,
         }
+        if actor is not None:
+            record["actor"] = actor
         if self.capture_manager is not None:
             record["capture_ids"] = self.capture_manager.on_history_event(record)
         self._push("event", record)
@@ -198,11 +215,16 @@ class HistoryService:
         if self.association_states.get(key) == state:
             return
         self.association_states[key] = state
+        details = {"uuid": ev.wireless_uuid, "state": state, "profile": ev.profile_id,
+                   "rssi_dbm": ev.rssi_dbm, "auto_failover": ev.failover_auto}
+        # Só tem autor a resposta a um comando que um operador enviou há pouco.
+        stamp = self.ledger.claim(ev.parent_node_id, ev.wireless_uuid, state) if self.ledger is not None else None
+        if stamp:
+            details.update(stamp)
         self._event("ASSOCIATION", "SENSOR", "WARNING" if state in ("STALE", "LOST", "REJECTED") else "INFO",
                     f"Sensor {ev.wireless_uuid}: {state}", node_id=ev.parent_node_id,
                     sensor_id=f"{ev.parent_node_id:02d}.{ev.child_id:02d}" if ev.child_id > 0 else None,
-                    details={"uuid": ev.wireless_uuid, "state": state, "profile": ev.profile_id,
-                             "rssi_dbm": ev.rssi_dbm, "auto_failover": ev.failover_auto})
+                    details=details, actor=stamp["authorized_by"] if stamp else None)
 
     def _on_failover(self, ev: WirelessFailoverReceived) -> None:
         self._event("FAILOVER", "NETWORK", "WARNING",
@@ -295,10 +317,18 @@ class HistoryService:
             self._event("PANEL_OFF", "OPERATOR", "INFO", f"Painel {ident} desligado pelo operador",
                         node_id=ev.parent_node_id, sensor_id=ident, details=dict(ev.payload))
 
+    def _on_operator_action(self, ev: OperatorAction) -> None:
+        """Ação do operador: vai para a categoria AUDIT, com o autor, no instante em que ocorreu."""
+
+        details = dict(ev.details)
+        details["outcome"] = ev.outcome
+        self._event(ev.kind, AUDIT_CATEGORY, ev.severity, ev.title, node_id=ev.node_id,
+                    sensor_id=ev.sensor_id, details=details, actor=ev.actor, observe=False)
+
     def _on_log(self, ev: LogEvent) -> None:
         if ev.level.upper() not in ("WARNING", "ERROR", "CRITICAL"):
             return
-        if ev.source == "INTERNO":
+        if ev.source in ("INTERNO", "AUDITORIA"):  # a auditoria já tem o registro próprio
             return
         severity = "CRITICAL" if ev.level.upper() in ("ERROR", "CRITICAL") else "WARNING"
         self._event("LOG_" + ev.source.upper(), "SYSTEM", severity,

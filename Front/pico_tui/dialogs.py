@@ -348,6 +348,73 @@ class ParameterScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class OperatorScreen(ModalScreen[None]):
+    """Entrar na sessão de operador ou sair dela. A senha não é exibida nem registrada."""
+
+    BINDINGS = [Binding("escape", "close", "Fechar", show=False)]
+
+    def compose(self) -> ComposeResult:
+        session = self.app.operators  # type: ignore[attr-defined]
+        with VerticalScroll(id="operator-dialog", classes="dialog"):
+            yield Static("Operador", classes="dialog-title")
+            if session.kind != "login":
+                for line in session.describe():
+                    yield Static(line, classes="dialog-hint")
+                with Horizontal(classes="dialog-buttons"):
+                    yield Button("Fechar", id="operator-close", variant="primary")
+            elif session.current() is not None:
+                for line in session.describe():
+                    yield Static(line, classes="dialog-hint")
+                with Horizontal(classes="dialog-buttons"):
+                    yield Button("Sair da sessão", id="operator-logout", variant="warning")
+                    yield Button("Fechar", id="operator-close")
+            else:
+                yield Static("Identifique-se para alterar a rede. A sessão expira por inatividade.", classes="dialog-hint")
+                yield Label("Operador")
+                yield Input(value=self.app._last_operator, placeholder="nome de operador", id="operator-name")  # type: ignore[attr-defined]
+                yield Label("Senha")
+                yield Input(password=True, id="operator-password")
+                yield Static("", id="operator-error")
+                with Horizontal(classes="dialog-buttons"):
+                    yield Button("Entrar", id="operator-ok", variant="primary")
+                    yield Button("Cancelar", id="operator-close")
+
+    def on_mount(self) -> None:
+        names = self.query("#operator-name")
+        if not names:
+            return
+        name = self.query_one("#operator-name", Input)
+        (self.query_one("#operator-password", Input) if name.value else name).focus()
+
+    @on(Input.Submitted, "#operator-name")
+    def _name_submitted(self) -> None:
+        self.query_one("#operator-password", Input).focus()
+
+    @on(Input.Submitted, "#operator-password")
+    @on(Button.Pressed, "#operator-ok")
+    def _login(self) -> None:
+        password = self.query_one("#operator-password", Input)
+        result = self.app.operator_login(self.query_one("#operator-name", Input).value, password.value)  # type: ignore[attr-defined]
+        password.value = ""
+        if result.ok:
+            self.dismiss(None)
+            return
+        self.query_one("#operator-error", Static).update(Text(result.reason, style=palette.STATE_WARNING))
+        password.focus()
+
+    @on(Button.Pressed, "#operator-logout")
+    def _logout(self) -> None:
+        self.app.operator_logout()  # type: ignore[attr-defined]
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#operator-close")
+    def _close_button(self) -> None:
+        self.dismiss(None)
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 class ConfigScreen(ModalScreen[ConfigRequest | None]):
     """Formulário de configuração de aquisição (sensor de vibração ou acústico)."""
 

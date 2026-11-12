@@ -108,6 +108,7 @@ Firmware à parte, sem relação com a rede. `tools/documentos.py` converte o RE
 | domínio | `services/controller.py` transforma eventos em estado; `core/state_store.py` e `core/models.py` guardam o estado |
 | telas | `app.py` (navegação e ações), `screens.py`, `metrics_screens.py`, `supervisor.py`, `dialogs.py`, `widgets.py`, `app.tcss` |
 | apoio | `command_catalog.py` (ações), `presentation.py` (condição e rótulos), `security.py` (autorização), `alarms.py`, `acoustics.py`, `metrics/`, `history/` |
+| operador | `operators.py` (cadastro, senha, sessão), `audit.py` (o que vai para o histórico e quem autorizou), `operators_cli.py` (`iot-over-can-operators`) |
 
 As telas recebem cópias do estado e nunca o alteram; toda ação volta ao `app.py`, que a traduz em comando.
 
@@ -164,11 +165,21 @@ O relógio da rede seguiu exatamente esses passos: `ioc_time.h`, `relogio.cpp`, 
 
 ### Novo comando de texto na Probe
 
-Escreva `xxxHandleSerialCommand(const char*)`, que devolve `false` se a linha não é dele, e chame-o em `handleSerialCommands()` (`comandos.cpp`), antes da leitura dos comandos de quatro bytes. Se o comando altera a rede, inclua o prefixo em `MUTATING_PREFIXES` (`Front/pico_tui/security.py`): a estação passa a pedir autorização. Descreva-o em `PROBE_TEXT_COMMANDS` (`command_catalog.py`), que alimenta o lançador de comandos.
+Escreva `xxxHandleSerialCommand(const char*)`, que devolve `false` se a linha não é dele, e chame-o em `handleSerialCommands()` (`comandos.cpp`), antes da leitura dos comandos de quatro bytes. Se o comando altera a rede, inclua o prefixo em `MUTATING_PREFIXES` (`Front/pico_tui/security.py`): a estação passa a pedir autorização. Descreva-o em `PROBE_TEXT_COMMANDS` (`command_catalog.py`), que alimenta o lançador de comandos, e dê a ele um título em `audit.py` (`_DIRECT_TITLES` ou uma função própria) para o histórico dizer o que foi feito; `test_audit.py` falha se um prefixo mutável ficar sem título.
 
 ### Nova tela ou painel na estação
 
-Derive de `BaseScreen` (`screens.py`), monte a barra de teclas só com as ações da tela e implemente `refresh_view` com o estado recebido. Use os componentes de `widgets.py` (`Fields`, `Paragraphs`, `WrappedLines`): eles quebram o texto em vez de cortá-lo. `test_layout_no_truncation.py` percorre as telas em 48×18, 60×24, 80×24, 100×30 e 160×48 e falha se algo for cortado. Uma ação que altera a rede deve passar por `app.py`, para receber a autorização e a confirmação.
+Derive de `BaseScreen` (`screens.py`), monte a barra de teclas só com as ações da tela e implemente `refresh_view` com o estado recebido. Use os componentes de `widgets.py` (`Fields`, `Paragraphs`, `WrappedLines`): eles quebram o texto em vez de cortá-lo. `test_layout_no_truncation.py` percorre as telas em 48×18, 60×24, 80×24, 100×30 e 160×48 e falha se algo for cortado. Uma ação que altera a rede deve passar por `app.py`, para receber a autorização, a confirmação e o registro de quem a fez.
+
+### Identificação do operador
+
+Quem está na estação é decidido em um só lugar, `OperatorSession` (`operators.py`). Todo comando que sai passa por `PicoTuiApp._send_raw`, que pergunta `authorize(mutating=...)` e registra o resultado com o `Actor` devolvido. Três extensões comuns:
+
+- **Outro jeito de se identificar (FIDO2, cartão, login único).** Faça o verificador devolver `Actor(name=..., method="fido2")` depois da prova e use-o no lugar de `OperatorSession.login` (derive a classe e sobrescreva `login`). O histórico, a tela e a CLI usam `Actor.method` e `Actor.verified`; nada mais muda. O modelo e seus limites estão em [Segurança](seguranca.md#5-identificação-do-operador).
+- **Registrar uma ação nova.** Monte o evento com `make_action(tipo, título, actor, ...)` e publique-o com `app._audit(ação, actor)`. O `HistoryService` o grava na faixa AUDIT, com o autor e dentro da cadeia de hashes; o `LogEvent` correspondente vai para as mensagens e para o arquivo da sessão. Não ponha segredos nos detalhes: passe o texto por `redact_command`.
+- **Creditar uma resposta assíncrona a quem a pediu.** `AuthorizationLedger.remember(...)` guarda quem enviou o comando e `claim(...)` credita a resposta do firmware. O `HistoryService` já o consulta nos eventos de associação.
+
+O banco ganha as colunas `events.actor`, `events.chain` e `sessions.station`; bancos antigos são migrados ao abrir (`HistoryStore._migrate`). `OperatorAction` (`core/events.py`) é o evento que leva a ação até o histórico. Os testes ficam em `test_operators.py`, `test_audit.py`, `test_history_actor.py` e `test_app_operator.py`.
 
 ### Outro hardware para o painel
 
@@ -196,6 +207,7 @@ Os pinos do MCP2515 (SPI, `MCP_CS`, `MCP_INT`), o cristal (`MCP_QUARTZ_HZ`, 8 MH
 - **Sensores sem a chave mestra.** Grave cada sensor de uso permanente com as chaves só dele (`--sensor <UUID>`).
 - **Sem ensaios.** Compile os módulos com `-D IOT_FAULT_INJECTION=0` e não deixe a Probe 00 ligada a uma rede em operação: ela pode ocupar o barramento.
 - **Autorização na estação.** Use o modo `presence` (padrão), não `--security-mode off`.
+- **Identificação do operador.** Cadastre os operadores (`iot-over-can-operators add`) e use `--operator-mode required` se quiser que nada altere a rede sem alguém identificado.
 - **Limites.** Leia os [limites conhecidos](arquitetura.md#10-limites-conhecidos-e-evoluções-previstas) e o [modelo de segurança](seguranca.md) antes de usar fora da bancada.
 
 ## 7. Convenções do projeto

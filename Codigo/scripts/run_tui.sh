@@ -3,6 +3,7 @@ set -euo pipefail
 
 PORT="${1:-}"
 SECURITY_MODE="${SECURITY_MODE:-presence}"
+OPERATOR_MODE="${OPERATOR_MODE:-auto}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TUI_DIR="$REPO_ROOT/Front"
@@ -22,7 +23,7 @@ if ! command -v iot-over-can-tui >/dev/null 2>&1; then
 fi
 
 if [ -n "$PORT" ]; then
-  exec iot-over-can-tui --port "$PORT" --mode auto --security-mode "$SECURITY_MODE"
+  exec iot-over-can-tui --port "$PORT" --mode auto --security-mode "$SECURITY_MODE" --operator-mode "$OPERATOR_MODE"
 else
-  exec iot-over-can-tui --mode auto --security-mode "$SECURITY_MODE"
+  exec iot-over-can-tui --mode auto --security-mode "$SECURITY_MODE" --operator-mode "$OPERATOR_MODE"
 fi

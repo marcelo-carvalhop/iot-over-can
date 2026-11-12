@@ -20,7 +20,8 @@ from pico_tui.history.storage import HistoryEvent, Session
 from pico_tui.screens import BaseScreen, section
 from pico_tui.widgets import StableOptionList
 
-LANES = ("NETWORK", "CAN", "WIRELESS", "SENSOR", "OPERATOR", "SYSTEM", "CAPTURA")
+LANES = ("NETWORK", "CAN", "WIRELESS", "SENSOR", "OPERATOR", "AUDIT", "SYSTEM", "CAPTURA")
+LANE_MARKS = {"OPERATOR": "⚑", "AUDIT": "◈"}
 COLORS = {"INFO": palette.STATE_INFO, "WARNING": palette.STATE_WARNING,
           "CRITICAL": palette.STATE_CRITICAL}
 ZOOMS = (60, 300, 900, 1800, 7200, 21600, 86400, 604800)
@@ -28,6 +29,20 @@ ZOOMS = (60, 300, 900, 1800, 7200, 21600, 86400, 604800)
 
 def hhmm(epoch: float) -> str:
     return datetime.fromtimestamp(epoch).strftime("%d/%m %H:%M:%S")
+
+
+def actor_text(event: HistoryEvent) -> str:
+    """Quem fez a ação, com o grau de certeza: senha verificada ou só o usuário do sistema."""
+
+    record = event.details.get("actor")
+    if not isinstance(record, dict) or not record.get("id"):
+        return event.actor or "sem identificação"
+    name = str(record.get("name") or event.actor)
+    display = str(record.get("display") or "")
+    who = f"{display} ({name})" if display and display != name else name
+    how = "identificado por senha" if record.get("verified") else "usuário do sistema, não verificado"
+    role = "observador" if record.get("role") == "observer" else "operador"
+    return f"{who}, {role}, {how}"
 
 
 class HistoryScreen(BaseScreen):
@@ -104,6 +119,8 @@ class HistoryScreen(BaseScreen):
         for s in self._sessions:
             label = f"{hhmm(s.started_epoch)}  {s.origin}  "
             label += "EM CURSO" if s.ended_epoch is None else "ENCERRADA"
+            if s.station:
+                label += f"  {s.station}"
             options.append((s.id, Text(label, style=palette.TEXT_PRIMARY)))
         self.query_one("#history-sessions", StableOptionList).set_items(options)
         if self._sessions:
@@ -139,6 +156,8 @@ class HistoryScreen(BaseScreen):
         for event in self._events:
             line = Text(hhmm(event.epoch) + "  ", style=palette.TEXT_DIM)
             line.append(f"[{event.category}] ", style=COLORS.get(event.severity, palette.TEXT_SECONDARY))
+            if event.actor:
+                line.append(f"{event.actor} ", style=palette.ACCENT_ACTION)
             width = max(15, int(self.size.width * (0.55 if self.size.width >= 100 else 1.0)) - 12)
             words = textwrap.wrap(event.title, width=width, break_long_words=True, break_on_hyphens=False)
             line.append("\n  " + "\n  ".join(words or [""]), style=palette.TEXT_PRIMARY)
@@ -180,7 +199,7 @@ class HistoryScreen(BaseScreen):
                     continue
                 ix = max(0, min(cols-1, int((ev.epoch - self._start) / delta * (cols-1))))
                 selected = ev.id == self._selected
-                cells[ix] = "◆" if selected else ("⚑" if category == "OPERATOR" else "●")
+                cells[ix] = "◆" if selected else LANE_MARKS.get(category, "●")
                 styles[ix] = palette.ACCENT_FOCUS if selected else COLORS.get(ev.severity, palette.STATE_INFO)
             graph.append(f"{category:<9} ", style=palette.TEXT_MUTED)
             for char, style in zip(cells, styles):
@@ -205,6 +224,12 @@ class HistoryScreen(BaseScreen):
             detail.append(f"Node: {event.node_id:02d}\n")
         if event.sensor_id:
             detail.append(f"Sensor lógico: {event.sensor_id}\n")
+        if event.actor and event.category == "AUDIT":
+            detail.append(f"Responsável: {actor_text(event)}\n", style=palette.ACCENT_ACTION)
+        elif event.category == "AUDIT":
+            detail.append("Responsável: sem identificação\n", style=palette.STATE_WARNING)
+        elif event.details.get("authorized_by"):
+            detail.append(f"Autorizado por: {event.details['authorized_by']}\n", style=palette.ACCENT_ACTION)
         if event.details.get("tags"):
             detail.append("Etiquetas: " + " ".join("#" + t for t in event.details["tags"]) + "\n",
                           style=palette.ACCENT_ACTION)
@@ -226,7 +251,8 @@ class HistoryScreen(BaseScreen):
         link = event.details.get("link_at_observation")
         if link:
             detail.append("\nEnlace: " + str(link) + "\n", style=palette.TEXT_SECONDARY)
-        extra = {k: v for k, v in event.details.items() if k not in ("bus_at_observation", "link_at_observation")}
+        hidden = ("bus_at_observation", "link_at_observation", "actor" if event.category == "AUDIT" else "")
+        extra = {k: v for k, v in event.details.items() if k not in hidden}
         if extra:
             detail.append("\nMetadados\n", style=f"bold {palette.TEXT_PRIMARY}")
             detail.append(json.dumps(extra, ensure_ascii=False, indent=2, default=str), style=palette.TEXT_MUTED)

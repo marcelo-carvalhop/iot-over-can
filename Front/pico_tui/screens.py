@@ -147,6 +147,7 @@ class BaseScreen(Screen):
         self.query_one("#status-band", StatusBand).show(
             state,
             security_label=self.tui.security_label(),
+            operator_label=self.tui.operator_label(),
             port=state.port,
             compact=self.app.has_class("bp-narrow") or self.app.has_class("bp-short"),
         )
@@ -1522,6 +1523,7 @@ class HelpScreen(BaseScreen):
                         ("F9 ou e", "Ensaios: injeção de falhas com medição do resultado"),
                         ("F12 ou v", "Supervisório: até 5 painéis (rede e sensores, cada um uma vez) na mesma tela"),
                         ("k", "Lançador: digite um comando (22 20 FF 00, ECHO ..., :tel on) e Enter envia à rede"),
+                        ("o", "Operador: entrar com nome e senha, sair da sessão ou ver quem está identificado"),
                         ("/", "Pesquisa: eco, sinal de presença, custo da criptografia e parâmetros (TCC)"),
                         ("F1 ou ?", "Esta ajuda"),
                         ("F10 ou q", "Sair"),
@@ -1574,6 +1576,7 @@ class HelpScreen(BaseScreen):
                 Text(":baseline learn [segundos] | :baseline clear   :cal [94|114] (calibrador no microfone)"),
                 Text(":wireless   :bind [uuid] [módulo] [auto]   :unbind [uuid] [módulo]   :policy [sensor] auto|manual"),
                 Text(":metrics [on|off|reset|export]   :ensaios [nome|stop]   :export metrics"),
+                Text(":login   :logout   :operador (quem está identificado e como)"),
                 Text(":disconnect   :reconnect   :export csv   :snapshot   :security   :lock   :quit"),
             ],
             indent=2,

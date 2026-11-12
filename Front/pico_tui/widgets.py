@@ -221,7 +221,8 @@ class StatusBand(FlowLine):
         super().__init__(gap=3, **kwargs)
         self._level: pres.Level | None = None
 
-    def show(self, state: AppState, *, security_label: str, port: str, compact: bool = False) -> pres.SystemCondition:
+    def show(self, state: AppState, *, security_label: str, port: str, compact: bool = False,
+             operator_label: str = "") -> pres.SystemCondition:
         """Atualiza a faixa.
 
         ``compact`` (telas estreitas ou baixas) mantém apenas a condição e, se
@@ -243,6 +244,8 @@ class StatusBand(FlowLine):
                 segments.append(Text("F3 ou p conecta"))
             elif security_label not in {"desligada", "com YubiKey"}:
                 segments.append(Text(f"Segurança {security_label}"))
+            if operator_label == "sem login":
+                segments.append(Text("Operador: sem login (tecle o)"))
             self.set_segments(segments)
             return condition
         if condition.connected:
@@ -262,6 +265,8 @@ class StatusBand(FlowLine):
         else:
             segments.append(Text("Pressione F3 ou p para conectar"))
         segments.append(Text(f"Segurança {security_label}"))
+        if operator_label:
+            segments.append(Text(f"Operador {operator_label}"))
         self.set_segments(segments)
         return condition
 

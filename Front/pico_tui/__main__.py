@@ -66,6 +66,26 @@ def main() -> None:
         default=None,
         help="Arquivo JSON de segurança local (device_admin_token, permissões 0600)",
     )
+    parser.add_argument(
+        "--operator-mode",
+        choices=("auto", "required", "off"),
+        default="auto",
+        help="Identificação de quem opera: auto (login se houver operadores cadastrados; senão, o usuário do "
+             "sistema), required (login sempre exigido) ou off (sem identificação nem registro de ações)",
+    )
+    parser.add_argument(
+        "--operators-file",
+        default=None,
+        help="Cadastro de operadores (padrão: ~/.config/iot-over-can/operators.json, permissões 0600); "
+             "gerencie com iot-over-can-operators",
+    )
+    parser.add_argument(
+        "--operator-idle",
+        type=float,
+        default=15.0,
+        metavar="MINUTOS",
+        help="Minutos sem teclado nem mouse até a sessão do operador expirar (0 desliga a expiração)",
+    )
     parser.add_argument("--sim", action="store_true", help="Inicia uma Probe virtual e conecta a TUI automaticamente")
     parser.add_argument("--sim-binary", default="/tmp/ioc_sim_network", help="Caminho para o simulador nativo compilado")
     parser.add_argument("--sim-record", default=None, help="Grava a sessao virtual em formato replay")
@@ -101,6 +121,9 @@ def main() -> None:
             preferences_path=args.preferences,
             replay=args.replay,
             replay_speed=args.replay_speed,
+            operator_mode=args.operator_mode,
+            operators_path=args.operators_file,
+            operator_idle_s=max(0.0, args.operator_idle) * 60.0,
         ).run()
 
 

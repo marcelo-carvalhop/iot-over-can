@@ -192,7 +192,7 @@ Na primeira partida:
    ./Codigo/scripts/run_tui.sh /dev/ttyUSB0
    ```
 
-   No modo padrão, comandos que alteram a rede (associação, eleição, ensaios) pedem a chave física do operador (YubiKey). Na bancada, sem ela: `SECURITY_MODE=off ./Codigo/scripts/run_tui.sh /dev/ttyUSB0`.
+   No modo padrão, comandos que alteram a rede (associação, eleição, ensaios) pedem a chave física do operador (YubiKey). Na bancada, sem ela: `SECURITY_MODE=off ./Codigo/scripts/run_tui.sh /dev/ttyUSB0`. Para exigir também que cada alteração tenha um operador identificado: `OPERATOR_MODE=required` (ver [Quem opera](#quem-opera)).
 3. **Confira a rede** na tela Início: todos os módulos e um líder. Sem líder, peça a eleição em Comandos (`F4` ou `c`). A estação acerta o relógio da rede sozinha ao conectar.
 4. **Ligue um sensor** e abra Sensores sem fio (`F7` ou `w`). O sensor aparece em Disponíveis, com o módulo que o ouve melhor. Pressione `Enter`, escolha o módulo responsável e a política de reassociação.
 5. **Acompanhe o canal de dados** na tela do sensor. A seção Criação do canal de dados mostra cada etapa, do vínculo à primeira leitura; quando a sessão abre, chegam as leituras.
@@ -217,8 +217,21 @@ Na primeira partida:
 | Rever o que aconteceu em sessões anteriores | Histórico | `F11` ou `h` |
 | Acompanhar vários sensores numa tela | Supervisório | `F12` ou `v` |
 | Digitar um comando qualquer | lançador de comandos | `k` |
+| Entrar como operador, sair ou ver quem está identificado | janela do operador | `o` |
+| Saber quem alterou a rede ou autorizou um sensor | Histórico, faixa `AUDIT` | `F11` ou `h` |
 
 Todas as telas estão descritas em [TUI](tui.md).
+
+### Quem opera
+
+O histórico guarda o nome de quem alterou a rede ou autorizou a entrada de um sensor. Para isso, cada pessoa que usa a estação precisa de um cadastro:
+
+```bash
+./Codigo/scripts/operadores.sh add ana --display "Ana Souza"    # pede a senha, sem mostrá-la
+./Codigo/scripts/operadores.sh add visita --role observer       # só acompanha, não altera nada
+```
+
+Daí em diante, a estação mostra `Operador sem login` na faixa de status. Tecle `o`, informe nome e senha e opere normalmente; sem login, a pessoa vê tudo, mas qualquer alteração é recusada. A sessão termina sozinha depois de 15 minutos sem uso, ou quando você tecla `o` e escolhe **Sair da sessão**. Para saber o que cada pessoa fez: `./Codigo/scripts/operadores.sh audit --operator ana --since 24h`. Sem nenhum cadastro, nada disso é exigido: o histórico registra o usuário do sistema operacional. Os detalhes e os limites estão em [Segurança](seguranca.md#5-identificação-do-operador).
 
 ## 8. Painel de operação
 
@@ -300,6 +313,9 @@ Um sensor real pode participar do laboratório pela USB, no lugar do rádio: `Fr
 | Sensor não aparece em Disponíveis | sensor desligado, longe ou com firmware de outra versão | confira o console do sensor (`VERSION`) e se algum módulo o observa |
 | Nenhum líder na tela Início | a rede ainda não fez a eleição | Comandos, Iniciar eleição |
 | A estação não encontra a porta | porta ocupada por outro programa ou sem permissão | feche monitores seriais; no Linux, inclua o usuário no grupo `dialout` |
+| A estação recusa um comando com "Identifique-se para alterar a rede" | há operadores cadastrados e ninguém entrou, ou a sessão expirou | tecle `o` e entre; para desligar a exigência, remova o cadastro ou use `--operator-mode off` |
+| "Cadastro de operadores inválido" | `operators.json` ilegível ou com permissão diferente de `0600` | `./Codigo/scripts/operadores.sh check` mostra o motivo; `chmod 600` no arquivo costuma bastar |
+| "Muitas tentativas" ao entrar | cinco senhas erradas seguidas | espere o tempo indicado; reiniciar a estação também zera a contagem |
 | Cores trocadas ou imagem girada no painel | outra variante da placa | ajuste `CYD_INVERT`, `CYD_RGB_ORDER` ou `CYD_ROTATION` (seção 5) |
 | Toque do painel fora do lugar | calibração antiga | ligue o painel segurando BOOT para recalibrar |
 | Painel sem hora no cabeçalho | nenhuma estação conectada à rede desde que ele ligou | conecte a estação à Probe 00; a hora chega em segundos |

@@ -10,6 +10,15 @@ import pytest
 from tests.fake_firmware import FakeFirmware
 
 
+@pytest.fixture(autouse=True)
+def _isolated_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Nenhum teste lê (nem grava) o ~/.config/iot-over-can de quem o executa."""
+
+    config = tmp_path / "config"
+    monkeypatch.setenv("IOT_OVER_CAN_CONFIG_DIR", str(config))
+    return config
+
+
 @pytest.fixture
 def security_file(tmp_path: Path) -> Path:
     """security.json válido (0600) com token de manutenção, como em produção."""

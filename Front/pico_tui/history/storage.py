@@ -3,6 +3,12 @@
 Não grava telemetria contínua. Eventos têm instante de observação UTC, origem,
 severidade e detalhes; indicadores CAN são reduzidos a uma amostra por janela.
 Cada acesso utiliza uma conexão curta, permitindo execução em worker thread.
+
+Eventos da categoria AUDIT (ações do operador) guardam o autor na coluna
+``actor`` e são encadeados por hash: cada um traz o SHA-256 do anterior mais o
+próprio conteúdo. Alterar ou apagar um registro do meio quebra a cadeia, e
+``verify_audit_chain`` aponta onde. É evidência de adulteração, não proteção:
+quem apaga os últimos registros, ou o banco inteiro, não é detectado por ela.
 """
 from __future__ import annotations
 
@@ -15,6 +21,8 @@ from typing import Any, Iterable
 import csv
 import hashlib
 from collections import deque
+
+AUDIT_CATEGORY = "AUDIT"
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -113,6 +121,7 @@ class Session:
     ended_epoch: float | None
     origin: str
     port: str
+    station: str = ""
 
 
 @dataclass(frozen=True)
@@ -127,6 +136,24 @@ class HistoryEvent:
     node_id: int | None
     sensor_id: str | None
     details: dict[str, Any]
+    #: Quem fez a ação (nome do operador ou ``sys:usuário``); None quando foi a rede, sozinha.
+    actor: str | None = None
+
+
+EVENT_COLUMNS = "id,session_id,epoch,kind,category,severity,title,node_id,sensor_id,details_json,actor"
+
+
+def _event_from_row(row: tuple) -> HistoryEvent:
+    return HistoryEvent(*row[:9], json.loads(row[9]), row[10])
+
+
+def chain_hash(previous: str, session_id: str, epoch: float, kind: str, severity: str, title: str,
+               node_id: int | None, sensor_id: str | None, actor: str | None, details_json: str) -> str:
+    """Elo da cadeia de auditoria: SHA-256 do elo anterior e do conteúdo do registro."""
+
+    material = json.dumps([previous, session_id, repr(float(epoch)), kind, severity, title, node_id,
+                           sensor_id, actor, details_json], ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 class HistoryStore:
@@ -136,6 +163,26 @@ class HistoryStore:
         with self._connect() as db:
             db.executescript(SCHEMA)
             db.executescript(CAPTURE_SCHEMA)
+            self._migrate(db)
+
+    @staticmethod
+    def _migrate(db: sqlite3.Connection) -> None:
+        """Bancos criados antes da identificação do operador ganham as colunas novas."""
+
+        def add_column(table: str, column: str, definition: str) -> None:
+            if column in {row[1] for row in db.execute(f"PRAGMA table_info({table})")}:
+                return
+            try:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            except sqlite3.OperationalError:
+                # Outro processo da TUI migrou o mesmo banco no mesmo instante.
+                if column not in {row[1] for row in db.execute(f"PRAGMA table_info({table})")}:
+                    raise
+
+        add_column("events", "actor", "TEXT")
+        add_column("events", "chain", "TEXT")
+        add_column("sessions", "station", "TEXT NOT NULL DEFAULT ''")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_events_actor ON events(actor, epoch) WHERE actor IS NOT NULL")
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=3.0)
@@ -143,12 +190,12 @@ class HistoryStore:
         db.execute("PRAGMA busy_timeout=3000")
         return db
 
-    def start_session(self, session_id: str, *, origin: str = "LIVE", port: str = "") -> float:
+    def start_session(self, session_id: str, *, origin: str = "LIVE", port: str = "", station: str = "") -> float:
         started = time.time()
         with self._connect() as db:
             db.execute(
-                "INSERT INTO sessions(id, started_epoch, origin, port) VALUES (?, ?, ?, ?)",
-                (session_id, started, origin, port),
+                "INSERT INTO sessions(id, started_epoch, origin, port, station) VALUES (?, ?, ?, ?, ?)",
+                (session_id, started, origin, port, station),
             )
         return started
 
@@ -160,7 +207,14 @@ class HistoryStore:
             )
 
     def write_batch(self, session_id: str, records: Iterable[tuple[str, dict[str, Any]]]) -> None:
+        records = list(records)
+        has_audit = any(kind == "event" and rec.get("category") == AUDIT_CATEGORY for kind, rec in records)
         with self._connect() as db:
+            audit_head: str | None = None
+            if has_audit:
+                # Lê o último elo e grava os novos na mesma transação: duas TUIs no
+                # mesmo banco não podem ramificar a cadeia.
+                db.execute("BEGIN IMMEDIATE")
             for record_type, record in records:
                 if record_type == "capture_extend":
                     db.execute("""UPDATE captures SET end_target_epoch=MAX(end_target_epoch, ?)
@@ -174,13 +228,25 @@ class HistoryStore:
                          record["end_target_epoch"], record["reason"]),
                     )
                 elif record_type == "event":
+                    details_json = json.dumps(record.get("details", {}), ensure_ascii=False, default=str)
+                    actor = record.get("actor")
+                    chain = None
+                    if record["category"] == AUDIT_CATEGORY:
+                        if audit_head is None:
+                            row = db.execute("SELECT chain FROM events WHERE category=? AND chain IS NOT NULL "
+                                             "ORDER BY id DESC LIMIT 1", (AUDIT_CATEGORY,)).fetchone()
+                            audit_head = row[0] if row else ""
+                        chain = chain_hash(audit_head, session_id, record["epoch"], record["kind"],
+                                           record["severity"], record["title"], record.get("node_id"),
+                                           record.get("sensor_id"), actor, details_json)
+                        audit_head = chain
                     cursor = db.execute(
                         """INSERT INTO events
-                        (session_id,epoch,kind,category,severity,title,node_id,sensor_id,details_json)
-                        VALUES (?,?,?,?,?,?,?,?,?)""",
+                        (session_id,epoch,kind,category,severity,title,node_id,sensor_id,details_json,actor,chain)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                         (session_id, record["epoch"], record["kind"], record["category"],
                          record["severity"], record["title"], record.get("node_id"),
-                         record.get("sensor_id"), json.dumps(record.get("details", {}), ensure_ascii=False, default=str)),
+                         record.get("sensor_id"), details_json, actor, chain),
                     )
                     for cid in record.get("capture_ids", ()):
                         db.execute("INSERT OR IGNORE INTO capture_events(capture_id,event_id) VALUES (?,?)",
@@ -198,7 +264,7 @@ class HistoryStore:
     def list_sessions(self, limit: int = 100) -> list[Session]:
         with self._connect() as db:
             rows = db.execute(
-                "SELECT id,started_epoch,ended_epoch,origin,port FROM sessions ORDER BY started_epoch DESC LIMIT ?",
+                "SELECT id,started_epoch,ended_epoch,origin,port,station FROM sessions ORDER BY started_epoch DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [Session(*row) for row in rows]
@@ -225,11 +291,45 @@ class HistoryStore:
         cond, params = self._range(session_id, start, end)
         with self._connect() as db:
             rows = db.execute(
-                f"""SELECT id,session_id,epoch,kind,category,severity,title,node_id,sensor_id,details_json
+                f"""SELECT {EVENT_COLUMNS}
                     FROM events WHERE {cond} ORDER BY epoch,id LIMIT ?""",
                 (*params, limit),
             ).fetchall()
-        return [HistoryEvent(*row[:-1], json.loads(row[-1])) for row in rows]
+        return [_event_from_row(row) for row in rows]
+
+    def list_audit(self, *, actor: str | None = None, since: float | None = None,
+                   session_id: str | None = None, limit: int = 200) -> list[HistoryEvent]:
+        """Ações do operador de todas as sessões, da mais recente para a mais antiga."""
+
+        clauses, params = ["category=?"], [AUDIT_CATEGORY]
+        if actor:
+            clauses.append("actor=?")
+            params.append(actor)
+        if since is not None:
+            clauses.append("epoch>=?")
+            params.append(since)
+        if session_id:
+            clauses.append("session_id=?")
+            params.append(session_id)
+        with self._connect() as db:
+            rows = db.execute(
+                f"SELECT {EVENT_COLUMNS} FROM events WHERE {' AND '.join(clauses)} ORDER BY epoch DESC,id DESC LIMIT ?",
+                (*params, limit),
+            ).fetchall()
+        return [_event_from_row(row) for row in rows]
+
+    def verify_audit_chain(self) -> tuple[int, int | None]:
+        """Confere a cadeia de auditoria: (registros conferidos, id do primeiro registro adulterado)."""
+
+        previous, checked = "", 0
+        with self._connect() as db:
+            rows = db.execute("SELECT id,session_id,epoch,kind,severity,title,node_id,sensor_id,actor,details_json,chain "
+                              "FROM events WHERE category=? ORDER BY id", (AUDIT_CATEGORY,))
+            for row in rows:
+                if row[10] != chain_hash(previous, *row[1:10]):
+                    return checked, row[0]
+                previous, checked = row[10], checked + 1
+        return checked, None
 
     def adjacent_event(self, session_id: str, epoch: float, event_id: int, *, category: str,
                        forward: bool = True) -> HistoryEvent | None:
@@ -237,12 +337,12 @@ class HistoryStore:
         op, order = (">", "ASC") if forward else ("<", "DESC")
         with self._connect() as db:
             row = db.execute(
-                f"""SELECT id,session_id,epoch,kind,category,severity,title,node_id,sensor_id,details_json
+                f"""SELECT {EVENT_COLUMNS}
                     FROM events WHERE session_id=? AND category=? AND (epoch {op} ? OR (epoch=? AND id {op} ?))
                     ORDER BY epoch {order}, id {order} LIMIT 1""",
                 (session_id, category, epoch, epoch, event_id),
             ).fetchone()
-        return HistoryEvent(*row[:-1], json.loads(row[-1])) if row else None
+        return _event_from_row(row) if row else None
 
     def nearest_bus(self, session_id: str, epoch: float, max_age_s: float = 120.0) -> dict | None:
         with self._connect() as db:

@@ -63,7 +63,7 @@ O [Guia de uso](Documentacao/guia-de-uso.md) mostra também como reproduzir uma 
 | [Integração](Documentacao/integracao.md) | quem vai fazer um fork ou estender | mapa do código, como acrescentar sensores, mensagens e telas, convenções |
 | [TUI](Documentacao/tui.md) | operadores e desenvolvedores | todas as telas, teclas e arquivos da estação de operação |
 | [Sensor acústico](Documentacao/sensor-acustico.md) | quem usa ou estende o sensor de som | hardware, aquisição, medição, modos e análises |
-| [Segurança](Documentacao/seguranca.md) | todos | chaves, autorização de comandos, ameaças consideradas e limites |
+| [Segurança](Documentacao/seguranca.md) | todos | chaves, autorização de comandos, identificação do operador, ameaças consideradas e limites |
 | [Validação](Documentacao/validacao.md) | quem testa | testes automáticos, bancada virtual, laboratório virtual e bancada física |
 | [Desafios](Documentacao/desafios.md) | quem desenvolve | problemas encontrados e como foram resolvidos |
 

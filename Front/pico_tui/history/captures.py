@@ -103,6 +103,8 @@ def telemetry_row(sample: Any) -> dict[str, Any]:
 
 def decide_scope(event: dict[str, Any]) -> tuple[str, str] | None:
     """Dispara somente para ocorrências operacionais relevantes; não para logs periódicos."""
+    if event.get('category') == 'AUDIT':
+        return None  # ações do operador são contexto das capturas, nunca o gatilho
     kind = event['kind']
     detail = event.get('details') or {}
     node = event.get('node_id')
