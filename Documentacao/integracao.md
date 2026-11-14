@@ -47,6 +47,7 @@ Arduino sobre PlatformIO, o mesmo código para a Probe 00 e para os módulos; o 
 |---|---|
 | `comandos.cpp` | leitura da serial e comandos de controle (`0x080`) |
 | `falhas.cpp` | função local e respostas de estado |
+| `energia.cpp` | motivo e contagem dos reinícios anormais, comando `ENERGIA` e potência máxima do Wi-Fi (`IOT_WIFI_TX_POWER_QDBM`) |
 | `wireless_discovery.cpp` | escuta BLE, associação e decisão de reassociação |
 | `wireless_link.cpp` | canal de dados: ponto de acesso, sessão, transporte no CAN, encaminhamento ao painel; na Probe, remontagem e linhas de texto |
 | `net_metrics.cpp` | medição do barramento (só na Probe) |
@@ -68,6 +69,7 @@ C11 portátil, sem entrada e saída, testado no computador e usado pelo firmware
 | `ioc_link/ioc_canbits.*` | duração exata de um quadro CAN clássico |
 | `ioc_link/ioc_failover.*` | decisão de reassociação |
 | `ioc_link/ioc_bindstore.*` | tabela de vínculos gravada na NVS |
+| `ioc_link/ioc_resetlog.*` | classificação do motivo de reinício e contadores gravados na NVS |
 | `ioc_link/ioc_time.*` | quadro de hora e regra de adoção |
 | `ioc_link/ioc_secpdu.*` | mensagem autenticada para o barramento (preparação para CAN FD; não usada) |
 | `ioc_link/ioc_bench.*` | medição do custo da criptografia |

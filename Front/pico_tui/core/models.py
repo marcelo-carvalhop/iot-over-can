@@ -296,6 +296,8 @@ class Incident:
 INCIDENT_HISTORY = 60
 ACOUSTIC_EVENT_HISTORY = 200
 DATA_LINK_EVENT_HISTORY = 40
+# Estados de vínculo em que o módulo responsável não ouve o sensor.
+PREAPPROVED_ABSENT_STATES = frozenset({"STALE", "LOST"})
 
 
 @dataclass(slots=True)
@@ -360,6 +362,9 @@ class SensorNode:
     protocol_version: str = ""
     status: NodeStatus = NodeStatus.UNKNOWN
     association_state: str = "UNBOUND"
+    # Verdadeiro depois de o módulo responsável informar o sensor ONLINE (ou de a
+    # associação começar) nesta sessão, ou de chegar telemetria ou sessão segura.
+    seen_online: bool = False
     association_rssi_dbm: int | None = None
     # Plano de dados via Node CAN: NONE (nunca informado), DOWN, OFFERING,
     # HANDSHAKE, SECURE ou NO_KEY. Só SECURE transporta telemetria e comandos.
@@ -412,6 +417,22 @@ class SensorNode:
     @property
     def wireless_associated(self) -> bool:
         return self.association_state.upper() != "UNBOUND"
+
+    @property
+    def preapproved_absent(self) -> bool:
+        """Vínculo gravado no módulo cujo sensor ainda não foi visto nesta sessão.
+
+        Os módulos guardam os vínculos na memória não volátil e os republicam a
+        cada 10 s; ao abrir, a estação recebe também os de sensores que estão
+        desligados (STALE ou LOST). Sem nunca terem sido vistos vivos, eles não
+        são uma falha desta sessão: aparecem como pré-aprovados e ausentes, sem
+        alerta. Visto vivo uma vez (``seen_online``), o sumiço volta a ser falha.
+        """
+
+        return (
+            not self.seen_online
+            and self.association_state.upper() in PREAPPROVED_ABSENT_STATES
+        )
 
     @property
     def has_data_plane(self) -> bool:

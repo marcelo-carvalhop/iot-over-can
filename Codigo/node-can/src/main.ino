@@ -14,6 +14,7 @@
 #include "fault_injection.h"
 #include "pesquisa.h"
 #include "relogio.h"
+#include "energia.h"
 
 /* =========================================================
  * CONFIGURACAO LOCAL DO NO
@@ -1723,6 +1724,9 @@ void setup() {
     Serial.print(NODE_ID);
     Serial.println("] CAPS=CAN,LOCAL_SENSOR,LOCAL_SENSOR_DEMO,BLE_SCAN LOCAL_PROFILE=DEMO_BYTE");
   }
+
+  // Reinício por queda de tensão, watchdog ou falha do programa: avisa e conta.
+  energiaInit();
 
   initNetworkStatusTable();
   initFaultModule();

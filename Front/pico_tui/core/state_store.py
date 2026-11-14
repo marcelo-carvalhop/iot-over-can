@@ -343,6 +343,7 @@ class StateStore:
             sensor.rx_count += 1
             sensor.last_seen_monotonic = sample.received_monotonic
             sensor.status = NodeStatus.ONLINE
+            sensor.seen_online = True
             sensor.sensor_mode = sample.mode
             sensor.acquisition_mode = sample.acquisition_mode
             sensor.quality = sample.quality
@@ -630,12 +631,32 @@ class StateStore:
         return None
 
     def first_sensor_id(self) -> str | None:
+        """Primeiro sensor em ordem de identificador, preferindo os que não são
+        pré-aprovados ausentes (um comando sem alvo não deve cair num sensor desligado)."""
+
         with self._lock:
+            fallback = None
             for parent_id in sorted(self._state.nodes):
                 node = self._state.nodes[parent_id]
                 for child_id in sorted(node.sensors):
-                    return node.sensors[child_id].logical_id
-        return None
+                    sensor = node.sensors[child_id]
+                    if not sensor.preapproved_absent:
+                        return sensor.logical_id
+                    if fallback is None:
+                        fallback = sensor.logical_id
+        return fallback
+
+    def drop_implicit_selection(self, logical_id: str) -> None:
+        """Desfaz a seleção implícita de um sensor recém-visto que se mostrou ausente.
+
+        Só vale para o primeiro relato do sensor, quando o operador ainda não
+        pode tê-lo escolhido; o próximo ciclo da interface escolhe um sensor vivo.
+        """
+
+        with self._lock:
+            if self._state.selected_logical_id == logical_id:
+                self._state.selected_logical_id = None
+                self._state.selected_node_id = None
 
     def summary(self) -> dict[str, object]:
         with self._lock:

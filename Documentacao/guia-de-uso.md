@@ -75,6 +75,40 @@ Cada módulo consome de 100 a 200 mA em média, com picos de 300 a 500 mA quando
 
 Na bancada, alimente os módulos por um hub USB com fonte própria (o projeto usa um hub Acasis) ou por uma fonte de 5 V com 3 A ou mais, com cabos curtos. Se as placas dividirem a mesma alimentação, um capacitor eletrolítico de 470 a 1000 µF entre 5 V e GND perto de cada uma ajuda. Para confirmar um problema de alimentação, veja a [solução de problemas](#11-solução-de-problemas).
 
+### LEDs piscando e pulsos no GND
+
+**O que é normal.** O LED de estado (GPIO 27) acende por 80 ms a cada heartbeat da rede, 1 s por padrão. O de líder (GPIO 25) fica aceso no líder e o de falha (GPIO 26), numa falha ou com o sensor local desligado. Os três acesos ao mesmo tempo são o estado de espera, da partida até a eleição; por isso uma placa que reinicia em ciclo parece piscar, já que a cada partida os três acendem juntos. O programa só muda esses pinos quando a rede muda de estado ou a cada heartbeat, e eles não são pinos de boot nem do rádio: nenhum outro trecho do código os faz pulsar.
+
+**O que é esperado numa protoboard.** O rádio puxa corrente em ritmo próprio: a varredura BLE ocupa 50 ms a cada 100 ms e o ponto de acesso, no ar enquanto o módulo tem sensor associado, emite um beacon a cada 102 ms. Pelo datasheet do ESP32, uma transmissão chega a 240 mA e a recepção consome de 95 a 100 mA. Essa corrente passa pela resistência e pela indutância dos fios da protoboard, do cabo USB e da fonte, e aparece na alimentação e no GND da placa como pulsos, que o osciloscópio mostra mesmo com tudo funcionando. Pulsos assim, sozinhos, raramente mudam o brilho de um LED. O LED pisca de verdade quando a tensão cai a ponto de reiniciar a placa ou quando o LED está ligado de um jeito que o torna sensível ao ruído (ver abaixo).
+
+**Como saber em que caso você está.**
+
+1. No monitor serial do módulo, digite `ENERGIA`:
+
+   ```text
+   [NODE 2] [ENERGIA] reinicio=ENERGIA_LIGADA quedas_de_tensao=0 watchdog=0 panico=0 wifi_tx_max_dbm=11.00
+   ```
+
+   A resposta traz o motivo da última partida e a contagem, desde a última limpeza (`ENERGIA LIMPAR`), de reinícios por queda de tensão, watchdog e falha do programa. Contagem de quedas de tensão acima de zero é problema de alimentação: a placa reiniciou porque a tensão caiu. Só os reinícios anormais são contados e gravados; ligar a placa, apertar EN e abrir a porta serial não contam. Uma partida anormal escreve também `[ENERGIA] ATENCAO: ...` ao ligar.
+2. Com a contagem parada e só o LED de estado pulsando (80 ms por segundo), a placa está normal. Os pulsos vistos no osciloscópio são elétricos e valem as medidas abaixo.
+
+**Medir sem se enganar.**
+
+1. Use a mola de aterramento da ponta ou um fio de terra de até 3 cm. O fio de terra longo, com jacaré, forma uma espira que capta ruído e desenha pulsos que não existem na placa.
+2. Meça entre os pinos 3V3 e GND da própria placa, com acoplamento CC e banda limitada a 20 MHz. Medir o GND contra o terra do osciloscópio mostra o que há entre a placa e a tomada, não o que a placa vê: esse terra costuma ir ao fio terra da tomada, e o caminho até a placa passa pelo computador e pelos cabos.
+3. Dispare no pulso e leia o período: 102 ms são os beacons do ponto de acesso, 100 ms a varredura BLE e 1 s o heartbeat. Um pulso isolado e irregular, seguido de nova partida da placa, é queda de tensão.
+4. Repita com três montagens na mesma protoboard e na mesma fonte: a placa gravada como Probe 00 (sem BLE e sem ponto de acesso), um módulo sem sensor associado (só a varredura BLE) e um módulo com sensor associado (BLE e beacons). Se os pulsos acompanham o rádio, a origem é a corrente do rádio na alimentação; se aparecem também na Probe 00, procure no cabo, na fonte e nas ligações do MCP2515.
+5. A faixa de operação do ESP32 é de 3,0 a 3,6 V. Se o 3V3 sai dela durante os pulsos, a alimentação é o problema, mesmo que a placa não reinicie.
+
+**O que melhorar na montagem.**
+
+- Alimente cada placa direto do hub USB com fonte própria, com cabos curtos e grossos, em vez de encadeá-las pelos trilhos da protoboard. Em muitas protoboards os trilhos de alimentação são interrompidos no meio: confira com um multímetro.
+- Ponha, perto de cada placa, o eletrolítico de 470 a 1000 µF entre 5 V e GND (já recomendado acima) e um cerâmico de 100 nF em paralelo, com fios de até 3 cm.
+- Com o ânodo do LED em 5 V, um pino a 3,3 V não o apaga de vez: sobram cerca de 1,7 V sobre o LED e o resistor, e o LED fica fraco e sensível a qualquer ruído. Ligue o ânodo ao 3V3, com resistor de 330 Ω a 1 kΩ.
+- Confira a tensão que o MCP2515 entrega ao ESP32 em SO (MISO, GPIO 19) e INT (GPIO 4). Os módulos de 5 V com TJA1050 mandam 5 V, acima do que o pino do ESP32 aceita, e a corrente que entra pelo pino pode subir para o 3V3. Um conversor de nível de 5 V para 3,3 V nesses dois sinais resolve. Isso não explica os pulsos por si, mas é o ponto fraco da ligação.
+
+**O que o firmware faz.** Limita a potência do ponto de acesso a 11 dBm (o padrão do ESP32 é 19,5 dBm), o que reduz o pico de cada beacon e de cada datagrama enviado ao sensor; registra o motivo dos reinícios (`ENERGIA`); e só liga o ponto de acesso quando há sensor associado. Ele não elimina o ruído da alimentação, que é questão de montagem. Se o sensor ficar longe do módulo e o sinal piorar, volte à potência máxima com `-D IOT_WIFI_TX_POWER_QDBM=78` (opções de compilação, seção 5). O efeito do limite sobre os pulsos ainda não foi medido na bancada ([Validação](validacao.md#o-que-ainda-precisa-ser-conferido)).
+
 ## 3. Preparar o computador
 
 ```bash
@@ -128,6 +162,7 @@ Opções de compilação dos módulos, passadas por `PLATFORMIO_BUILD_FLAGS`:
 |---|---|
 | `-D IOT_FAULT_INJECTION=0` | remove os ensaios de falha; use fora da bancada |
 | `-D IOT_FOLLOWER_LEADER_WATCHDOG=0` | desativa a vigilância do líder pelos outros módulos |
+| `-D IOT_WIFI_TX_POWER_QDBM=78` | potência máxima do ponto de acesso, em quartos de dBm (8 a 84). O padrão é 44 (11 dBm); 78 devolve os 19,5 dBm do ESP32, para sensores longe do módulo |
 
 ```bash
 PLATFORMIO_BUILD_FLAGS="-D IOT_FAULT_INJECTION=0" ./Codigo/scripts/upload_esp32_can_node.sh 1 /dev/ttyUSB0
@@ -193,7 +228,7 @@ Na primeira partida:
    ```
 
    No modo padrão, comandos que alteram a rede (associação, eleição, ensaios) pedem a chave física do operador (YubiKey). Na bancada, sem ela: `SECURITY_MODE=off ./Codigo/scripts/run_tui.sh /dev/ttyUSB0`. Para exigir também que cada alteração tenha um operador identificado: `OPERATOR_MODE=required` (ver [Quem opera](#quem-opera)).
-3. **Confira a rede** na tela Início: todos os módulos e um líder. Sem líder, peça a eleição em Comandos (`F4` ou `c`). A estação acerta o relógio da rede sozinha ao conectar.
+3. **Confira a rede** na tela Início: todos os módulos e um líder. Sem líder, peça a eleição em Comandos (`F4` ou `c`). A estação acerta o relógio da rede sozinha ao conectar. Os módulos guardam os vínculos e os republicam a cada 10 s: um sensor que já estava associado e está desligado aparece como *pré-aprovado, ausente*, sem alerta, e passa a valer normalmente quando liga.
 4. **Ligue um sensor** e abra Sensores sem fio (`F7` ou `w`). O sensor aparece em Disponíveis, com o módulo que o ouve melhor. Pressione `Enter`, escolha o módulo responsável e a política de reassociação.
 5. **Acompanhe o canal de dados** na tela do sensor. A seção Criação do canal de dados mostra cada etapa, do vínculo à primeira leitura; quando a sessão abre, chegam as leituras.
 
@@ -306,7 +341,9 @@ Um sensor real pode participar do laboratório pela USB, no lugar do rádio: `Fr
 
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
-| Módulos reiniciam sozinhos, vários ao mesmo tempo | alimentação insuficiente | no monitor serial, `rst:0xf (BROWNOUT_RST)` confirma; use o hub com fonte ou uma fonte de 3 A |
+| Módulos reiniciam sozinhos, vários ao mesmo tempo | alimentação insuficiente | no monitor serial, `rst:0xf (BROWNOUT_RST)` ou, no módulo, `ENERGIA` com `quedas_de_tensao` acima de zero confirmam; use o hub com fonte ou uma fonte de 3 A |
+| LEDs de um módulo piscam fora do ritmo, ou o osciloscópio mostra pulsos no GND | corrente do rádio na alimentação e no aterramento da protoboard, ou reinícios | `ENERGIA` no monitor serial e o roteiro de [LEDs piscando e pulsos no GND](#leds-piscando-e-pulsos-no-gnd) |
+| Sensor listado como "pré-aprovado, ausente" | o módulo guarda o vínculo, e o sensor está desligado ou fora de alcance | ligue o sensor; para tirá-lo da rede de vez, desassocie-o em Sensores sem fio |
 | Módulo mostra `[WLINK] LINK_KEY=MISSING` | gravado sem chave (`.env.local` antigo ou ausente) | `provision_sensor_security.sh --check`; se faltar a chave, `--add-link-key` e grave de novo |
 | Canal de dados parado em "HELLO recusado: a chave não confere" | sensor e módulo gravados com chaves diferentes | grave os dois com as mesmas credenciais |
 | Canal de dados parado antes de "Sensor na rede Wi-Fi do módulo" | sensor sem sinal do módulo, ou com firmware antigo | aproxime o sensor; confira no console dele as linhas `[NET]` |

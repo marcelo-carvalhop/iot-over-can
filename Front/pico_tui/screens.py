@@ -559,7 +559,7 @@ class SensorScreen(BaseScreen):
         if sensor.wireless_associated and not sensor.has_data_plane and sample is None:
             return [
                 ("Condição", _condition_value(pres.sensor_condition(sensor))),
-                ("Vínculo wireless", f"{sensor.association_state.upper()} via Módulo {sensor.parent_node_id:02d}"),
+                ("Vínculo wireless", f"{pres.association_label(sensor)} via Módulo {sensor.parent_node_id:02d}"),
                 ("RSSI do vínculo", f"{sensor.association_rssi_dbm} dBm" if sensor.association_rssi_dbm is not None else pres.MISSING),
                 ("Plano de dados", pres.data_link_label(sensor.data_link_state).capitalize()),
                 ("Telemetria", "Aguardando sessão autenticada com o módulo"),
@@ -568,7 +568,7 @@ class SensorScreen(BaseScreen):
             ]
         fields: list[tuple[str, Text | str]] = [
             ("Condição", _condition_value(pres.sensor_condition(sensor))),
-            ("Comunicação", f"{pres.status_label(sensor.status)}, última leitura {pres.fmt_age(pres.sensor_age(sensor))}"),
+            ("Comunicação", f"{pres.sensor_status_label(sensor)}, última leitura {pres.fmt_age(pres.sensor_age(sensor))}"),
             ("Modo de operação", pres.sensor_mode_label(sensor.sensor_mode.value)),
             ("Aquisição", acquisition),
             ("Telemetria", telemetry),
@@ -1179,7 +1179,7 @@ class WirelessScreen(BaseScreen):
             lines = [
                 Text(f"  Sensor {sensor.logical_id}", style=f"bold {palette.TEXT_PRIMARY}"),
                 Text(
-                    f"  {pres.profile_label(sensor.profile_id)} · {sensor.association_state.upper()}",
+                    f"  {pres.profile_label(sensor.profile_id)} · {pres.association_label(sensor)}",
                     style=palette.TEXT_SECONDARY,
                 ),
                 Text(f"  {sensor.wireless_uuid}", style=palette.TEXT_MUTED),
@@ -1229,7 +1229,7 @@ class WirelessScreen(BaseScreen):
             lines = [
                 Text(f"Sensor {sensor.logical_id} · {pres.profile_label(sensor.profile_id)}", style=f"bold {palette.TEXT_PRIMARY}"),
                 Text(f"UUID {sensor.wireless_uuid}", style=palette.TEXT_SECONDARY),
-                Text(f"Vínculo {sensor.association_state.upper()} · Módulo {sensor.parent_node_id:02d}", style=palette.TEXT_SECONDARY),
+                Text(f"Vínculo {pres.association_label(sensor)} · Módulo {sensor.parent_node_id:02d}", style=palette.TEXT_SECONDARY),
                 Text(f"Plano de dados: {pres.data_link_label(sensor.data_link_state)}", style=palette.TEXT_SECONDARY),
                 Text(f"Reassociação {pres.failover_label(sensor.failover_policy)}: {pres.failover_help(sensor.failover_policy)}", style=palette.TEXT_SECONDARY),
                 Text(

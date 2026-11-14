@@ -262,6 +262,15 @@ class StatusBand(FlowLine):
                 counts.append(f"{condition.sensors_ok} de {condition.sensors_total} sensores")
             if counts:
                 segments.append(Text(" e ".join(counts) + " normais"))
+            if condition.sensors_absent:
+                plural = condition.sensors_absent != 1
+                segments.append(
+                    Text(
+                        f"{condition.sensors_absent} sensor{'es' if plural else ''} "
+                        f"pré-aprovado{'s' if plural else ''} ausente{'s' if plural else ''}",
+                        style=palette.TEXT_MUTED,
+                    )
+                )
         else:
             segments.append(Text("Pressione F3 ou p para conectar"))
         segments.append(Text(f"Segurança {security_label}"))

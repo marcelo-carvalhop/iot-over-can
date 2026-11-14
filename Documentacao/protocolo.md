@@ -74,6 +74,9 @@ A estação conversa com a Probe 00 por linhas de texto na serial USB (115200 ba
 | `METRICS ON\|OFF\|RESET` | medição do barramento (seção 11) |
 | `FAULT ...` | ensaios de falha (seção 12) |
 | `ECHO`, `CONFIG`, `BENCH CRYPTO` | instrumentação de medição (seção 11) |
+| `ENERGIA`, `ENERGIA LIMPAR` | motivo da última partida da placa e contagem dos reinícios anormais (queda de tensão, watchdog, falha do programa); vale para a Probe 00 e para os módulos, no monitor serial |
+
+A placa escreve `[NODE n] [ENERGIA] ATENCAO: reinicio=... quedas_de_tensao=... watchdog=... panico=...` só quando a partida anterior foi anormal; uma partida normal, inclusive a provocada pela abertura da porta serial, não escreve nada. `ENERGIA` mostra a mesma linha sem o `ATENCAO:`, com `wifi_tx_max_dbm`.
 
 `FEATURES` diz o que o firmware da Probe entende: `WIRELESS_DATA`, `ACOUSTIC_DATA`, `BUS_METRICS`, `FAULT_INJECTION`, `FAILOVER`, `RESEARCH` e `TIME_SYNC`. A estação só usa um recurso que a Probe anuncia.
 
@@ -348,7 +351,7 @@ Comandos de leitura: `VERSION`, `STATUS`, `NET`, `AUTH STATUS`, `FFT ONCE`, `TEL
 [NET] sessao autenticada com o Node 2, filho 1
 ```
 
-O módulo faz o mesmo no monitor serial dele, com linhas `[WLINK]` (oferta, estação conectada, endereço entregue, HELLO e o resultado da conferência). O console do sensor acústico acrescenta `SET MODE LEVEL|MACHINE|EVENTS`, `SET FFT`, `SET THRESHOLD`, `CAL <dB>`, `MEASURE RESET` e `BASELINE LEARN|CLEAR` ([Sensor acústico](sensor-acustico.md#73-console-usb)).
+O módulo faz o mesmo no monitor serial dele, com linhas `[WLINK]` (oferta, potência do ponto de acesso em `AP_TX_POWER`, estação conectada, endereço entregue, HELLO e o resultado da conferência). O console do sensor acústico acrescenta `SET MODE LEVEL|MACHINE|EVENTS`, `SET FFT`, `SET THRESHOLD`, `CAL <dB>`, `MEASURE RESET` e `BASELINE LEARN|CLEAR` ([Sensor acústico](sensor-acustico.md#73-console-usb)).
 
 ## 11. Medição
 

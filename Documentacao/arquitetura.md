@@ -96,7 +96,7 @@ DISCOVERED ─► ASSOCIATING ─► BOUND ─► ONLINE ──15 s sem anúncio
                                         └───────────── o anúncio volta ─────────────┘
 ```
 
-O módulo responsável é a única autoridade sobre a presença do sensor: anúncios BLE e uma sessão ativa contam como presença, e a estação não recalcula esse estado por conta própria. A desassociação só remove o sensor depois que o módulo confirma (`UNBOUND`). Cada módulo republica seus vínculos a cada 10 s, para que uma estação aberta depois reconstrua a rede, e atende até 4 sensores.
+O módulo responsável é a única autoridade sobre a presença do sensor: anúncios BLE e uma sessão ativa contam como presença, e a estação não recalcula esse estado por conta própria. A desassociação só remove o sensor depois que o módulo confirma (`UNBOUND`). Cada módulo republica seus vínculos a cada 10 s, para que uma estação aberta depois reconstrua a rede, e atende até 4 sensores. Os vínculos gravados que voltam depois de um reinício também são republicados; a estação trata os de sensores que ainda não foram vistos vivos como pré-aprovados e ausentes, sem alerta ([TUI](tui.md#início)).
 
 ### Canal de dados
 
@@ -279,7 +279,7 @@ Se a autenticação dos comandos for necessária antes disso, há uma alternativ
 | a chave mestra fica em todos os módulos e as chaves ficam na memória flash, sem elemento seguro | ver [Segurança](seguranca.md) |
 | a reassociação leva cerca de 25 s, quase todos de espera do sensor | ajustar as esperas com medição em bancada física |
 | um módulo isolado do barramento, com o Wi-Fi ligado, mantém os sensores e retém os dados | detecção do isolamento pelo próprio módulo, a fazer |
-| o consumo de cada módulo não é monitorado | proposta: registrar o motivo de cada reinício e contá-los, medir a tensão de entrada com um divisor resistivo e, opcionalmente, a corrente com um INA219 |
+| o consumo de cada módulo não é monitorado | o motivo de cada reinício e a contagem dos anormais já são registrados (`ENERGIA`, [Guia de uso](guia-de-uso.md#leds-piscando-e-pulsos-no-gnd)); falta medir a tensão de entrada com um divisor resistivo e, opcionalmente, a corrente com um INA219 |
 | a chave do sensor entra no firmware na gravação | proposta de comissionamento sem compilação: firmware único, código de instalação na etiqueta e chave entregue pela rede depois da aprovação do operador ([proposta](historico/proposta-comissionamento-de-sensores.md)) |
 | a chave física do operador é verificada só pela presença no USB | verificação FIDO2/OTP, a fazer |
 | a bancada virtual não reproduz o rádio | complementos possíveis, de prioridade baixa: ponte com o barramento virtual do Linux (SocketCAN `vcan`), GNU Octave para análise, OMNeT++ com FiCo4OMNeT para estudos de escala |

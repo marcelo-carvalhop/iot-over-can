@@ -79,6 +79,14 @@ int esp_wifi_ap_get_sta_list(wifi_sta_list_t* list) {
   return ESP_OK;
 }
 
+// O limite de potência não tem efeito na bancada virtual; só precisa existir.
+int esp_wifi_set_max_tx_power(int8_t) { return ESP_OK; }
+
+// O motivo da partida vem da bancada, que o escolhe por Node (padrão: energia ligada).
+esp_reset_reason_t esp_reset_reason(void) {
+  return static_cast<esp_reset_reason_t>(::sim_reset_reason(IOT_NODE_ID));
+}
+
 class Instance : public ::SimInstance {
  public:
   uint8_t nodeId() const override { return NODE_ID; }

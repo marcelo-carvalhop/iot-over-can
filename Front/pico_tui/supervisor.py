@@ -116,7 +116,7 @@ def grid_shape(count: int, *, narrow: bool, wide: bool) -> tuple[int, int]:
 def sensor_fields(sensor: SensorNode) -> list[Field]:
     fields: list[Field] = [
         ("Condição", _condition_value(pres.sensor_condition(sensor))),
-        ("Comunicação", f"{pres.status_label(sensor.status)}, última leitura {pres.fmt_age(pres.sensor_age(sensor))}"),
+        ("Comunicação", f"{pres.sensor_status_label(sensor)}, última leitura {pres.fmt_age(pres.sensor_age(sensor))}"),
         ("Modo", pres.sensor_mode_label(sensor.sensor_mode.value)),
     ]
     if (sensor.profile_id or "").upper() == "ACOUSTIC":

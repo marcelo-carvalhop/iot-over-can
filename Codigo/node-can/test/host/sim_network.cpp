@@ -114,6 +114,7 @@ struct Node {
 };
 
 std::vector<Node> g_nodes;
+std::map<int, int> g_reset_reason;   // motivo da próxima partida de cada Node (padrão: 1, energia ligada)
 uint64_t g_bus_free_us = 0;
 uint64_t g_bus_bits = 0;
 uint32_t g_bus_frames = 0;
@@ -1754,11 +1755,39 @@ int scenarioRestartKeepsBinding() {
   note("vinculo retomado e telemetria de volta %ld ms depois do pedido de reinicio",
        logTime(probe(), "TEL NODE=1 CHILD=1 ", t0) - static_cast<long>(t0));
 
+  // Partidas normais não escrevem nada sobre a alimentação.
+  CHECK(!logHas(node(1), "[ENERGIA]"));
+  CHECK(!logHas(node(2), "[ENERGIA]"));
+
   // Queda do Node 2: a tabela gravada está vazia; o sensor B continua livre.
+  // Desta vez a partida vem de uma queda de tensão, com quatro já gravadas na
+  // NVS: o Node avisa, conta a quinta e grava (energia.cpp).
+  ioc_rl_counters gravados = {};
+  gravados.brownout = 4;
+  gravados.last = IOC_RST_BROWNOUT;
+  uint8_t blob[IOC_RL_BYTES];
+  CHECK(ioc_rl_encode(&gravados, blob, sizeof(blob)) == IOC_RL_BYTES);
+  sim_nvs_put(2, "ioc-diag/rst", blob, sizeof(blob));
+  g_reset_reason[2] = IOC_RST_BROWNOUT;
   const uint32_t t1 = nowMs();
   probeCommand("FAULT POWER_CYCLE 2 3");
   CHECK(runUntilTrue([] { return node(2).restarts == 1 && node(2).powered; }, 10000));
+  g_reset_reason[2] = 1;
+  CHECK(logHas(node(2), "[ENERGIA] ATENCAO: reinicio=QUEDA_DE_TENSAO quedas_de_tensao=5 watchdog=0 panico=0 wifi_tx_max_dbm=11.00", t1));
+  CHECK(logHas(node(2), "a tensao caiu abaixo do limite do ESP32", t1));
+  CHECK(!logHas(node(1), "[ENERGIA]"));   // o Node 1 voltou de uma partida normal: silêncio
+  // Os comandos só escrevem na serial do Node: o tráfego da rede não muda.
+  node(2).inst->serialWrite("ENERGIA\nENERGIA LIMPAR\nENERGIA\nENERGIA XYZ\n");
   runFor(20000);
+  CHECK(logHas(node(2), "[ENERGIA] reinicio=QUEDA_DE_TENSAO quedas_de_tensao=5 watchdog=0 panico=0 wifi_tx_max_dbm=11.00", t1));
+  CHECK(logHas(node(2), "[ENERGIA] contagem zerada", t1));
+  CHECK(logHas(node(2), "[ENERGIA] reinicio=QUEDA_DE_TENSAO quedas_de_tensao=0 watchdog=0 panico=0", t1));
+  CHECK(logHas(node(2), "[ENERGIA] uso: ENERGIA | ENERGIA LIMPAR", t1));
+  uint8_t depois[IOC_RL_BYTES];
+  ioc_rl_counters lidos = {};
+  const size_t n = sim_nvs_get(2, "ioc-diag/rst", depois, sizeof(depois));
+  CHECK(n == IOC_RL_BYTES && ioc_rl_decode(depois, n, &lidos) &&
+        lidos.brownout == 0 && lidos.watchdog == 0 && lidos.panic == 0);
   CHECK(!logHas(node(2), "gravado(s); retomada", t1));
   CHECK(!logHas(node(2), "vinculo retomado da NVS", t1));
   CHECK(!logHas(probe(), "TEL NODE=2 ", t1));
@@ -2528,6 +2557,11 @@ size_t sim_nvs_get(int node_id, const std::string& key, uint8_t* buf, size_t cap
 
 void sim_nvs_put(int node_id, const std::string& key, const uint8_t* data, size_t len) {
   g_nvs[{node_id, key}] = std::vector<uint8_t>(data, data + len);
+}
+
+int sim_reset_reason(int node_id) {
+  const auto it = g_reset_reason.find(node_id);
+  return it == g_reset_reason.end() ? 1 : it->second;
 }
 
 int main(int argc, char** argv) {

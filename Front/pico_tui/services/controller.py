@@ -304,20 +304,37 @@ class DomainController:
             association_rssi_dbm=event.rssi_dbm,
             failover_policy=policy,
             status=status_map.get(state, NodeStatus.UNKNOWN),
+            # ASSOCIATING só aparece quando o vínculo acaba de ser pedido; ONLINE,
+            # quando o módulo ouviu o sensor. Os dois contam como "visto nesta sessão".
+            seen_online=sensor.seen_online or state in {"ASSOCIATING", "ONLINE"},
         )
+        if previous_assoc.upper() == "UNBOUND" and sensor.preapproved_absent:
+            # Primeiro relato já como pré-aprovado ausente: não vira seleção padrão.
+            self.state.drop_implicit_selection(sensor.logical_id)
         if state in {"BOUND", "ONLINE"} and not sensor.data_link_bound_wall:
             # Sem relato do módulo (firmware anterior à v0.22), o vínculo
             # conta de quando a TUI o viu.
             self.state.update_sensor(event.parent_node_id, event.child_id, data_link_bound_wall=time.time())
         if previous_assoc != state:
-            await self.bus.publish(
-                LogEvent(
-                    "INFO" if state not in {"STALE", "LOST"} else "WARNING",
-                    f"{event.parent_node_id:02d}.{event.child_id:02d} {event.wireless_uuid}: {state} "
-                    f"(RSSI={event.rssi_dbm} dBm)",
-                    "BLE",
+            ident = f"{event.parent_node_id:02d}.{event.child_id:02d} {event.wireless_uuid}"
+            if sensor.preapproved_absent:
+                # Vínculo gravado no módulo de um sensor desligado: informação, não falha.
+                # Só o primeiro relato fica visível; STALE -> LOST depois disso é depuração.
+                await self.bus.publish(
+                    LogEvent(
+                        "INFO" if previous_assoc.upper() == "UNBOUND" else "DEBUG",
+                        f"{ident}: pré-aprovado, ainda não visto nesta sessão ({state})",
+                        "BLE",
+                    )
                 )
-            )
+            else:
+                await self.bus.publish(
+                    LogEvent(
+                        "INFO" if state not in {"STALE", "LOST"} else "WARNING",
+                        f"{ident}: {state} (RSSI={event.rssi_dbm} dBm)",
+                        "BLE",
+                    )
+                )
 
     async def _wireless_link(self, event: WirelessLinkReceived) -> None:
         """Atualiza o estado do plano de dados informado pelo Node responsável."""
@@ -346,6 +363,7 @@ class DomainController:
             data_link_rtt_ms=event.rtt_ms,
             data_link_rtt_max_ms=event.rtt_max_ms,
             data_link_state_wall=time.time(),
+            seen_online=sensor.seen_online or state == "SECURE",
         )
         self.state.update_sensor_health(
             event.parent_node_id,

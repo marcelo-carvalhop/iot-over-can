@@ -86,6 +86,8 @@ Com um campo de texto em foco, as letras são texto, não atalhos. `k`, `o` e `/
 
 A faixa do topo resume a condição geral, a conexão, o barramento e quantos equipamentos estão normais. Abaixo vêm **Precisa de atenção** (só o que tem problema, do mais grave para o mais leve), **Equipamentos** (módulos e, abaixo de cada um, os seus sensores), **Rede CAN** e **Conexão**. Um sensor associado só aparece depois que o módulo confirma o vínculo; enquanto o canal de dados não abre, a linha dele diz em que etapa a criação está.
 
+**Ao abrir com a rede já montada.** Os módulos guardam os vínculos na memória não volátil e os republicam a cada 10 s, então a estação recebe também os sensores que estão desligados. Um sensor que o módulo declara `STALE` ou `LOST` e que a estação ainda não viu vivo nesta sessão aparece como *pré-aprovado, ausente*: sem alerta, sem aviso nas mensagens (só uma linha informativa), fora das contagens da faixa do topo (que ganha "N sensores pré-aprovados ausentes") e sem virar o sensor escolhido por padrão. Quando o sensor aparece (`ONLINE`, telemetria ou sessão autenticada), passa a valer como os demais, e dali em diante sumir é falha. Um vínculo pedido por você nesta sessão nunca fica escondido: se não completar, avisa normalmente. Para tirar um pré-aprovado da rede de vez, desassocie-o em **Sensores sem fio**.
+
 ### Módulo
 
 Situação (condição, papel, estado no barramento, firmware, tempo ligado), função local, sensores associados, sensores que o módulo ouve por BLE e as ocorrências do módulo. `c` abre os comandos do módulo e `s` pede o estado atualizado.
@@ -197,7 +199,7 @@ Na reprodução nenhum comando é enviado, e as durações medidas usam o relóg
 
 | Nível | Símbolo | Com `--ascii` | Exemplos |
 |---|---|---|---|
-| Sem dados | `○` | `-` | equipamento ainda não ouvido |
+| Sem dados | `○` | `-` | equipamento ainda não ouvido; sensor pré-aprovado e ausente |
 | Normal | `●` | `o` | |
 | Atenção | `▲` | `!` | alarme de aviso, vínculo `STALE`, barramento em erro passivo, alarme por limite |
 | Crítico | `■` | `X` | alarme crítico, comunicação perdida, barramento desligado |

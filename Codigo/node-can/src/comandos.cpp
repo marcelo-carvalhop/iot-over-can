@@ -11,6 +11,7 @@
 #include "fault_injection.h"
 #include "pesquisa.h"
 #include "relogio.h"
+#include "energia.h"
 
 /* =========================================================
  * VARIAVEIS EXTERNAS DO .ino
@@ -292,6 +293,10 @@ void handleSerialCommands() {
       }
 
       if (relogioHandleSerialCommand(buffer)) {
+        return;
+      }
+
+      if (energiaHandleSerialCommand(buffer)) {
         return;
       }
 

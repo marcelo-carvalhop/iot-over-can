@@ -24,9 +24,9 @@ python3 -m unittest discover -s Simulacao/tests   # laboratório virtual
 python3 -m unittest discover -s Pesquisa/tests    # ferramenta de pesquisa
 ```
 
-`test_native_firmware.sh` precisa de `cc` e `c++` e executa, em ordem: a validação de configuração do sensor; os testes de `ioc_link` (criptografia, canal de dados, segmentação, relatório acústico, custo da criptografia); a parte de rede de `ioc_link` (duração de quadro, mensagem autenticada, segmentação em quadros maiores, reassociação, tabela de vínculos, relógio); os testes do painel; o fuzz dos decodificadores; o processamento do sensor acústico; a simulação do canal de dados; a bancada virtual com todos os cenários; e o leitor da documentação.
+`test_native_firmware.sh` precisa de `cc` e `c++` e executa, em ordem: a validação de configuração do sensor; os testes de `ioc_link` (criptografia, canal de dados, segmentação, relatório acústico, custo da criptografia); a parte de rede de `ioc_link` (duração de quadro, mensagem autenticada, segmentação em quadros maiores, reassociação, tabela de vínculos, relógio, motivo de reinício); os testes do painel; o fuzz dos decodificadores; o processamento do sensor acústico; a simulação do canal de dados; a bancada virtual com todos os cenários; e o leitor da documentação.
 
-Os testes da estação percorrem as telas em 48×18, 60×24, 80×24, 100×30 e 160×48 para garantir que nada seja cortado, conferem a biblioteca C contra implementações independentes em Python e reproduzem o exemplo publicado da análise de tempo de resposta. Um deles refaz as gravações da bancada virtual e as compara com as versionadas. Outros cobrem a identificação do operador: senhas e cadastro (permissões, formato, adulteração), bloqueio de tentativas, expiração por inatividade, perfis, os três modos, a gravação do autor de cada ação no histórico, a atribuição da resposta de uma associação a quem a pediu, a ausência de segredos nos registros, a migração de bancos antigos e a detecção de registros de auditoria editados ou apagados.
+Os testes da estação percorrem as telas em 48×18, 60×24, 80×24, 100×30 e 160×48 para garantir que nada seja cortado, conferem a biblioteca C contra implementações independentes em Python e reproduzem o exemplo publicado da análise de tempo de resposta. Um deles refaz as gravações da bancada virtual e as compara com as versionadas. Outros cobrem a identificação do operador: senhas e cadastro (permissões, formato, adulteração), bloqueio de tentativas, expiração por inatividade, perfis, os três modos, a gravação do autor de cada ação no histórico, a atribuição da resposta de uma associação a quem a pediu, a ausência de segredos nos registros, a migração de bancos antigos e a detecção de registros de auditoria editados ou apagados. Outros cobrem a abertura da estação com a rede já montada: o sensor pré-aprovado e ausente não gera alerta nem entra nas contagens, e o que foi visto vivo e depois some continua alertando.
 
 ## 3. Bancada virtual
 
@@ -60,7 +60,7 @@ Os testes da estação percorrem as telas em 48×18, 60×24, 80×24, 100×30 e 1
 | `two_sensors` | dois sensores redistribuídos entre dois módulos |
 | `failover_retry` | o módulo escolhido perde o sensor antes de assumir; o líder escolhe outro |
 | `failover_dead_target` | o módulo escolhido sai do ar; o responsável anterior mantém o vínculo |
-| `restart_keeps_binding` | o módulo reinicia e retoma da memória o vínculo gravado |
+| `restart_keeps_binding` | o módulo reinicia e retoma da memória o vínculo gravado; uma partida normal não escreve nada sobre a alimentação, e a que vem de uma queda de tensão é avisada, contada na memória e consultável por `ENERGIA` |
 | `handshake_slow_radio` | dois sensores no mesmo módulo com 3,6 s de atraso de rádio; cada sessão abre em cerca de 5 s |
 | `acoustic_sensor` | o sensor acústico de ponta a ponta |
 | `panel` | o painel: retrato, marcas, alerta e ciência, sono na bateria e relógio da rede |
@@ -129,6 +129,7 @@ Depois dessa sessão, a abertura do canal de dados foi corrigida: o nonce passou
 | painel CYD | cores, toque, LED e som, tempo de redesenho, hora vinda da rede |
 | leitor da documentação | fontes e cores na tela, botões, sono e despertar, desligamento e volta à página sem redesenho, CardKB |
 | relógio da rede | ajuste ao conectar a estação; hora no painel; pedidos sem resposta sem terminal |
+| alimentação e LEDs | `ENERGIA` em cada módulo depois de horas ligado (contagens em zero); medida entre 3V3 e GND com mola de aterramento, na Probe 00, no módulo sem sensor e no módulo com sensor, com o ponto de acesso a 11 e a 19,5 dBm; se o sensor ainda entra no Wi-Fi do módulo a 11 dBm, na distância de uso |
 
 ### Roteiro
 

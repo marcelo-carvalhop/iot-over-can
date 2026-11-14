@@ -23,6 +23,7 @@
 #include "net_metrics.h"
 #include "node_config.h"
 #include "pesquisa.h"
+#include "energia.h"
 
 #include "ioc_link.h"
 #include "ioc_sha256.h"
@@ -753,6 +754,10 @@ void startAccessPoint() {
     apEvent(IOC_WD_EV_AP_ERROR, IOC_WD_EVR_NONE, 0);
     return;
   }
+  // O limite vale por sessão do rádio: WiFi.mode(WIFI_OFF) volta ao padrão do ESP32,
+  // por isso é reaplicado a cada subida do ponto de acesso. Menos potência é menos
+  // pico de corrente (ver energia.h).
+  const bool powerLimited = esp_wifi_set_max_tx_power(IOT_WIFI_TX_POWER_QDBM) == ESP_OK;
   const bool listening = udp.begin(IOC_LINK_UDP_PORT);
   apRunning = true;
   apUpMs = millis();
@@ -762,6 +767,10 @@ void startAccessPoint() {
   Serial.printf("[NODE %u] [WLINK] AP=ON ssid=%s channel=%u ip=%s udp=%u%s\n", NODE_ID, ssid,
                 static_cast<unsigned>(ioc_link_wifi_channel(NODE_ID)), addr,
                 static_cast<unsigned>(IOC_LINK_UDP_PORT), listening ? "" : " (falha ao abrir a porta)");
+  Serial.printf("[NODE %u] [WLINK] AP_TX_POWER=%u.%02u dBm%s\n", NODE_ID,
+                static_cast<unsigned>(IOT_WIFI_TX_POWER_QDBM / 4),
+                static_cast<unsigned>((IOT_WIFI_TX_POWER_QDBM % 4) * 25),
+                powerLimited ? "" : " (limite nao aplicado)");
 }
 
 void stopAccessPoint(uint8_t reason) {

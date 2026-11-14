@@ -34,6 +34,7 @@
 #include "ioc_canbits.h"
 #include "ioc_failover.h"
 #include "ioc_link.h"
+#include "ioc_resetlog.h"
 #include "ioc_sha256.h"
 #include "ioc_time.h"
 #include "ioc_wdata.h"

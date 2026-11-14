@@ -71,6 +71,10 @@ uint64_t sim_now_us();
 void sim_delay_ms(uint32_t ms);
 uint32_t sim_random32();
 
+/* Motivo da partida que esp_reset_reason() informa ao Node (valores de
+   esp_reset_reason_t; 1 = energia ligada, o padrão de toda partida). */
+int sim_reset_reason(int node_id);
+
 /* Memória não volátil (NVS) de cada Node: fica na bancada, fora da instância,
    e por isso sobrevive ao reinício (troca para a segunda instância). */
 size_t sim_nvs_get(int node_id, const std::string& key, uint8_t* buf, size_t cap);

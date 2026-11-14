@@ -26,6 +26,7 @@
 #include "esp_wifi.h"
 
 #include "can_ids.h"
+#include "energia.h"
 #include "wireless_link.h"
 
 #include "ioc_link.h"
@@ -76,6 +77,12 @@ void esp_fill_random(void* buf, size_t len) {
 int esp_wifi_ap_get_sta_list(wifi_sta_list_t* list) {
   list->num = 1;
   list->sta[0].rssi = -47;
+  return ESP_OK;
+}
+
+static int g_tx_power_qdbm = 0;
+int esp_wifi_set_max_tx_power(int8_t power) {
+  g_tx_power_qdbm = power;
   return ESP_OK;
 }
 
@@ -488,6 +495,7 @@ int main() {
   char psk[IOC_LINK_PSK_LEN];
   ioc_link_wifi_psk(net, 1, psk);
   CHECK(WiFi.apUp && WiFi.ssid == "IOC-01" && WiFi.psk == psk && WiFi.channel == 6);
+  CHECK(g_tx_power_qdbm == IOT_WIFI_TX_POWER_QDBM);   // o limite de potência vale desde a subida do AP
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   CHECK(adv->advertising);
   ioc_offer_t offer;

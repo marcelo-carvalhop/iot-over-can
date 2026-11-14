@@ -142,7 +142,22 @@ def failover_help(policy: str) -> str:
     }.get(policy.upper(), "o módulo não informou a política (firmware anterior à versão 0.18)")
 
 
+PREAPPROVED_ABSENT_TEXT = "Pré-aprovado, ausente (ainda não visto nesta sessão)"
+
+
+def association_label(sensor: SensorNode) -> str:
+    """Estado do vínculo para as telas de associação, com a marca de pré-aprovado ausente."""
+
+    state = sensor.association_state.upper()
+    return f"{state} (pré-aprovado, ausente)" if sensor.preapproved_absent else state
+
+
 def sensor_condition(sensor: SensorNode) -> Condition:
+    # Vínculo gravado de um sensor que ainda não apareceu nesta sessão: não há o
+    # que tratar, então não é atenção nem crítico (ver SensorNode.preapproved_absent).
+    if sensor.preapproved_absent:
+        return Condition(Level.NO_DATA, [PREAPPROVED_ABSENT_TEXT])
+
     reasons_critical: list[str] = []
     reasons_attention: list[str] = []
 
@@ -261,6 +276,8 @@ class SystemCondition:
     modules_ok: int = 0
     sensors_total: int = 0
     sensors_ok: int = 0
+    # Vínculos gravados cujo sensor não apareceu nesta sessão: ficam fora das contagens.
+    sensors_absent: int = 0
     attention: list[AttentionItem] = field(default_factory=list)
 
 
@@ -275,7 +292,8 @@ def system_condition(state: AppState) -> SystemCondition:
     ]
     modules_total = len(physical_nodes)
     modules_ok = sum(1 for node in physical_nodes if node_condition(node).level == Level.NORMAL)
-    sensors = [sensor for node in state.nodes.values() for sensor in node.sensors.values()]
+    every_sensor = [sensor for node in state.nodes.values() for sensor in node.sensors.values()]
+    sensors = [sensor for sensor in every_sensor if not sensor.preapproved_absent]
     sensors_ok = sum(1 for sensor in sensors if sensor_condition(sensor).level == Level.NORMAL)
     items = attention_items(state)
 
@@ -299,6 +317,7 @@ def system_condition(state: AppState) -> SystemCondition:
         modules_ok=modules_ok,
         sensors_total=len(sensors),
         sensors_ok=sensors_ok,
+        sensors_absent=len(every_sensor) - len(sensors),
         attention=items,
     )
 
@@ -456,6 +475,14 @@ def discovery_label(value: str) -> str:
 
 def status_label(status: NodeStatus) -> str:
     return _STATUS_LABELS.get(status, status.value)
+
+
+def sensor_status_label(sensor: SensorNode) -> str:
+    """Situação da comunicação do sensor; vínculo gravado e ausente não é "perdido"."""
+
+    if sensor.preapproved_absent:
+        return "Pré-aprovado, ausente"
+    return status_label(sensor.status)
 
 
 # ---------------------------------------------------------------------------

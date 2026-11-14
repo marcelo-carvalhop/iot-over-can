@@ -59,6 +59,14 @@ cc "${PANEL_FLAGS[@]}" -I"$LINK" -I"$PANEL" \
   -lm -o "$OUT_DIR/test_ioc_panel"
 "$OUT_DIR/test_ioc_panel"
 
+# 3-energia. Motivo e contagem dos reinícios do Node (queda de tensão, watchdog,
+#     falha do programa): classificação, contadores gravados e formato da linha.
+cc "${PANEL_FLAGS[@]}" -I"$LINK" \
+  "$LINK/ioc_bindstore.c" "$LINK/ioc_resetlog.c" \
+  "$REPO_ROOT/Codigo/common/tests/test_ioc_resetlog.c" \
+  -o "$OUT_DIR/test_ioc_resetlog"
+"$OUT_DIR/test_ioc_resetlog"
+
 # 3a. Fuzz determinístico dos decodificadores do enlace e do plano de dados
 #     (oferta BLE, envelope UDP, handshake, relatórios, segmentos, PDU
 #     autenticada): entradas aleatórias e mensagens válidas mutadas, em buffers
