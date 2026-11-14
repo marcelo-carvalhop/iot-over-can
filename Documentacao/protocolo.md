@@ -154,6 +154,8 @@ WIRELESS POLICY <node> <uuid> AUTO|MANUAL   muda a política de um vínculo
 
 Todos os módulos remontam os pedidos; só o alvo executa. Uma ação recebida no par de identificadores do outro emissor é descartada.
 
+O líder só emite `0x12` depois do prazo de 2 min da primeira sessão do responsável (`IOC_FO_FIRST_SESSION_GRACE_MS`, contado da assunção do vínculo e encerrado assim que o responsável publica sessão `SECURE`); `0x11` não espera. As regras de decisão estão na [Arquitetura](arquitetura.md#4-reassociação-automática).
+
 ### Estado do vínculo
 
 ```text

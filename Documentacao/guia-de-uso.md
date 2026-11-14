@@ -229,7 +229,7 @@ Na primeira partida:
 
    No modo padrão, comandos que alteram a rede (associação, eleição, ensaios) pedem a chave física do operador (YubiKey). Na bancada, sem ela: `SECURITY_MODE=off ./Codigo/scripts/run_tui.sh /dev/ttyUSB0`. Para exigir também que cada alteração tenha um operador identificado: `OPERATOR_MODE=required` (ver [Quem opera](#quem-opera)).
 3. **Confira a rede** na tela Início: todos os módulos e um líder. Sem líder, peça a eleição em Comandos (`F4` ou `c`). A estação acerta o relógio da rede sozinha ao conectar. Os módulos guardam os vínculos e os republicam a cada 10 s: um sensor que já estava associado e está desligado aparece como *pré-aprovado, ausente*, sem alerta, e passa a valer normalmente quando liga.
-4. **Ligue um sensor** e abra Sensores sem fio (`F7` ou `w`). O sensor aparece em Disponíveis, com o módulo que o ouve melhor. Pressione `Enter`, escolha o módulo responsável e a política de reassociação.
+4. **Ligue um sensor** e abra Sensores sem fio (`F7` ou `w`). O sensor aparece em Disponíveis, com o módulo que o ouve melhor. Pressione `Enter`, escolha o módulo responsável e a política de reassociação. Com a automática, o líder só move o sensor para outro módulo depois que o primeiro canal de dados abre, ou se passarem 2 min sem que ele abra; com a manual, o sensor fica sempre com o módulo escolhido.
 5. **Acompanhe o canal de dados** na tela do sensor. A seção Criação do canal de dados mostra cada etapa, do vínculo à primeira leitura; quando a sessão abre, chegam as leituras.
 
    ![Criação do canal de dados, com a etapa que falhou e o que verificar](img/tui-criacao-do-canal.png)
@@ -347,6 +347,7 @@ Um sensor real pode participar do laboratório pela USB, no lugar do rádio: `Fr
 | Módulo mostra `[WLINK] LINK_KEY=MISSING` | gravado sem chave (`.env.local` antigo ou ausente) | `provision_sensor_security.sh --check`; se faltar a chave, `--add-link-key` e grave de novo |
 | Canal de dados parado em "HELLO recusado: a chave não confere" | sensor e módulo gravados com chaves diferentes | grave os dois com as mesmas credenciais |
 | Canal de dados parado antes de "Sensor na rede Wi-Fi do módulo" | sensor sem sinal do módulo, ou com firmware antigo | aproxime o sensor; confira no console dele as linhas `[NET]` |
+| O sensor passa de um módulo a outro antes de o canal de dados abrir (mensagens "Reassociação automática de ..." seguidas em Mensagens) | módulos gravados antes do prazo da primeira sessão ([CH-078](desafios.md)): com a reassociação automática o líder movia o sensor durante a criação do canal | grave os módulos com o firmware atual; enquanto isso, a política manual (`f` em Sensores sem fio) mantém o sensor no módulo escolhido |
 | Sensor não aparece em Disponíveis | sensor desligado, longe ou com firmware de outra versão | confira o console do sensor (`VERSION`) e se algum módulo o observa |
 | Nenhum líder na tela Início | a rede ainda não fez a eleição | Comandos, Iniciar eleição |
 | A estação não encontra a porta | porta ocupada por outro programa ou sem permissão | feche monitores seriais; no Linux, inclua o usuário no grupo `dialout` |

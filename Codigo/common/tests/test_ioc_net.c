@@ -174,6 +174,28 @@ static void observe_since(ioc_fo_table *t, uint64_t uuid, uint8_t node, int8_t r
     ioc_fo_on_observation(t, to, node, uuid, rssi);
 }
 
+typedef struct {
+    uint8_t node;
+    int8_t rssi;
+} fo_observer;
+
+/*
+ * Avança o tempo de `*clock` até `to`, como a rede faria: cada observador
+ * reenvia a observação a cada 5 s e o responsável (se `owner` != 0) republica o
+ * estado a cada 10 s, nos múltiplos desses períodos a partir de `origin`. As
+ * chamadas seguem a ordem do tempo: a tabela não aceita eventos do futuro.
+ */
+static void fo_run(ioc_fo_table *t, uint64_t uuid, uint32_t origin, uint32_t *clock, uint32_t to, uint8_t owner,
+                   uint8_t state, int secure, const fo_observer *obs, unsigned count) {
+    for (uint32_t k = (*clock - origin) / 5000u + 1u;; ++k) {
+        const uint32_t x = origin + k * 5000u;
+        if ((int32_t)(to - x) < 0) break;
+        for (unsigned i = 0; i < count; ++i) ioc_fo_on_observation(t, x, obs[i].node, uuid, obs[i].rssi);
+        if (owner != 0 && k % 2u == 0) ioc_fo_on_status(t, x, owner, 1, uuid, state, 1, secure);
+    }
+    *clock = to;
+}
+
 static void test_failover(void) {
     const uint64_t U = 0xE6616408432B6F39ull;
     ioc_fo_table t;
@@ -362,8 +384,8 @@ static void test_failover(void) {
 
     /*
      * O intervalo mínimo entre decisões vale também depois da troca de
-     * responsável: o novo Node não consegue o sensor e o declara STALE logo
-     * em seguida; a próxima decisão espera o intervalo.
+     * responsável: o novo Node teve sessão com o sensor, mas a perde e o
+     * declara STALE logo em seguida; a próxima decisão espera o intervalo.
      */
     ioc_fo_init(&t);
     ioc_fo_on_status(&t, 1000, 2, 1, U, IOC_ASSOC_STALE, 1, 0);
@@ -372,12 +394,39 @@ static void test_failover(void) {
     CHECK(ioc_fo_poll(&t, 1000, &d) && d.to_node == 3);
     ioc_fo_on_status(&t, 1200, 3, 1, U, IOC_ASSOC_ASSOCIATING, 1, 0);
     CHECK(ioc_fo_find(&t, U)->owner == 3);
-    ioc_fo_on_status(&t, 9000, 3, 1, U, IOC_ASSOC_STALE, 1, 0);
+    ioc_fo_on_status(&t, 5000, 3, 1, U, IOC_ASSOC_ONLINE, 1, 1);      /* abriu o canal de dados */
+    ioc_fo_on_status(&t, 9000, 3, 1, U, IOC_ASSOC_STALE, 1, 0);       /* e o perdeu */
     observe_since(&t, U, 4, -70, 6000, 9000);
     CHECK(!ioc_fo_poll(&t, 9000, &d));
     observe_since(&t, U, 4, -70, 9000, 1000 + IOC_FO_COOLDOWN_MS);
     CHECK(ioc_fo_poll(&t, 1000 + IOC_FO_COOLDOWN_MS, &d));
     CHECK(d.from_node == 3 && d.to_node == 4 && d.reason == IOC_FO_REASON_SENSOR_LOST);
+
+    /*
+     * O novo responsável ainda não teve sessão: o canal de dados está sendo
+     * criado e o Node, com o rádio dividido, deixa de ouvir o sensor (STALE).
+     * Além do intervalo mínimo, o líder espera o prazo da primeira sessão,
+     * contado da assunção, antes de mover o sensor outra vez.
+     */
+    {
+        const fo_observer only4[] = {{4, -70}};
+        uint32_t clock = 1000;
+        ioc_fo_init(&t);
+        ioc_fo_on_status(&t, 1000, 2, 1, U, IOC_ASSOC_STALE, 1, 0);
+        observe_since(&t, U, 3, -60, 1000 - IOC_FO_SETTLE_MS, 1000);
+        observe_since(&t, U, 4, -70, 1000 - IOC_FO_SETTLE_MS, 1000);
+        CHECK(ioc_fo_poll(&t, 1000, &d) && d.to_node == 3);
+        ioc_fo_on_status(&t, 1200, 3, 1, U, IOC_ASSOC_ASSOCIATING, 1, 0);
+        fo_run(&t, U, 1000, &clock, 9000, 3, IOC_ASSOC_ASSOCIATING, 0, only4, 1);
+        ioc_fo_on_status(&t, 9000, 3, 1, U, IOC_ASSOC_STALE, 1, 0);
+        fo_run(&t, U, 1000, &clock, 1000 + IOC_FO_COOLDOWN_MS, 3, IOC_ASSOC_STALE, 0, only4, 1);
+        CHECK(!ioc_fo_poll(&t, 1000 + IOC_FO_COOLDOWN_MS, &d));
+        fo_run(&t, U, 1000, &clock, 1200 + IOC_FO_FIRST_SESSION_GRACE_MS - 1, 3, IOC_ASSOC_STALE, 0, only4, 1);
+        CHECK(!ioc_fo_poll(&t, 1200 + IOC_FO_FIRST_SESSION_GRACE_MS - 1, &d));
+        fo_run(&t, U, 1000, &clock, 1200 + IOC_FO_FIRST_SESSION_GRACE_MS, 3, IOC_ASSOC_STALE, 0, only4, 1);
+        CHECK(ioc_fo_poll(&t, 1200 + IOC_FO_FIRST_SESSION_GRACE_MS, &d));
+        CHECK(d.from_node == 3 && d.to_node == 4 && d.reason == IOC_FO_REASON_SENSOR_LOST);
+    }
 
     /* O destino recusa ou não responde: o vínculo anterior continua na tabela e há nova tentativa. */
     ioc_fo_init(&t);
@@ -421,6 +470,114 @@ static void test_failover(void) {
     CHECK(ioc_fo_find(&t, U) == NULL); /* o mais antigo cedeu lugar */
     CHECK(!ioc_fo_poll(&t, 1000 + IOC_FO_PURGE_MS + 100, &d));
     CHECK(ioc_fo_find(&t, U + 5) == NULL);
+}
+
+/*
+ * Primeiro acesso com reassociação automática. Enquanto o canal de dados está
+ * sendo criado, o Node responsável fica surdo ao BLE (rádio dividido com o
+ * ponto de acesso) e declara o sensor STALE em 15 s. O líder não pode mover o
+ * sensor nesse intervalo: recomeçaria a criação em outro Node, que também fica
+ * surdo, e o canal nunca abriria (a política MANUAL não tinha o problema).
+ */
+static void test_failover_first_session(void) {
+    const uint64_t U = 0xE6616408432B6F39ull;
+    const uint32_t GRACE = IOC_FO_FIRST_SESSION_GRACE_MS;
+    /* Os Nodes 2 e 3 ouvem o sensor o tempo todo; o 2 com o sinal melhor. */
+    const fo_observer others[] = {{2, -64}, {3, -70}};
+    ioc_fo_table t;
+    ioc_fo_decision d;
+    uint32_t clock;
+
+    /* O operador associa ao Node 1; sem sessão, o vínculo vira STALE 15,7 s depois. */
+    const uint32_t bind = 20000;
+    ioc_fo_init(&t);
+    ioc_fo_on_status(&t, bind, 1, 1, U, IOC_ASSOC_ASSOCIATING, 1, 0);
+    ioc_fo_on_status(&t, bind + 250, 1, 1, U, IOC_ASSOC_BOUND, 1, 0);
+    clock = bind + 250;
+    fo_run(&t, U, bind, &clock, bind + 15700, 1, IOC_ASSOC_BOUND, 0, others, 2);
+    ioc_fo_on_status(&t, bind + 15700, 1, 1, U, IOC_ASSOC_STALE, 1, 0);
+    clock = bind + 15700;
+    fo_run(&t, U, bind, &clock, bind + 15900, 1, IOC_ASSOC_STALE, 0, others, 2);
+    CHECK(!ioc_fo_poll(&t, bind + 15900, &d));              /* STALE sem sessão, mas o canal está sendo criado */
+    fo_run(&t, U, bind, &clock, bind + 60000, 1, IOC_ASSOC_STALE, 0, others, 2);
+    CHECK(!ioc_fo_poll(&t, bind + 60000, &d));
+    fo_run(&t, U, bind, &clock, bind + GRACE - 1, 1, IOC_ASSOC_STALE, 0, others, 2);
+    CHECK(!ioc_fo_poll(&t, bind + GRACE - 1, &d));
+    /* Passado o prazo sem sessão, o sensor volta a poder ser movido. */
+    fo_run(&t, U, bind, &clock, bind + GRACE, 1, IOC_ASSOC_STALE, 0, others, 2);
+    CHECK(ioc_fo_poll(&t, bind + GRACE, &d));
+    CHECK(d.reason == IOC_FO_REASON_SENSOR_LOST && d.from_node == 1 && d.to_node == 2);
+
+    /* Mesmo vínculo, sem prazo: visto pela primeira vez já STALE (líder recém-iniciado), o líder age como antes. */
+    ioc_fo_init(&t);
+    ioc_fo_on_status(&t, bind, 1, 1, U, IOC_ASSOC_STALE, 1, 0);
+    clock = bind;
+    fo_run(&t, U, bind, &clock, bind + 16000, 1, IOC_ASSOC_STALE, 0, others, 2);
+    CHECK(ioc_fo_poll(&t, bind + 16000, &d) && d.reason == IOC_FO_REASON_SENSOR_LOST);
+
+    /* A sessão abriu dentro do prazo: acabou a espera. Se depois o sensor some, o líder age sem demora. */
+    ioc_fo_init(&t);
+    ioc_fo_on_status(&t, bind, 1, 1, U, IOC_ASSOC_ASSOCIATING, 1, 0);
+    ioc_fo_on_status(&t, bind + 250, 1, 1, U, IOC_ASSOC_BOUND, 1, 0);
+    clock = bind + 250;
+    fo_run(&t, U, bind, &clock, bind + 15700, 1, IOC_ASSOC_BOUND, 0, others, 2);
+    ioc_fo_on_status(&t, bind + 15700, 1, 1, U, IOC_ASSOC_STALE, 1, 0);
+    fo_run(&t, U, bind, &clock, bind + 41000, 1, IOC_ASSOC_STALE, 0, others, 2);
+    ioc_fo_on_status(&t, bind + 41000, 1, 1, U, IOC_ASSOC_STALE, 1, 1);   /* sessão aberta */
+    CHECK(!ioc_fo_poll(&t, bind + 41200, &d));
+    ioc_fo_on_status(&t, bind + 45000, 1, 1, U, IOC_ASSOC_ONLINE, 1, 1);
+    fo_run(&t, U, bind, &clock, bind + 60000, 1, IOC_ASSOC_ONLINE, 1, others, 2);
+    ioc_fo_on_status(&t, bind + 60500, 1, 1, U, IOC_ASSOC_STALE, 1, 0);   /* o sensor sumiu: sem sessão e sem BLE */
+    clock = bind + 60500;
+    fo_run(&t, U, bind, &clock, bind + 61000, 1, IOC_ASSOC_STALE, 0, others, 2);
+    CHECK(ioc_fo_poll(&t, bind + 61000, &d));
+    CHECK(d.reason == IOC_FO_REASON_SENSOR_LOST && d.from_node == 1 && d.to_node == 2);
+
+    /* O responsável sai do ar durante a criação do canal: OWNER_LOST não espera o prazo. */
+    ioc_fo_init(&t);
+    ioc_fo_on_status(&t, bind, 1, 1, U, IOC_ASSOC_ASSOCIATING, 1, 0);
+    clock = bind;
+    fo_run(&t, U, bind, &clock, bind + 5000, 1, IOC_ASSOC_ASSOCIATING, 0, others, 2);
+    ioc_fo_on_node_fault(&t, 1);
+    fo_run(&t, U, bind, &clock, bind + 10000, 0, 0, 0, others, 2);
+    CHECK(ioc_fo_poll(&t, bind + 10000, &d));
+    CHECK(d.reason == IOC_FO_REASON_OWNER_LOST && d.from_node == 1 && d.to_node == 2);
+    ioc_fo_init(&t);                                        /* ou deixa de publicar o vínculo */
+    ioc_fo_on_status(&t, bind, 1, 1, U, IOC_ASSOC_ASSOCIATING, 1, 0);
+    clock = bind;
+    fo_run(&t, U, bind, &clock, bind + IOC_FO_OWNER_SILENT_MS + 2000, 0, 0, 0, others, 2);
+    CHECK(ioc_fo_poll(&t, bind + IOC_FO_OWNER_SILENT_MS + 2000, &d) && d.reason == IOC_FO_REASON_OWNER_LOST);
+
+    /* O Node que reiniciou e retomou o vínculo da NVS recomeça a criação do canal: novo prazo. */
+    ioc_fo_init(&t);
+    ioc_fo_on_status(&t, bind, 1, 1, U, IOC_ASSOC_ONLINE, 1, 1);
+    clock = bind;
+    fo_run(&t, U, bind, &clock, bind + 10000, 1, IOC_ASSOC_ONLINE, 1, others, 2);
+    ioc_fo_on_status(&t, bind + 11000, 1, 1, U, IOC_ASSOC_ASSOCIATING, 1, 0);   /* reiniciou e retomou */
+    clock = bind + 11000;
+    fo_run(&t, U, bind, &clock, bind + 26000, 1, IOC_ASSOC_ASSOCIATING, 0, others, 2);
+    ioc_fo_on_status(&t, bind + 26000, 1, 1, U, IOC_ASSOC_STALE, 1, 0);
+    fo_run(&t, U, bind, &clock, bind + 40000, 1, IOC_ASSOC_STALE, 0, others, 2);
+    CHECK(!ioc_fo_poll(&t, bind + 40000, &d));
+    fo_run(&t, U, bind, &clock, bind + 11000 + GRACE - 1, 1, IOC_ASSOC_STALE, 0, others, 2);
+    CHECK(!ioc_fo_poll(&t, bind + 11000 + GRACE - 1, &d));
+    fo_run(&t, U, bind, &clock, bind + 11000 + GRACE, 1, IOC_ASSOC_STALE, 0, others, 2);
+    CHECK(ioc_fo_poll(&t, bind + 11000 + GRACE, &d) && d.reason == IOC_FO_REASON_SENSOR_LOST);
+
+    /* O prazo atravessa a volta do relógio de 32 bits. */
+    const uint32_t near_wrap = 0xFFFFFFFFu - 50000u;
+    ioc_fo_init(&t);
+    ioc_fo_on_status(&t, near_wrap, 1, 1, U, IOC_ASSOC_ASSOCIATING, 1, 0);
+    clock = near_wrap;
+    fo_run(&t, U, near_wrap, &clock, near_wrap + 16000, 1, IOC_ASSOC_ASSOCIATING, 0, others, 2);
+    ioc_fo_on_status(&t, near_wrap + 16000, 1, 1, U, IOC_ASSOC_STALE, 1, 0);
+    fo_run(&t, U, near_wrap, &clock, near_wrap + 60000, 1, IOC_ASSOC_STALE, 0, others, 2);
+    CHECK((int32_t)(near_wrap + 60000 - near_wrap) > 0 && near_wrap + 60000 < near_wrap);   /* passou do zero */
+    CHECK(!ioc_fo_poll(&t, near_wrap + 60000, &d));
+    fo_run(&t, U, near_wrap, &clock, near_wrap + GRACE - 1, 1, IOC_ASSOC_STALE, 0, others, 2);
+    CHECK(!ioc_fo_poll(&t, near_wrap + GRACE - 1, &d));
+    fo_run(&t, U, near_wrap, &clock, near_wrap + GRACE, 1, IOC_ASSOC_STALE, 0, others, 2);
+    CHECK(ioc_fo_poll(&t, near_wrap + GRACE, &d) && d.reason == IOC_FO_REASON_SENSOR_LOST);
 }
 
 static void print_vectors(void) {
@@ -541,6 +698,7 @@ int main(int argc, char **argv) {
     test_segmentation_fd();
     test_assoc_flags();
     test_failover();
+    test_failover_first_session();
     test_bindstore();
     test_time();
     if (g_failures) {

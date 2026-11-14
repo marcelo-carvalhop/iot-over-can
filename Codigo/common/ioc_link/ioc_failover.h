@@ -21,7 +21,10 @@
  *                marcado como ausente pelo líder;
  *   SENSOR_LOST  o Node responsável está ativo, mas não tem sessão de dados
  *                com o sensor nem ouve os anúncios dele (estado STALE ou
- *                LOST), e outro Node o observa.
+ *                LOST), e outro Node o observa. Um responsável que acabou de
+ *                assumir o vínculo e ainda não teve sessão tem o prazo
+ *                IOC_FO_FIRST_SESSION_GRACE_MS para abrir o primeiro canal de
+ *                dados antes de o sensor ser movido.
  *
  * O novo responsável é o Node com melhor RSSI recente. No caso SENSOR_LOST o
  * responsável atual não concorre. No caso OWNER_LOST ele concorre: um Node
@@ -82,6 +85,19 @@ void    ioc_assoc_unpack(uint8_t raw, uint8_t *state, int *auto_failover, int *s
  * sensor reaparece, todos os Nodes o veem quase ao mesmo tempo; o responsável
  * tem esse prazo para também observá-lo e voltar a ONLINE. */
 #define IOC_FO_SETTLE_MS            6000u
+/*
+ * Primeira sessão de dados de um responsável (motivo SENSOR_LOST). Criar o
+ * canal (oferta BLE, entrada no ponto de acesso, HELLO e CHALLENGE) leva de
+ * segundos a minutos e, no ESP32, o rádio dividido entre BLE e Wi-Fi faz o Node
+ * deixar de ouvir os anúncios do sensor nesse tempo. Sem sessão, o vínculo vira
+ * STALE em 15 s ainda que o sensor esteja ali, entrando no ponto de acesso.
+ * Mover o sensor nessa hora recomeça a criação no novo Node, que também fica
+ * surdo, e o canal pode nunca abrir (a política MANUAL, que não move o sensor,
+ * não tinha o problema). Enquanto o responsável não teve sessão, o líder espera
+ * este prazo, contado da assunção do vínculo, antes de agir por SENSOR_LOST.
+ * OWNER_LOST não espera: o responsável deixou de existir.
+ */
+#define IOC_FO_FIRST_SESSION_GRACE_MS 120000u
 #define IOC_FO_PURGE_MS             600000u
 
 typedef enum {
@@ -107,8 +123,10 @@ typedef struct {
     uint8_t  secure;
     uint8_t  owner_faulted;
     uint8_t  action_taken;
+    uint8_t  first_session_pending;   /* o responsável assumiu o vínculo e ainda não teve sessão */
     uint32_t status_ms;
     uint32_t action_ms;
+    uint32_t first_session_until_ms;  /* fim do prazo IOC_FO_FIRST_SESSION_GRACE_MS */
     ioc_fo_observation obs[IOC_FO_MAX_OBSERVERS];
 } ioc_fo_entry;
 

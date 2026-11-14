@@ -2325,7 +2325,8 @@ class PicoTuiApp(App[None]):
                 "Associar sensor sem fio",
                 f"Associar {wireless_uuid} ao Módulo {node_id:02d}. O módulo passa a ser responsável pelo "
                 "sensor. Com a reassociação automática, o líder entrega o sensor a outro módulo que o alcance "
-                "se este sair do ar ou deixar de ouvi-lo.",
+                "se este sair do ar ou deixar de ouvi-lo. Enquanto o canal de dados ainda não abriu, o líder "
+                "espera até 2 min antes de mover o sensor.",
                 [
                     ("Associar com reassociação automática", "AUTO"),
                     ("Associar; só o operador muda o responsável", "MANUAL"),

@@ -1558,7 +1558,7 @@ class HelpScreen(BaseScreen):
                 Text("Sensores acústicos (INMP441) mostram níveis em dB(A), dB(C) e dB(Z), bandas de oitava, a leitura do ambiente (curva NC, conversa, graves, impulsividade) e um painel por modo: exposição ao ruído (NR-15 e NHO-01), diagnóstico de máquina (tacômetro acústico e anomalia) e eventos sonoros. Na tela do sensor, z reinicia a medição e a, no modo de máquina, aprende a assinatura normal; f abre o espectro em dB SPL."),
                 Text("A tela do módulo mostra papel na rede, sensor local, sensores sem fio e descoberta BLE."),
                 Text("F7 ou w abre o gerenciamento wireless: candidatos disponíveis, vínculos ativos, associação e desassociação."),
-                Text("Na associação escolhe-se a política de reassociação. Na automática, o líder entrega o sensor a outro módulo quando o responsável sai do ar ou deixa de ouvi-lo; f, na lista de associados, altera a política."),
+                Text("Na associação escolhe-se a política de reassociação. Na automática, o líder entrega o sensor a outro módulo quando o responsável sai do ar ou deixa de ouvi-lo (com o canal de dados ainda por abrir, só depois de 2 min); f, na lista de associados, altera a política."),
                 Text("F8 ou b mostra o que a Probe 00 mede no barramento e a análise de tempo de resposta; x exporta as medições para exports/."),
                 Text("F9 ou e abre os ensaios de falha: queda de módulo, módulo congelado, queda do ponto de acesso e carga no barramento. O resultado é medido a partir das mensagens da rede."),
                 Text("Sensores wireless associados expõem telemetria, FFT e configuração pelo módulo CAN quando o plano de dados tem sessão autenticada; sem ela, essas ações ficam ocultas."),

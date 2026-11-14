@@ -73,12 +73,16 @@ void ioc_fo_on_status(ioc_fo_table *table, uint32_t now_ms, uint8_t node, uint8_
     }
     if (!state_is_binding(state)) return; /* REJECTED, DISCOVERED ou valor desconhecido */
 
+    /* O responsável acabou de assumir o vínculo: começa a criação do canal de dados. */
+    int takes_over = 0;
     if (!entry) {
         entry = allocate_entry(table, now_ms);
         memset(entry, 0, sizeof(*entry));
         entry->used = 1;
         entry->uuid = uuid;
         entry->owner = node;
+        /* Visto pela primeira vez já STALE ou LOST: não se sabe desde quando. */
+        takes_over = state_is_active(state);
     } else if (entry->owner != node) {
         /*
          * Outro Node publica o mesmo sensor. A troca de responsável é aceita
@@ -92,7 +96,17 @@ void ioc_fo_on_status(ioc_fo_table *table, uint32_t now_ms, uint8_t node, uint8_
         /* O intervalo mínimo entre decisões continua valendo para o novo
          * responsável: action_taken e action_ms não são alterados. */
         entry->owner = node;
+        takes_over = 1;
+    } else if (state == IOC_ASSOC_ASSOCIATING && entry->state != IOC_ASSOC_ASSOCIATING) {
+        /* O mesmo Node refez o vínculo (reiniciou e retomou da NVS): o canal
+         * de dados começa de novo. */
+        takes_over = 1;
     }
+    if (takes_over) {
+        entry->first_session_pending = 1;
+        entry->first_session_until_ms = now_ms + IOC_FO_FIRST_SESSION_GRACE_MS;
+    }
+    if (secure) entry->first_session_pending = 0;
 
     entry->child = child;
     entry->state = state;
@@ -171,6 +185,12 @@ static int owner_hears_again(const ioc_fo_entry *entry, uint32_t now_ms) {
     return 0;
 }
 
+/* O responsável assumiu o vínculo há pouco e o primeiro canal de dados ainda
+ * pode estar sendo criado (IOC_FO_FIRST_SESSION_GRACE_MS). */
+static int creating_first_session(const ioc_fo_entry *entry, uint32_t now_ms) {
+    return entry->first_session_pending && (int32_t)(entry->first_session_until_ms - now_ms) > 0;
+}
+
 int ioc_fo_poll(ioc_fo_table *table, uint32_t now_ms, ioc_fo_decision *out) {
     if (!table || !out) return 0;
 
@@ -193,6 +213,7 @@ int ioc_fo_poll(ioc_fo_table *table, uint32_t now_ms, ioc_fo_decision *out) {
             /* O responsável não ouve o sensor (STALE ou LOST) nem tem sessão
              * com ele. Com sessão ativa o sensor está entregando dados, ainda
              * que o rádio BLE do responsável não o esteja ouvindo. */
+            if (creating_first_session(entry, now_ms)) continue;
             reason = IOC_FO_REASON_SENSOR_LOST;
         }
         if (reason == IOC_FO_REASON_NONE) continue;

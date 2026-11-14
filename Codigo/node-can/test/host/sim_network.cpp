@@ -308,6 +308,15 @@ std::map<std::pair<uint64_t,uint8_t>,uint8_t> g_radio_loss_pct;
 // Atraso do Node para o sensor (rádio disputado com o BLE, retransmissões):
 // os datagramas chegam ao sensor esse tempo depois de saírem do Node.
 std::map<std::pair<uint64_t,uint8_t>,uint32_t> g_radio_delay_ms;
+// Tempo que o sensor leva para entrar no ponto de acesso de um Node. Um
+// cenário pode alongá-lo (associação Wi-Fi repetida, rádio disputado).
+uint32_t g_wifi_join_ms = WIFI_JOIN_MS;
+// Rádio dividido entre BLE e Wi-Fi no ESP32: o Node que tem sensor associado
+// e ainda sem sessão (varredura BLE na janela menor, enquanto o ponto de acesso
+// está no ar para esse sensor) não ouve os anúncios do sensor. Desligado por
+// padrão; os cenários que modelam o primeiro canal de dados o ligam.
+bool g_ble_deaf_while_waiting = false;
+constexpr uint16_t BLE_SCAN_WINDOW_NORMAL = 80;
 bool simRadioDrop(uint64_t uuid,uint8_t id) {
   if (!g_interactive_runtime) return false;
   auto it=g_radio_loss_pct.find({uuid,id});
@@ -745,7 +754,7 @@ struct Sensor {
 
   void joinAccessPoint(uint8_t nodeId) {
     parent = nodeId;
-    wifiReadyUs = g_now_us + static_cast<uint64_t>(WIFI_JOIN_MS) * 1000u;
+    wifiReadyUs = g_now_us + static_cast<uint64_t>(g_wifi_join_ms) * 1000u;
     enterDiscovery();
     note("sensor=0x%016llX entrando no ponto de acesso do node=%u", static_cast<unsigned long long>(uuid),
          nodeId);
@@ -855,7 +864,12 @@ struct Sensor {
       for (int i = 0; i < 8; ++i) mfg[7 + i] = static_cast<char>((uuid >> (56 - 8 * i)) & 0xFFu);
       for (const auto& entry : rssi) {
         Node* n = simTryNode(entry.first);
-        if (n && n->powered && n->inst && !simRadioDrop(uuid,entry.first)) n->inst->bleDeliver(mfg, entry.second);
+        if (!n || !n->powered || !n->inst || simRadioDrop(uuid,entry.first)) continue;
+        if (g_ble_deaf_while_waiting) {
+          const uint16_t window = n->inst->bleScanWindow();
+          if (window > 0 && window < BLE_SCAN_WINDOW_NORMAL) continue;  // criando o canal de dados: surdo
+        }
+        n->inst->bleDeliver(mfg, entry.second);
       }
     }
 
@@ -1796,7 +1810,9 @@ int scenarioRestartKeepsBinding() {
 }
 
 // O Node escolhido para receber o sensor deixa de ouvi-lo logo antes da
-// decisão. O vínculo não pode ficar preso a ele: o líder tenta outro Node.
+// decisão. O vínculo não pode ficar preso a ele: o líder tenta outro Node, mas
+// só depois do prazo da primeira sessão do Node escolhido (ele pode estar
+// criando o canal de dados com o sensor sem ouvir os anúncios BLE).
 int scenarioFailoverRetry() {
   formNetwork();
   bindSensorA(true);
@@ -1818,10 +1834,14 @@ int scenarioFailoverRetry() {
   // declara o vínculo STALE em vez de permanecer em ASSOCIATING.
   CHECK(runUntilTrue([t0] { return logHas(probe(), "WIRELESS_ASSOC node=2 child=1 uuid=0xE6616408432B6F39 profile=VIBRATION state=STALE", t0); },
                      25000));
-  CHECK(runUntilTrue([t0] { return logHas(probe(), "[GW] WIRELESS_FAILOVER uuid=0xE6616408432B6F39 from=2 to=3 reason=SENSOR_LOST rssi=-74", t0); },
-                     40000));
+  // Dentro do prazo da primeira sessão o líder não move o sensor de novo.
   const long first = logTime(probe(), "from=1 to=2 reason=SENSOR_LOST", t0);
+  runUntil(static_cast<uint32_t>(first) + IOC_FO_FIRST_SESSION_GRACE_MS - 5000);
+  CHECK(logCount(probe(), "[GW] WIRELESS_FAILOVER", t0) == 1);
+  CHECK(runUntilTrue([t0] { return logHas(probe(), "[GW] WIRELESS_FAILOVER uuid=0xE6616408432B6F39 from=2 to=3 reason=SENSOR_LOST rssi=-74", t0); },
+                     15000));
   const long second = logTime(probe(), "from=2 to=3 reason=SENSOR_LOST", t0);
+  CHECK(second - first >= static_cast<long>(IOC_FO_FIRST_SESSION_GRACE_MS));
   CHECK(second - first >= static_cast<long>(IOC_FO_COOLDOWN_MS));   // intervalo mínimo entre decisões
   CHECK(runUntilTrue([t0] { return logHas(probe(), "TEL NODE=3 CHILD=1 ", t0); }, 30000));
   note("segunda tentativa: telemetria pelo node=3 em %ld ms",
@@ -2204,6 +2224,71 @@ int scenarioHandshakeSlowRadio() {
   return 0;
 }
 
+bool candidateHeard(unsigned reporter, const char* uuid) {
+  const std::string text = std::string("WIRELESS_CANDIDATE reporter=") + std::to_string(reporter) + " uuid=" + uuid;
+  return logHas(probe(), text.c_str());
+}
+
+// Primeiro acesso com o canal de dados lento para abrir: a associação do
+// sensor ao ponto de acesso leva 40 s (rádio disputado, tentativas repetidas) e,
+// no ESP32, o Node que cria o canal não ouve os anúncios BLE do sensor. O
+// sensor A é associado com reassociação AUTO ao Node 1 e o B com MANUAL ao
+// Node 2. Sem sessão, o vínculo do A virava STALE em 15 s e o líder entregava
+// o sensor a outro Node no meio do handshake; o novo responsável também ficava
+// surdo, e o canal nunca abria. O do B, em MANUAL, abria em cerca de 42 s.
+int scenarioFirstSessionSlow() {
+  formNetwork();
+  Sensor& a = addSensor(SENSOR_A, 4242, 2);
+  a.rssi[1] = -50;
+  a.rssi[2] = -64;
+  a.rssi[3] = -70;
+  Sensor& b = addSensor(SENSOR_B, 4243, 3);
+  b.rssi[2] = -52;
+  b.rssi[1] = -63;
+  b.rssi[3] = -71;
+  CHECK(runUntilTrue([] {
+    for (unsigned reporter = 1; reporter <= 3; ++reporter) {
+      if (!candidateHeard(reporter, "0xE6616408432B6F39") || !candidateHeard(reporter, "0xE66164084327A12C")) return false;
+    }
+    return true;
+  }, 10000));
+
+  g_ble_deaf_while_waiting = true;
+  g_wifi_join_ms = 40000;
+  const uint32_t t0 = nowMs();
+  probeCommand("WIRELESS BIND 1 0xE6616408432B6F39 AUTO");
+  probeCommand("WIRELESS BIND 2 0xE66164084327A12C");
+
+  CHECK(runUntilTrue([t0] { return logHas(probe(), "[GW] WIRELESS_LINK node=2 child=1 state=SECURE", t0); }, 80000));
+  const long manualMs = logTime(probe(), "[GW] WIRELESS_LINK node=2 child=1 state=SECURE", t0) - static_cast<long>(t0);
+  note("MANUAL: primeira sessao do sensor B no node=2 em %ld ms", manualMs);
+
+  // O sensor A tem de abrir o canal no Node escolhido pelo operador, sem que
+  // o líder o mova no meio da criação.
+  const bool autoOpened = runUntilTrue(
+      [t0] { return logHas(probe(), "[GW] WIRELESS_LINK node=1 child=1 state=SECURE", t0); }, 20000);
+  const long failovers = logCount(probe(), "[GW] WIRELESS_FAILOVER", t0);
+  note("AUTO: %d reassociacao(oes) durante a criacao do canal; sessao no node=1: %s", static_cast<int>(failovers),
+       autoOpened ? "sim" : "nao");
+  CHECK(autoOpened);
+  CHECK(failovers == 0);
+  if (autoOpened) {
+    const long autoMs = logTime(probe(), "[GW] WIRELESS_LINK node=1 child=1 state=SECURE", t0) - static_cast<long>(t0);
+    note("AUTO: primeira sessao do sensor A no node=1 em %ld ms", autoMs);
+    CHECK(std::labs(autoMs - manualMs) < 5000);   // a política não torna a criação mais lenta
+  }
+  CHECK(g_sensors[0].parent == 1 && g_sensors[1].parent == 2);
+  CHECK(g_sensors[0].sessions == 1 && g_sensors[1].sessions == 1);
+  CHECK(runUntilTrue([] { return logHas(probe(), "TEL NODE=1 CHILD=1 ") && logHas(probe(), "TEL NODE=2 CHILD=1 "); },
+                     10000));
+
+  // Com a sessão aberta o sensor A continua sob a política AUTO.
+  runFor(10000);
+  CHECK(logHas(probe(), "failover=AUTO session=SECURE"));
+  CHECK(logCount(probe(), "[GW] WIRELESS_FAILOVER", t0) == 0);
+  return 0;
+}
+
 /* ------------------------------------------------------------ pesquisa */
 
 // Parâmetros de um experimento (--param chave=valor, --seed N): ver
@@ -2375,6 +2460,7 @@ const Scenario SCENARIOS[] = {
   {"restart_keeps_binding", scenarioRestartKeepsBinding, "Node reinicia e retoma o vinculo gravado na NVS"},
   {"panel", scenarioPanel, "painel: retrato, nota, queda de Node e sono na bateria"},
   {"handshake_slow_radio", scenarioHandshakeSlowRadio, "dois sensores no mesmo Node com 3,6 s de atraso no radio"},
+  {"first_session_slow", scenarioFirstSessionSlow, "primeiro canal de dados lento: AUTO e MANUAL abrem no Node escolhido"},
 };
 
 // Fora de SCENARIOS: não faz verificações nem tem gravação de referência.

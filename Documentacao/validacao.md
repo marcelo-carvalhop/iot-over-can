@@ -58,10 +58,11 @@ Os testes da estação percorrem as telas em 48×18, 60×24, 80×24, 100×30 e 1
 | `ap_outage`, `drop_session` | o sensor se autentica de novo |
 | `bus_load` | carga de 40 % de alta prioridade e carga de baixa prioridade |
 | `two_sensors` | dois sensores redistribuídos entre dois módulos |
-| `failover_retry` | o módulo escolhido perde o sensor antes de assumir; o líder escolhe outro |
+| `failover_retry` | o módulo escolhido perde o sensor antes de assumir; o líder escolhe outro, mas só depois do prazo de 2 min da primeira sessão dele |
 | `failover_dead_target` | o módulo escolhido sai do ar; o responsável anterior mantém o vínculo |
 | `restart_keeps_binding` | o módulo reinicia e retoma da memória o vínculo gravado; uma partida normal não escreve nada sobre a alimentação, e a que vem de uma queda de tensão é avisada, contada na memória e consultável por `ENERGIA` |
 | `handshake_slow_radio` | dois sensores no mesmo módulo com 3,6 s de atraso de rádio; cada sessão abre em cerca de 5 s |
+| `first_session_slow` | primeiro canal de dados lento (40 s para entrar no Wi-Fi) com o módulo responsável surdo ao BLE enquanto o cria: o sensor em reassociação automática abre a sessão no módulo escolhido, no mesmo tempo que o em manual, sem nenhuma reassociação |
 | `acoustic_sensor` | o sensor acústico de ponta a ponta |
 | `panel` | o painel: retrato, marcas, alerta e ciência, sono na bateria e relógio da rede |
 
@@ -119,6 +120,7 @@ Depois dessa sessão, a abertura do canal de dados foi corrigida: o nonce passou
 | Item | O que observar |
 |---|---|
 | abertura do canal de dados | tempo do vínculo à sessão, com um e com dois sensores no mesmo módulo, pela seção Criação do canal de dados |
+| primeiro acesso com reassociação automática | o mesmo tempo da política manual, sem mensagens "Reassociação automática" (linhas `WIRELESS_FAILOVER` da Probe) antes da sessão; se o módulo responsável aparecer como `STALE` durante a criação, é o BLE dele surdo, e o líder deve esperar (CH-078); se a sessão não abrir em 2 min, o líder tenta outro módulo |
 | rádio do módulo | se a entrada no Wi-Fi ainda falha com a escuta BLE em 25 % (se falhar, reduzir `SCAN_WINDOW_QUIET` em `wireless_discovery.cpp`) |
 | espectro de 256 faixas | os quatro blocos completos; se faltarem, aumentar a pausa entre blocos em `wireless_link.cpp` |
 | medição e análise | ocupação, período do sinal de presença, contadores de erro |
@@ -137,7 +139,7 @@ Grave a Probe 00 e todos os módulos com a mesma versão.
 
 1. **Credenciais.** `provision_sensor_security.sh --check`. No monitor de cada módulo, `[WLINK] LINK_KEY=PROVISIONED`.
 2. **Rede.** Na estação, todos os módulos e um líder. Em Métricas (`F8`), ocupação da ordem de 1 %, período de `0x100` de 1000 ms e contadores de erro em zero.
-3. **Associação.** Associe um sensor em Sensores sem fio (`F7`) e acompanhe a Criação do canal de dados até a sessão. No console do sensor, `NET` mostra `STATE=BOUND`.
+3. **Associação.** Associe um sensor em Sensores sem fio (`F7`), com a reassociação automática (padrão), e acompanhe a Criação do canal de dados até a sessão: não deve aparecer nenhuma mensagem "Reassociação automática". Repita com a manual e compare os tempos. No console do sensor, `NET` mostra `STATE=BOUND`.
 4. **Dados.** Telemetria na tela do sensor; espectro com 64 e com 256 faixas; mude a configuração e confirme "Aplicada pelo sensor".
 5. **Perda e retorno.** Desligue o sensor: em cerca de 10 s o canal volta à oferta; religue e confirme a volta sem nova associação.
 6. **Desassociação.** O módulo desliga o ponto de acesso e o sensor volta a `STATE=DISABLED`.

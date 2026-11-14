@@ -65,7 +65,7 @@ SCENARIOS = (
     "formation", "sensor", "owner_failover", "sensor_moves", "manual_policy", "leader_failure",
     "leader_failure_no_probe", "silence_leader", "ap_outage", "drop_session", "bus_load", "two_sensors",
     "failover_retry", "failover_dead_target", "silence_leader_with_sensor", "acoustic_sensor",
-    "restart_keeps_binding", "panel", "handshake_slow_radio",
+    "restart_keeps_binding", "panel", "handshake_slow_radio", "first_session_slow",
 )
 UUID = "0xE6616408432B6F39"
 
@@ -974,6 +974,18 @@ def test_failover_retry_replays_end_with_the_sensor_on_a_working_node() -> None:
     recorder.stop()
     run = recorder.history[0]
     assert run.node_id == 2 and run.metrics["nodes_in_fault"] == {2} and run.metrics["failovers"] == 2
+
+
+def test_first_data_channel_is_not_interrupted_by_automatic_reassociation() -> None:
+    # Primeiro canal de dados lento (40 s) com o Node responsável surdo ao BLE: o sensor AUTO abre a
+    # sessão no módulo que o operador escolheu, como o MANUAL, sem que o líder o mova no meio da criação.
+    state, events, _metrics, _recorder, _now = _replay("first_session_slow")
+    assert events[WirelessFailoverReceived] == []
+    auto, manual = state.find_sensor("01.01"), state.find_sensor("02.01")
+    assert auto is not None and manual is not None
+    assert auto.failover_policy == "AUTO" and manual.failover_policy == "MANUAL"
+    assert auto.has_data_plane and manual.has_data_plane
+    assert state.find_sensor("03.01") is None and state.find_sensor("03.02") is None
 
 
 def test_leader_resuming_from_a_long_freeze_does_not_reassociate_a_working_sensor() -> None:

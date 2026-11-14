@@ -169,7 +169,7 @@ A reassociação é uma autorização dada pelo operador para cada sensor; o pad
 | Motivo | Condição |
 |---|---|
 | `OWNER_LOST` | o responsável foi declarado ausente, ou deixou de republicar o vínculo por 25 s |
-| `SENSOR_LOST` | o responsável está ativo, mas não tem sessão com o sensor nem ouve os anúncios dele, e outro módulo o ouve |
+| `SENSOR_LOST` | o responsável está ativo, mas não tem sessão com o sensor nem ouve os anúncios dele, e outro módulo o ouve; um responsável que acabou de assumir o vínculo e ainda não teve sessão tem 2 min para abrir o primeiro canal de dados antes disso |
 
 Todos os módulos mantêm a mesma tabela, alimentada pelo que já passa no barramento (vínculos republicados e relatos de sinal); só o líder decide, uma vez por segundo. Um líder recém-eleito continua de onde o anterior parou. O destino precisa ter ouvido o sensor nos últimos 12 s, com sinal de pelo menos −90 dBm.
 
@@ -182,6 +182,7 @@ O líder não desfaz o vínculo anterior: ele pede a associação ao novo módul
 | relatos de um módulo declarado ausente são descartados | não se escolhe um destino com base no que ele ouviu antes de sair |
 | um líder que volta de uma parada reinicia a contagem e descarta os relatos | não age com uma tabela envelhecida |
 | em `SENSOR_LOST`, o destino precisa ouvir o sensor sem interrupção por 6 s, e nada é decidido se o responsável o ouviu depois do último estado publicado | quando um sensor perdido reaparece, todos o ouvem quase ao mesmo tempo; o responsável tem a preferência |
+| em `SENSOR_LOST`, nada é decidido nos 2 min (`IOC_FO_FIRST_SESSION_GRACE_MS`) seguintes à assunção do vínculo, a menos que o responsável já tenha tido sessão; vale para a associação pelo operador, para cada reassociação e para a retomada da memória após um reinício | durante a criação do canal de dados o módulo só tem o BLE como prova de presença e, com o rádio dividido com o ponto de acesso, deixa de ouvir o sensor (`STALE` em 15 s). Mover o sensor nessa hora recomeça a criação em outro módulo, que também fica surdo, e o canal pode nunca abrir (CH-078). `OWNER_LOST` não espera |
 
 Se dois módulos mantêm o mesmo sensor por um instante, cede quem não tem sessão com ele, ou quem já não o ouve; sem sessão em nenhum dos dois, fica o de maior número.
 
