@@ -70,6 +70,10 @@ jobs:
         run: ./Codigo/scripts/build_pico.sh pico_w --audio
       - name: Build acoustic sensor firmware (Pico 2 W, microphone pins overridden)
         run: ./Codigo/scripts/build_pico.sh pico2_w --audio --mic-pins 10,12
+      - name: Build Pico W firmware with the sensor waits overridden
+        run: |
+          ./Codigo/scripts/build_pico.sh pico_w --espera-sessao 7000 --espera-oferta 5000
+          ls Codigo/node-wifi/build/pico_w-sess7000-oferta5000/edge_node_firmware.uf2
       - name: Both variants stay on disk (one folder per board)
         run: |
           ls Codigo/node-wifi/build/pico_w/edge_node_firmware.uf2 \
@@ -98,6 +102,8 @@ jobs:
           printf 'EDGE_LINK_MASTER_KEY=%s\n' 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f > .env.local
       - name: Build CAN node with link key
         run: ./Codigo/scripts/build_esp32_can_node.sh 1
+      - name: Build CAN node with power measurement (ADC divider and INA219)
+        run: PLATFORMIO_BUILD_FLAGS="-D IOT_VIN_ADC_PIN=34 -D IOT_INA219_ADDR=64" ./Codigo/scripts/build_esp32_can_node.sh 1
       - name: Build Probe 00
         run: ./Codigo/scripts/build_esp32_can_node.sh 0
       - name: Build CAN node with command authentication (--auth-can)
