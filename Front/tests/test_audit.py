@@ -179,3 +179,51 @@ def test_nothing_is_remembered_without_an_actor_or_for_policy():
     ledger.remember(2, "AABBCCDD", "POLICY", ANA)
     ledger.remember(None, "AABBCCDD", "BIND", ANA)
     assert ledger.claim(2, "AABBCCDD", "BOUND") is None
+
+
+def test_uuid_value_reads_like_the_probe():
+    """A Probe lê o identificador com strtoull (base 0): 0x, octal por zero à esquerda e decimal."""
+
+    from pico_tui.audit import uuid_value
+
+    full = 0x1122334455667788
+    assert uuid_value("0x1122334455667788") == full
+    assert uuid_value("0X1122334455667788") == full
+    assert uuid_value("1234605616436508552") == full           # decimal
+    assert uuid_value("0x0000000000001122") == uuid_value("0x1122") == 0x1122
+    assert uuid_value("0755") == 0o755                         # zero à esquerda é octal, como no strtoull
+    assert uuid_value("0x0") is None and uuid_value("") is None and uuid_value(None) is None
+    assert uuid_value("0x") is None and uuid_value("abc") is None and uuid_value("1_000") is None
+
+
+def test_ledger_credits_the_response_whatever_the_typed_form():
+    """Digitado em decimal ou sem zeros, o comando ainda é creditado à resposta, que traz 0x e 16 dígitos."""
+
+    from pico_tui.audit import AuthorizationLedger
+    from pico_tui.operators import Actor
+
+    actor = Actor(name="ana", role="operator", method="password", display="Ana", station="s", serial=1)
+    for typed in ("0x1122", "4386", "0x0000000000001122", "0X1122"):
+        ledger = AuthorizationLedger(clock=lambda: 0.0)
+        ledger.remember(2, typed, "BIND", actor)
+        stamp = ledger.claim(2, "0x0000000000001122", "BOUND")
+        assert stamp == {"authorized_by": "ana", "authorized_action": "BIND"}, typed
+    ledger = AuthorizationLedger(clock=lambda: 0.0)
+    ledger.remember(2, "0x1122", "BIND", actor)
+    assert ledger.claim(3, "0x0000000000001122", "BOUND") is None   # outro módulo
+    assert ledger.claim(2, "0x0000000000001123", "BOUND") is None   # outro sensor
+
+
+def test_refused_association_title_does_not_claim_it_was_authorized():
+    from pico_tui.audit import classify_command, command_action
+    from pico_tui.operators import Actor
+
+    actor = Actor(name="visita", role="observer", method="password", display="Visita", station="s", serial=2)
+    bind = classify_command("WIRELESS BIND 2 0x1122334455667788 AUTO")
+    denied = command_action(bind, actor, outcome="DENIED", reason="observador")
+    assert denied.title.startswith("Recusado: pedido de entrada do sensor") and "autorizada" not in denied.title
+    unbind = classify_command("WIRELESS UNBIND 2 0x1122334455667788")
+    failed = command_action(unbind, actor, outcome="FAILED")
+    assert failed.title.startswith("Falhou: pedido para desassociar") and "desassociado" not in failed.title
+    done = command_action(bind, actor)
+    assert "autorizada no Node 02" in done.title          # o título da ação feita não muda

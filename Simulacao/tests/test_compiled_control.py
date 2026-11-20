@@ -56,7 +56,7 @@ struct Node {
     std::vector<std::function<::SimInstance*()>> generations;
     size_t nextGeneration=0;
     ::SimInstance* inst=nullptr;
-    bool powered=false,txDisconnected=false,bootScheduled=false;
+    bool powered=false,txDisconnected=false,bootScheduled=false,cableCut=false;
     unsigned restarts=0;
     uint8_t cpuBudgetPct=100;
 };
@@ -136,7 +136,7 @@ int main() {
                 "-o", str(program)
             ], capture_output=True, text=True, timeout=35)
             self.assertEqual(compiled.returncode, 0, compiled.stderr)
-            commands = "PAUSE\nNODE 4 ADD\nSENSOR ADD 0x123456 VIBRATION\nSENSOR RSSI 0x123456 4 -60\nNODE 4 BUDGET 30\nSENSOR LINK 0x123456 4 LOSS 75\nNODE 4 REMOVE\nNODE 4 ADD\nSENSOR SOURCE 0x123456 USB\nSENSOR SAMPLE 0x123456 RMS=0.19 MODE=1\nSTATUS\nQUIT\n"
+            commands = "PAUSE\nNODE 4 ADD\nSENSOR ADD 0x123456 VIBRATION\nSENSOR RSSI 0x123456 4 -60\nNODE 4 BUDGET 30\nNODE 4 CABLE CUT\nNODE 4 CABLE OK\nSENSOR LINK 0x123456 4 LOSS 75\nNODE 4 REMOVE\nNODE 4 ADD\nSENSOR SOURCE 0x123456 USB\nSENSOR SAMPLE 0x123456 RMS=0.19 MODE=1\nSTATUS\nQUIT\n"
             run = subprocess.run([str(program)], input=commands, capture_output=True, text=True, timeout=7)
             self.assertEqual(run.returncode, 0, run.stderr)
             self.assertIn("#CTRL OK NODE id=4 kind=REMOVE", run.stdout)
@@ -147,4 +147,6 @@ int main() {
             self.assertIn("#CTRL OK SENSOR SAMPLE", run.stdout)
             self.assertIn("source=USB", run.stdout)
             self.assertIn("kind=BUDGET pct=30", run.stdout)
+            self.assertIn("#CTRL OK NODE id=4 kind=CABLE state=CUT", run.stdout)
+            self.assertIn("#CTRL OK NODE id=4 kind=CABLE state=OK", run.stdout)
             self.assertNotIn("#CTRL ERROR", run.stdout)

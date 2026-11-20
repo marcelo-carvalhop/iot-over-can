@@ -1,0 +1,106 @@
+name: Bancada física
+
+# Roda só quando alguém pede (Actions > Bancada física > Run workflow), em um runner que o laboratório registra
+# com o rótulo `bancada-fisica` e que tem a Probe 00, os módulos e os sensores ligados por USB. Os runners
+# hospedados pelo GitHub não enxergam as placas e nunca pegam este trabalho.
+#
+# Nada é gravado nas placas: o fluxo confere o que já está gravado (versão, commit, chave do enlace, partida do
+# controlador CAN; nos sensores, a resposta aos comandos de identificação) e, se houver uma gravação física da
+# sessão, compara os tempos dela com os da bancada virtual.
+# Ver Documentacao/validacao.md, «Bancada física na integração contínua».
+
+on:
+  workflow_dispatch:
+    inputs:
+      probe_port:
+        description: Porta serial da Probe 00
+        required: true
+        default: /dev/ttyUSB0
+      module_ports:
+        description: 'Módulos como NÓ=PORTA separados por espaço, por exemplo "1=/dev/ttyUSB1 2=/dev/ttyUSB2"'
+        required: false
+        default: ''
+      sensor_ports:
+        description: 'Sensores como TIPO=PORTA separados por espaço (TIPO é vibracao ou acustico), por exemplo "vibracao=/dev/ttyACM0 acustico=/dev/ttyACM1"'
+        required: false
+        default: ''
+      selftest:
+        description: Rodar SELFTEST CAN em cada módulo (com a placa fora da rede)
+        type: boolean
+        default: false
+      recording:
+        description: Caminho, no runner, da gravação física da sessão (logs/gravacao_*.log) a comparar com a bancada virtual
+        required: false
+        default: ''
+      scenario:
+        description: Cenário da bancada virtual usado na comparação
+        required: false
+        default: owner_failover
+
+permissions:
+  contents: read
+
+jobs:
+  bancada:
+    runs-on: [self-hosted, bancada-fisica]
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash   # com pipefail: a falha do script não some atrás do tee
+    env:
+      PROBE_PORT: ${{ inputs.probe_port }}
+      MODULE_PORTS: ${{ inputs.module_ports }}
+      SENSOR_PORTS: ${{ inputs.sensor_ports }}
+      SELFTEST: ${{ inputs.selftest }}
+      RECORDING: ${{ inputs.recording }}
+      SCENARIO: ${{ inputs.scenario }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Smoke da Probe 00
+        run: |
+          mkdir -p resultado
+          python3 Codigo/scripts/smoke_boot.py probe --porta "$PROBE_PORT" --estrito | tee resultado/probe.txt
+      - name: Smoke dos módulos
+        if: ${{ inputs.module_ports != '' }}
+        run: |
+          mkdir -p resultado
+          selftest_flag=""
+          if [ "$SELFTEST" = "true" ]; then selftest_flag="--selftest"; fi
+          status=0
+          for entry in $MODULE_PORTS; do
+            node="${entry%%=*}"
+            port="${entry#*=}"
+            echo "== módulo $node ($port)"
+            python3 Codigo/scripts/smoke_boot.py modulo --porta "$port" --no "$node" --estrito $selftest_flag \
+              | tee "resultado/modulo-$node.txt" || status=1
+          done
+          exit $status
+      - name: Smoke dos sensores
+        if: ${{ inputs.sensor_ports != '' }}
+        run: |
+          mkdir -p resultado
+          status=0
+          for entry in $SENSOR_PORTS; do
+            kind="${entry%%=*}"
+            port="${entry#*=}"
+            case "$kind" in
+              vibracao|acustico) ;;
+              *) echo "tipo de sensor desconhecido: $kind (use vibracao ou acustico)"; status=1; continue ;;
+            esac
+            echo "== sensor $kind ($port)"
+            python3 Codigo/scripts/smoke_boot.py "$kind" --porta "$port" --estrito \
+              | tee "resultado/sensor-$kind.txt" || status=1
+          done
+          exit $status
+      - name: Comparar com a bancada virtual
+        if: ${{ inputs.recording != '' }}
+        run: |
+          mkdir -p resultado
+          python3 Simulacao/comparar_bancada.py "$RECORDING" --cenario "$SCENARIO" | tee resultado/comparacao.txt
+      - name: Guardar os resultados
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bancada-fisica
+          path: resultado/
+          if-no-files-found: ignore

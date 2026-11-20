@@ -67,6 +67,38 @@ cc "${PANEL_FLAGS[@]}" -I"$LINK" \
   -o "$OUT_DIR/test_ioc_resetlog"
 "$OUT_DIR/test_ioc_resetlog"
 
+# 3-autoteste. SELFTEST do módulo: quadros do laço interno do MCP2515, comparação do que volta e
+#     classificação dos contadores de erro.
+cc "${PANEL_FLAGS[@]}" -I"$LINK" \
+  "$LINK/ioc_selftest.c" \
+  "$REPO_ROOT/Codigo/common/tests/test_ioc_selftest.c" \
+  -o "$OUT_DIR/test_ioc_selftest"
+"$OUT_DIR/test_ioc_selftest"
+
+# 3-alimentacao. Medição da tensão de entrada (divisor resistivo no ADC1) e da corrente (INA219): conversões,
+#     média móvel, extremos, níveis, aviso e texto da linha do comando ENERGIA.
+cc "${PANEL_FLAGS[@]}" -I"$LINK" \
+  "$LINK/ioc_power.c" \
+  "$REPO_ROOT/Codigo/common/tests/test_ioc_power.c" \
+  -o "$OUT_DIR/test_ioc_power"
+"$OUT_DIR/test_ioc_power"
+
+# 3-isolamento. O Node percebe que perdeu o barramento (silêncio mais transmissões sem confirmação) e
+#     quando ele volta, inclusive na virada do contador de milissegundos.
+cc "${PANEL_FLAGS[@]}" -I"$LINK" \
+  "$LINK/ioc_isolation.c" \
+  "$REPO_ROOT/Codigo/common/tests/test_ioc_isolation.c" \
+  -o "$OUT_DIR/test_ioc_isolation"
+"$OUT_DIR/test_ioc_isolation"
+
+# 3-autenticacao. Autenticação de origem dos comandos 0x304/0x305 (etiqueta, repetição, falsificação, reinício) e
+#     a atualidade de 1 a 4 bytes do PDU autenticado em que ela se apoia.
+cc "${PANEL_FLAGS[@]}" -I"$LINK" \
+  "$LINK/ioc_sha256.c" "$LINK/ioc_secpdu.c" "$LINK/ioc_canauth.c" \
+  "$REPO_ROOT/Codigo/common/tests/test_ioc_canauth.c" \
+  -o "$OUT_DIR/test_ioc_canauth"
+"$OUT_DIR/test_ioc_canauth"
+
 # 3a. Fuzz determinístico dos decodificadores do enlace e do plano de dados
 #     (oferta BLE, envelope UDP, handshake, relatórios, segmentos, PDU
 #     autenticada): entradas aleatórias e mensagens válidas mutadas, em buffers
@@ -120,12 +152,25 @@ while IFS=$'\t' read -r scenario _description; do
   "$OUT_DIR/sim_network" "$scenario" > /dev/null
 done < <("$OUT_DIR/sim_network" --list)
 
+# 5a. A mesma bancada com a autenticação de origem ligada (IOT_CAN_AUTH=1): todos os cenários continuam passando
+#     com os comandos etiquetados, e o cenário can_auth confere que comando forjado, etiqueta falsa e repetição
+#     não são obedecidos. As gravações de Front/replays vêm da bancada com os padrões e não mudam.
+IOC_SIM_CXXFLAGS="-DIOT_CAN_AUTH=1" "$REPO_ROOT/Codigo/scripts/build_network_sim.sh" "$OUT_DIR/sim_network_auth"
+while IFS=$'\t' read -r scenario _description; do
+  "$OUT_DIR/sim_network_auth" "$scenario" > /dev/null
+done < <("$OUT_DIR/sim_network_auth" --list)
+
+# 5b. As opções de compilação documentadas do Módulo CAN (medição da alimentação, isolamento ajustado ou
+#     desligado, esperas do sensor, vigilância do líder desligada) compilam, o que a bancada com os padrões
+#     não mostra.
+"$REPO_ROOT/Codigo/scripts/check_build_variants.sh"
+
 # 6. Leitor da documentação (Codigo/leitor): conversão dos .md, diagramação de
 #    todos os documentos e o firmware sobre stubs da placa (telas dentro dos
 #    400x600, navegação, NVS, sono e desligamento).
 LEITOR="$REPO_ROOT/Codigo/leitor"
 python3 "$LEITOR/tools/documentos.py" --saida "$OUT_DIR/leitor/documentos.h" --silencioso --estrito
-LEITOR_FLAGS=(-std=c++17 -O1 -g -Wall -Wextra -Werror -pthread -I "$LEITOR/src" -I "$OUT_DIR/leitor")
+LEITOR_FLAGS=(-std=c++17 -O1 -g -Wall -Wextra -Werror -pthread -I "$LEITOR/src" -I "$OUT_DIR/leitor" -I "$LINK")
 c++ "${LEITOR_FLAGS[@]}" "$LEITOR/src/leitor_layout.cpp" "$LEITOR/tests/test_leitor.cpp" -o "$OUT_DIR/test_leitor"
 "$OUT_DIR/test_leitor" > /dev/null
 c++ "${LEITOR_FLAGS[@]}" -I "$LEITOR/tests/stubs" "$LEITOR/src/leitor_layout.cpp" "$LEITOR/tests/test_firmware.cpp" \

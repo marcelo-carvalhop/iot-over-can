@@ -107,7 +107,7 @@ def main() -> None:
         if simulated_port:
             args.port = simulated_port
             args.mode = "probe"
-        PicoTuiApp(
+        app = PicoTuiApp(
             port=args.port,
             baudrate=args.baud,
             mode=args.mode,
@@ -124,7 +124,21 @@ def main() -> None:
             operator_mode=args.operator_mode,
             operators_path=args.operators_file,
             operator_idle_s=max(0.0, args.operator_idle) * 60.0,
-        ).run()
+        )
+        app.run()
+        _print_audit_anchor(app)
+
+
+def _print_audit_anchor(app: PicoTuiApp) -> None:
+    """Mostra o hash final da cadeia de auditoria, para o operador guardá-lo fora desta máquina."""
+
+    anchor = getattr(app, "audit_anchor", None)
+    if not anchor:
+        return
+    count, head = anchor
+    print(f"Cadeia de auditoria: {count} registro(s); hash final {head}")
+    print(f"Anotado em {app.log_manager.directory}/session_{app.session_id}.jsonl. Guarde-o também fora desta máquina: "
+          "com ele, `iot-over-can-operators audit --verify` percebe se os últimos registros forem apagados.")
 
 
 if __name__ == "__main__":

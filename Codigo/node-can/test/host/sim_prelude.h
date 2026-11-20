@@ -31,10 +31,15 @@
 #include <strings.h>
 
 #include "ioc_bindstore.h"
+#include "ioc_canauth.h"
 #include "ioc_canbits.h"
 #include "ioc_failover.h"
+#include "ioc_isolation.h"
 #include "ioc_link.h"
+#include "ioc_power.h"
 #include "ioc_resetlog.h"
+#include "ioc_secpdu.h"
+#include "ioc_selftest.h"
 #include "ioc_sha256.h"
 #include "ioc_time.h"
 #include "ioc_wdata.h"

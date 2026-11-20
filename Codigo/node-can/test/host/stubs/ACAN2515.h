@@ -43,6 +43,12 @@ class ACAN2515 {
   uint32_t receiveOverflows = 0;
 
   bool listenOnly = false;
+  // Laço interno (LoopBackMode): o controlador devolve a si mesmo o que transmite e fica
+  // desligado do barramento. Falhas que a bancada pode injetar para exercitar o autoteste.
+  bool loopback = false;
+  enum LoopbackFault { LB_FAULT_NONE = 0, LB_FAULT_DROP = 1, LB_FAULT_FLIP_BIT = 2, LB_FAULT_REFUSE_MODE = 3 };
+  int loopbackFault = LB_FAULT_NONE;
+  uint32_t modeChanges = 0;
   uint8_t rec = 0;
   uint8_t tec = 0;
   uint8_t eflg = 0;
@@ -52,12 +58,17 @@ class ACAN2515 {
     receiveCapacity = settings.mReceiveBufferSize;
     capacity = settings.mTransmitBuffer0Size;
     listenOnly = settings.mRequestedMode == ACAN2515Settings::ListenOnlyMode;
+    loopback = settings.mRequestedMode == ACAN2515Settings::LoopBackMode;
     return 0;
   }
   void isr() {}
 
   uint16_t changeModeOnTheFly(ACAN2515Settings::RequestedMode mode) {
+    ++modeChanges;
+    // O controlador que não confirma o modo pedido devolve erro (kRequestedModeTimeOut na biblioteca real).
+    if (loopbackFault == LB_FAULT_REFUSE_MODE && mode == ACAN2515Settings::LoopBackMode) return 0x100;
     listenOnly = mode == ACAN2515Settings::ListenOnlyMode;
+    loopback = mode == ACAN2515Settings::LoopBackMode;
     return 0;
   }
 
@@ -69,6 +80,7 @@ class ACAN2515 {
   }
   // Usado pelo simulador do barramento para entregar um quadro a este nó.
   void hostDeliver(const CANMessage& msg) {
+    if (loopback) return;  // no laço interno o controlador não está ligado ao barramento
     if (received.size() >= receiveCapacity) {
       ++receiveOverflows;
       eflg |= 0x40;  // RX0OVR
@@ -87,6 +99,14 @@ class ACAN2515 {
   uint8_t errorFlagRegister() { return eflg; }
 
   bool tryToSend(const CANMessage& msg) {
+    if (loopback) {
+      // O quadro volta para este nó e nunca toca o barramento.
+      if (loopbackFault == LB_FAULT_DROP) return true;  // pino INT sem sinal: nada chega à fila
+      CANMessage back = msg;
+      if (loopbackFault == LB_FAULT_FLIP_BIT) back.data[0] ^= 0x01;  // bit preso no SPI
+      received.push_back(back);
+      return true;
+    }
     if (pendingInDriver >= capacity) return false;
     ++pendingInDriver;
     sent.push_back(msg);

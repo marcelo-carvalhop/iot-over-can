@@ -34,6 +34,8 @@ iot-over-can/
 ├── Simulacao/             laboratório virtual: ponte para a TUI, Studio e pontes USB
 ├── Pesquisa/              ferramenta de coleta e análise de experimentos
 ├── Documentacao/          esta documentação
+│   ├── bancada-fisica/    roteiro de testes em hardware e modelo de registro de sessão
+│   └── historico/         documentos de etapas anteriores e registros de sessões de bancada
 └── .github/workflows/     integração contínua
 ```
 
@@ -47,12 +49,16 @@ Arduino sobre PlatformIO, o mesmo código para a Probe 00 e para os módulos; o 
 |---|---|
 | `comandos.cpp` | leitura da serial e comandos de controle (`0x080`) |
 | `falhas.cpp` | função local e respostas de estado |
-| `energia.cpp` | motivo e contagem dos reinícios anormais, comando `ENERGIA` e potência máxima do Wi-Fi (`IOT_WIFI_TX_POWER_QDBM`) |
+| `energia.cpp` | motivo e contagem dos reinícios anormais, comando `ENERGIA`, potência máxima do Wi-Fi (`IOT_WIFI_TX_POWER_QDBM`) e medição opcional da tensão de entrada e da corrente (desligada por padrão) |
+| `isolamento.cpp` | detecta o isolamento do barramento (cabo solto), libera os sensores e impede o pedido de eleição enquanto isolado; comando `ISOLAMENTO` |
+| `autoteste.cpp` | comando `SELFTEST`: contadores de erro, laço interno do MCP2515 e LEDs |
+| `firmware_info.h` | versão, commit e recursos do firmware, num só lugar: boot, `VERSION` e `PROBE_VERSION` leem daqui |
 | `wireless_discovery.cpp` | escuta BLE, associação e decisão de reassociação |
 | `wireless_link.cpp` | canal de dados: ponto de acesso, sessão, transporte no CAN, encaminhamento ao painel; na Probe, remontagem e linhas de texto |
 | `net_metrics.cpp` | medição do barramento (só na Probe) |
 | `fault_injection.cpp` | ensaios de falha |
 | `relogio.cpp` | relógio da rede |
+| `canauth.cpp` | autenticação de origem dos comandos da Probe (`IOT_CAN_AUTH`, desligada por padrão): etiqueta na Probe, conferência nos módulos, comando `CANAUTH` |
 | `pesquisa.cpp` | instrumentação de medição (`CONFIG`, `BENCH`) |
 
 Cada módulo expõe, conforme precisa, `xxxHandleCanMessage(rx)` (devolve `true` se o quadro era dele), `xxxHandleSerialCommand(linha)` e `xxxPoll()`, chamados pelo laço de `main.ino` e por `comandos.cpp`. Toda transmissão passa por `canSend()`, que também entrega o quadro aos painéis conectados, seguida de `netMetricsOnTransmit()`. Identificadores em `include/can_ids.h`; códigos de controle em `include/protocolo.h`.
@@ -70,8 +76,13 @@ C11 portátil, sem entrada e saída, testado no computador e usado pelo firmware
 | `ioc_link/ioc_failover.*` | decisão de reassociação |
 | `ioc_link/ioc_bindstore.*` | tabela de vínculos gravada na NVS |
 | `ioc_link/ioc_resetlog.*` | classificação do motivo de reinício e contadores gravados na NVS |
+| `ioc_link/ioc_power.*` | tensão de entrada (divisor resistivo no ADC) e corrente (INA219): conversão, média das últimas amostras, mínimo e limites de aviso |
+| `ioc_link/ioc_isolation.*` | decisão de isolamento do barramento: silêncio e estado de erro do controlador, com histerese |
+| `ioc_link/ioc_selftest.*` | quadros de teste do laço interno, comparação com o que voltou e classificação dos contadores de erro (`SELFTEST`) |
+| `ioc_link/ioc_version.h` | `IOT_FW_VERSION` e `IOT_FW_COMMIT`, definidos pela compilação a partir de `VERSION` |
 | `ioc_link/ioc_time.*` | quadro de hora e regra de adoção |
-| `ioc_link/ioc_secpdu.*` | mensagem autenticada para o barramento (preparação para CAN FD; não usada) |
+| `ioc_link/ioc_secpdu.*` | mensagem autenticada para o barramento: atualidade truncada de 1 a 4 bytes e código de 1 a 16 bytes; no firmware só pelo `ioc_canauth`, a preparação para CAN FD continua sem uso |
+| `ioc_link/ioc_canauth.*` | autenticação de origem dos comandos `0x304` e `0x305`: etiqueta `0x307`, conferência no módulo, persistência da atualidade |
 | `ioc_link/ioc_bench.*` | medição do custo da criptografia |
 | `ioc_panel/ioc_panel_proto.*` | mensagens do painel |
 | `ioc_panel/ioc_panel_cache.*` | retrato e caixa postal guardados pelo módulo |
@@ -80,7 +91,7 @@ C11 portátil, sem entrada e saída, testado no computador e usado pelo firmware
 
 ### Firmware dos sensores (`Codigo/node-wifi`, `Codigo/node-audio`)
 
-Pico SDK com CMake. Os módulos comuns ficam em `node-wifi`: canal de dados (`edge_network_driver.c`, `edge_link.c`), BLE (`edge_ble_beacon.c`), identidade (`device_identity.c`), alarmes (`edge_diagnostics.c`), bateria, console e validação de configuração. As mensagens do canal de dados estão em `edge_protocol_definitions.h`, incluído também pelo firmware dos módulos. Cada sensor implementa os ganchos de `edge_app.h`:
+Pico SDK com CMake. Os módulos comuns ficam em `node-wifi`: canal de dados (`edge_network_driver.c`, `edge_link.c`), BLE (`edge_ble_beacon.c`), identidade (`device_identity.c`), alarmes (`edge_diagnostics.c`), bateria, console e validação de configuração. As mensagens do canal de dados estão em `edge_protocol_definitions.h`, incluído também pelo firmware dos módulos; é nele que ficam as duas esperas do sensor, em milissegundos e com os valores padrão inalterados (`IOT_SESSION_TIMEOUT_MS`, `IOT_OFFER_SWITCH_HOLD_MS`; `build_pico.sh --espera-sessao` e `--espera-oferta`). A versão e o commit saem no boot e no comando `VERSION`, vindos do arquivo `VERSION` pelo `ioc_version.cmake`. Cada sensor implementa os ganchos de `edge_app.h`:
 
 | Gancho | O que o sensor informa ou faz |
 |---|---|
@@ -127,10 +138,15 @@ As telas recebem cópias do estado e nunca o alteram; toda ação volta ao `app.
 python3 -m unittest discover -s Simulacao/tests
 ./Codigo/scripts/build_esp32_can_node.sh 1     # firmware de um módulo
 ./Codigo/scripts/build_pico.sh                 # sensor de vibração
-./Codigo/scripts/build_pico.sh pico_w --audio  # sensor acústico
+./Codigo/scripts/build_pico.sh pico_w --audio  # sensor acústico (--mic-pins <SCK>,<SD> muda os pinos do microfone)
 ./Codigo/scripts/build_paper.sh                # painel
 ./Codigo/scripts/build_leitor.sh               # leitor da documentação
+python3 Codigo/scripts/versao.py --check       # a versão está só no arquivo VERSION e as cópias conferem
+./Codigo/scripts/check_build_variants.sh       # as variantes de compilação do módulo e a recusa sem chave
+python3 Codigo/scripts/smoke_boot.py modulo --porta /dev/ttyUSB0   # confere o boot de uma placa recém-gravada
 ```
+
+A versão do projeto está no arquivo `VERSION`, na raiz. O firmware dos módulos a recebe pelo `pio_versao.py` (PlatformIO), o dos sensores pelo `ioc_version.cmake` e a bancada virtual a define com o commit `sim`; `versao.py --check` falha se `MANIFEST.json`, um pacote Python ou `library.json` repetir outro valor, ou se um firmware o escrever no código. `smoke_boot.py` lê a porta serial (ou um arquivo de gravação) e confere as linhas de boot de cada tipo de placa; o roteiro de testes em bancada física está em [`bancada-fisica/`](bancada-fisica/roteiro-de-testes.md).
 
 A bancada virtual é a principal ferramenta de desenvolvimento: roda o firmware real e mostra o que cada módulo escreve.
 
@@ -155,7 +171,7 @@ Quando uma mudança no firmware altera o que a Probe escreve, refaça as gravaç
 
 ### Nova mensagem no barramento CAN
 
-1. **Identificador.** A posição define a prioridade. Mensagens de coordenação ficam abaixo de `0x200`; dados de sensores, no fim. Se mais de um equipamento vai transmitir, reserve uma faixa `BASE + NODE_ID`, um identificador por transmissor. Faixas ainda livres: `0x000`–`0x00F`, `0x011`–`0x04F`, `0x051`–`0x05F`, `0x061`–`0x07F`, `0x081`–`0x0FF`, `0x101`–`0x11F`, `0x140`–`0x1EF`, `0x1F1`–`0x1FF`, `0x201`–`0x27F`, `0x2C0`–`0x2FF`, `0x307`–`0x31F`, `0x360`–`0x37F` e `0x3A0`–`0x7EE`.
+1. **Identificador.** A posição define a prioridade. Mensagens de coordenação ficam abaixo de `0x200`; dados de sensores, no fim. Se mais de um equipamento vai transmitir, reserve uma faixa `BASE + NODE_ID`, um identificador por transmissor. Faixas ainda livres: `0x000`–`0x00F`, `0x011`–`0x04F`, `0x051`–`0x05F`, `0x061`–`0x07F`, `0x081`–`0x0FF`, `0x101`–`0x11F`, `0x140`–`0x1EF`, `0x1F1`–`0x1FF`, `0x201`–`0x27F`, `0x2C0`–`0x2FF`, `0x308`–`0x31F`, `0x360`–`0x37F` e `0x3A0`–`0x7EE`.
 2. **Definição.** Declare o identificador em `Codigo/node-can/include/can_ids.h`. Se o painel precisar da mensagem, copie-o para `ioc_panel/ioc_panel_canids.h` e acrescente a conferência em `Codigo/common/tests/test_ioc_panel.c`.
 3. **Formato.** Escreva codificação e decodificação num cabeçalho C de `Codigo/common`, com testes.
 4. **Firmware.** Trate o quadro num módulo (`xxxHandleCanMessage`, chamado em `handleReceivedCanMessage`) e transmita com `canSend()`. Para a estação saber que a Probe entende a mensagem, acrescente um item em `FEATURES` (nas duas linhas de versão: `main.ino` e `comandos.cpp`).
@@ -236,6 +252,8 @@ Os pinos do MCP2515 (SPI, `MCP_CS`, `MCP_INT`), o cristal (`MCP_QUARTZ_HZ`, 8 MH
 | `panel-firmware` | painel (ESP32-2432S028), com e sem chave |
 | `reader-firmware` | leitor da documentação (M5Stack PaperColor) |
 | `research-toolkit` | ferramenta de pesquisa |
+
+`.github/workflows/bancada-fisica.yml` não roda a cada envio: é disparado à mão (`workflow_dispatch`) e precisa de um executor próprio, com a etiqueta `bancada-fisica`, ligado à Probe 00, a módulos e a sensores. Ele não grava nada: confere o boot de cada placa (`smoke_boot.py`) e compara os tempos de uma gravação com os da bancada virtual (`Simulacao/comparar_bancada.py`). A estrutura do arquivo é testada em `Simulacao/tests`, mas ele nunca foi executado numa bancada real.
 
 Para acrescentar um cenário à bancada virtual, escreva a função em `sim_network.cpp` com os auxiliares existentes (`formNetwork`, `bindSensorA`, `probeCommand`, `runUntilTrue`, `logHas`, `CHECK`) e inclua-a na tabela de cenários. `test_native_firmware.sh` executa todos; refaça as gravações em seguida.
 

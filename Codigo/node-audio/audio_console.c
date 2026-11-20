@@ -24,6 +24,7 @@
 #include "battery_monitor.h"
 #include "device_identity.h"
 #include "edge_ble_beacon.h"
+#include "ioc_version.h"
 #include "edge_diagnostics.h"
 #include "edge_link.h"
 #include "inmp441_i2s.h"
@@ -181,11 +182,25 @@ static void print_menu(void) {
     printf("\n");
 }
 
+/* Estado do microfone no STATUS: OK ou o motivo (a estação mostra o texto de cada um). Antes do
+ * primeiro relatório do DSP não há como saber, e vale OK, como sempre valeu. */
+static const char *mic_state_name(void) {
+    if (!audio_core1_hardware_ok()) return "NO_HARDWARE";   /* o I2S/PIO não iniciou */
+    if (g_have_last) {
+        switch (g_last.report.mic_state) {
+            case ACOUSTIC_MIC_SILENT: return "SILENT";         /* SD aberto ou microfone desligado */
+            case ACOUSTIC_MIC_STUCK_HIGH: return "STUCK_HIGH"; /* SD preso em nível alto */
+            default: break;
+        }
+    }
+    return "OK";
+}
+
 static void print_status(void) {
     const Payload_Configuration *cfg = audio_app_current_config();
     const BatteryStatus batt = battery_monitor_get_status();
     const bool idle = cfg->target_mode == ACOUSTIC_MODE_IDLE;
-    const bool mic_ok = audio_core1_hardware_ok() && (!g_have_last || g_last.report.mic_state == ACOUSTIC_MIC_OK);
+    const char *mic = mic_state_name();
     printf("STATUS PROFILE=ACOUSTIC NET=%s MODE=%s ACQ=%s RATE_HZ=%.2f RATE_EFF_HZ=%.2f WINDOW=%s WINDOW_SIZE=%u "
            "THRESHOLD=%.3f STALTA=%.3f GAIN=%.4f CHANNEL=%s MIC=%s CPU_PCT=%u COVERAGE_PCT=%u CHIP=%s BOARD=%s "
            "DTC=0x%04X DTC_COUNT=%u TELEMETRY=%s PERIOD_MS=%u BATT_PCT=%u BATT_MV=%u AUTH=%s "
@@ -193,7 +208,7 @@ static void print_status(void) {
            net_state_name(edge_net_get_state()), audio_mode_name(cfg->target_mode), idle ? "IDLE" : "I2S",
            (double)cfg->sample_rate_hz, (double)audio_app_effective_rate_hz(), audio_window_name(cfg->window_type),
            (unsigned)cfg->window_size, (double)cfg->stalta_thresh, (double)cfg->stalta_thresh,
-           (double)cfg->calib_gain, channel_name(audio_core1_channel()), yes_no(mic_ok),
+           (double)cfg->calib_gain, channel_name(audio_core1_channel()), mic,
            (unsigned)(g_have_last ? g_last.cpu_pct : 0u), (unsigned)(g_have_last ? g_last.report.coverage_pct : 0u),
            chip_name(), EDGE_BOARD_NAME, bite_get_current_status(), (unsigned)diagnostics_get_count(),
            g_telemetry_stream ? "ON" : "OFF", (unsigned)g_telemetry_period_ms, (unsigned)batt.pct,
@@ -500,9 +515,9 @@ static void process_line(char *line) {
                edge_link_key_mode_name(), (unsigned)edge_net_parent_node_id(), (unsigned)edge_net_child_id(),
                (unsigned)edge_net_auth_reject_count(), (unsigned)edge_net_replay_reject_count());
     } else if (str_ieq(tok[0], "VERSION")) {
-        printf("VERSION PROTOCOL=%u NODE_UUID=0x%016llX PROFILE=ACOUSTIC CHIP=%s BOARD=%s\n",
-               (unsigned)NET_PROTOCOL_VERSION, (unsigned long long)edge_device_uuid64(), chip_name(),
-               EDGE_BOARD_NAME);
+        printf("VERSION FIRMWARE=%s COMMIT=%s PROTOCOL=%u NODE_UUID=0x%016llX PROFILE=ACOUSTIC CHIP=%s BOARD=%s\n",
+               IOT_FW_VERSION, IOT_FW_COMMIT, (unsigned)NET_PROTOCOL_VERSION,
+               (unsigned long long)edge_device_uuid64(), chip_name(), EDGE_BOARD_NAME);
     } else if (str_ieq(tok[0], "RESET")) {
         const uint32_t now = now_ms();
         if (ntok >= 2 && str_ieq(tok[1], "CONFIRM")) {
@@ -526,6 +541,8 @@ static void process_line(char *line) {
 
 static void print_welcome(void) {
     printf("\nEDGE DSP ACOUSTIC NODE (INMP441, %s)\n", chip_name());
+    printf("BOOT FIRMWARE=%s COMMIT=%s PROTOCOL=%u PROFILE=ACOUSTIC CHIP=%s\n", IOT_FW_VERSION, IOT_FW_COMMIT,
+           (unsigned)NET_PROTOCOL_VERSION, chip_name());
     printf("ASCII serial console ready. Type HELP and press Enter.\n");
     print_menu();
     print_prompt();

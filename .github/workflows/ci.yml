@@ -54,12 +54,27 @@ jobs:
         run: |
           git clone --depth 1 --branch 2.3.1 https://github.com/raspberrypi/pico-sdk.git "$PICO_SDK_PATH"
           git -C "$PICO_SDK_PATH" submodule update --init --recursive
-      - name: Build Pico W firmware (secure defaults)
-        run: ./Codigo/scripts/build_pico.sh
+      - name: Build Pico W firmware (sem chave de enlace, de propósito)
+        run: ./Codigo/scripts/build_pico.sh --sem-chave
+      - name: Build Pico W firmware (recusa compilar sem chave)
+        run: |
+          if ./Codigo/scripts/build_pico.sh pico2_w; then
+            echo "o build deveria ter parado por falta de chave" >&2
+            exit 1
+          fi
+      - name: Create CI link key (public test key, never used on hardware)
+        run: |
+          printf 'EDGE_LINK_MASTER_KEY=%s\nEDGE_SERIAL_ADMIN_TOKEN=0x1122334455667788\n' \
+            000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f > .env.local
       - name: Build acoustic sensor firmware (Pico W)
         run: ./Codigo/scripts/build_pico.sh pico_w --audio
-      - name: Build acoustic sensor firmware (Pico 2 W)
-        run: ./Codigo/scripts/build_pico.sh pico2_w --audio
+      - name: Build acoustic sensor firmware (Pico 2 W, microphone pins overridden)
+        run: ./Codigo/scripts/build_pico.sh pico2_w --audio --mic-pins 10,12
+      - name: Both variants stay on disk (one folder per board)
+        run: |
+          ls Codigo/node-wifi/build/pico_w/edge_node_firmware.uf2 \
+             Codigo/node-audio/build/pico_w/edge_audio_firmware.uf2 \
+             Codigo/node-audio/build/pico2_w-mic10-12/edge_audio_firmware.uf2
 
   esp32-platformio:
     runs-on: ubuntu-latest
@@ -70,10 +85,32 @@ jobs:
           python-version: '3.12'
       - name: Install PlatformIO
         run: python -m pip install platformio
-      - name: Build CAN node
+      - name: Build CAN node without link key (de propósito)
+        run: ./Codigo/scripts/build_esp32_can_node.sh 1 --sem-chave
+      - name: Build refuses a node without link key
+        run: |
+          if ./Codigo/scripts/build_esp32_can_node.sh 2; then
+            echo "o build deveria ter parado por falta de chave" >&2
+            exit 1
+          fi
+      - name: Create CI link key (public test key, never used on hardware)
+        run: |
+          printf 'EDGE_LINK_MASTER_KEY=%s\n' 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f > .env.local
+      - name: Build CAN node with link key
         run: ./Codigo/scripts/build_esp32_can_node.sh 1
       - name: Build Probe 00
         run: ./Codigo/scripts/build_esp32_can_node.sh 0
+      - name: Build CAN node with command authentication (--auth-can)
+        run: ./Codigo/scripts/build_esp32_can_node.sh 1 --auth-can
+      - name: Build Probe 00 with command authentication (--auth-can)
+        run: ./Codigo/scripts/build_esp32_can_node.sh 0 --auth-can
+      - name: Build refuses --auth-can without link key
+        run: |
+          rm -f .env.local
+          if ./Codigo/scripts/build_esp32_can_node.sh 0 --auth-can; then
+            echo "o build deveria ter parado por falta de chave" >&2
+            exit 1
+          fi
 
   panel-firmware:
     runs-on: ubuntu-latest
@@ -118,4 +155,4 @@ jobs:
       - name: Build Node firmware with research parameters overridden
         run: |
           python -m pip install platformio
-          PLATFORMIO_BUILD_FLAGS="-D IOT_ASSOC_STALE_MS=10000 -D IOT_ASSOC_HYSTERESIS_MS=5000" ./Codigo/scripts/build_esp32_can_node.sh 1
+          PLATFORMIO_BUILD_FLAGS="-D IOT_ASSOC_STALE_MS=10000 -D IOT_ASSOC_HYSTERESIS_MS=5000" ./Codigo/scripts/build_esp32_can_node.sh 1 --sem-chave

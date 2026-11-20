@@ -25,6 +25,7 @@
 #include "edge_link.h"
 #include "hardware/clocks.h"
 #include "ioc_bench.h"
+#include "ioc_version.h"
 
 extern OperationModeFSM main_get_active_fsm_mode(void);
 extern uint16_t         bite_get_current_status(void);
@@ -622,7 +623,8 @@ static void process_line(char *line) {
     }
 
     if (str_ieq(tok[0], "VERSION")) {
-        printf("VERSION PROTOCOL=%u NODE_UUID=0x%016llX\n",
+        printf("VERSION FIRMWARE=%s COMMIT=%s PROTOCOL=%u NODE_UUID=0x%016llX\n",
+               IOT_FW_VERSION, IOT_FW_COMMIT,
                (unsigned)NET_PROTOCOL_VERSION,
                (unsigned long long)edge_device_uuid64());
         return;
@@ -663,6 +665,15 @@ void serial_console_init(void) {
     seed_staged_from_live();
 }
 
+
+/* Banner da USB: o que está gravado (versão e commit) vem antes de qualquer outra coisa. */
+static void print_banner(void) {
+    printf("\nEDGE DSP VIBRATION NODE\n");
+    printf("BOOT FIRMWARE=%s COMMIT=%s PROTOCOL=%u PROFILE=VIBRATION\n", IOT_FW_VERSION, IOT_FW_COMMIT,
+           (unsigned)NET_PROTOCOL_VERSION);
+    printf("ASCII serial console ready. Type HELP and press Enter.\n");
+}
+
 static void maybe_print_welcome(void) {
     static bool was_connected = false;
     static bool boot_welcome_done = false;
@@ -675,8 +686,7 @@ static void maybe_print_welcome(void) {
     bool is_connected = stdio_usb_connected();
 
     if (is_connected && !was_connected) {
-        printf("\nEDGE DSP VIBRATION NODE\n");
-        printf("ASCII serial console ready. Type HELP and press Enter.\n");
+        print_banner();
         seed_staged_from_live();
         print_menu();
         serial_print_prompt();
@@ -687,8 +697,7 @@ static void maybe_print_welcome(void) {
 
     if (!boot_welcome_done &&
         (to_ms_since_boot(get_absolute_time()) - boot_ms) > BOOT_WELCOME_TIMEOUT_MS) {
-        printf("\nEDGE DSP VIBRATION NODE\n");
-        printf("ASCII serial console ready. Type HELP and press Enter.\n");
+        print_banner();
         print_menu();
         serial_print_prompt();
         boot_welcome_done = true;

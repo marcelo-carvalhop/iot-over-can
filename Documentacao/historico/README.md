@@ -4,7 +4,7 @@ Documentos de etapas anteriores do projeto, guardados como foram escritos, sem r
 
 | Documento | Conteúdo |
 |---|---|
-| [`bancada-fisica-2026-10-08.md`](bancada-fisica-2026-10-08.md) | primeira sessão do canal de dados na bancada física |
+| [`bancada-fisica-2026-10-08.md`](bancada-fisica-2026-10-08.md) | primeira sessão do canal de dados na bancada física (as sessões seguintes seguem o [modelo de registro](../bancada-fisica/modelo-de-sessao.md)) |
 | [`auditoria-integrada-2026-10.md`](auditoria-integrada-2026-10.md) | auditoria de robustez de outubro de 2026 |
 | [`proposta-comissionamento-de-sensores.md`](proposta-comissionamento-de-sensores.md) | proposta, não implementada, de entregar a chave ao sensor pela rede |
 | [`simulacao-etapas-2-e-3.md`](simulacao-etapas-2-e-3.md) | laboratório virtual: TUI ligada à bancada e topologia mutável |

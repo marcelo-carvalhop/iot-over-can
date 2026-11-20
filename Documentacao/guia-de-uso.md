@@ -109,6 +109,39 @@ Na bancada, alimente os módulos por um hub USB com fonte própria (o projeto us
 
 **O que o firmware faz.** Limita a potência do ponto de acesso a 11 dBm (o padrão do ESP32 é 19,5 dBm), o que reduz o pico de cada beacon e de cada datagrama enviado ao sensor; registra o motivo dos reinícios (`ENERGIA`); e só liga o ponto de acesso quando há sensor associado. Ele não elimina o ruído da alimentação, que é questão de montagem. Se o sensor ficar longe do módulo e o sinal piorar, volte à potência máxima com `-D IOT_WIFI_TX_POWER_QDBM=78` (opções de compilação, seção 5). O efeito do limite sobre os pulsos ainda não foi medido na bancada ([Validação](validacao.md#o-que-ainda-precisa-ser-conferido)).
 
+### Medir a tensão de entrada e a corrente (opcional)
+
+`ENERGIA` diz por que a placa reiniciou, mas não quanto sobrava de tensão antes. Com duas peças baratas o módulo também mede, e só mede: nada no firmware age sobre o que lê.
+
+- **Tensão de entrada:** um divisor resistivo, `Vin ─ R1 ─┬─ R2 ─ GND`, com o ponto do meio num pino do ADC1 do ESP32 (GPIO 32 a 39; o ADC2 não serve, o Wi-Fi o usa). Com R1 = R2 = 100 kΩ e 5 V na entrada, o pino recebe 2,5 V, dentro da faixa do conversor (até cerca de 3,1 V). Meça a entrada da placa (o 5 V do USB ou da fonte), não o 3V3.
+- **Corrente:** um módulo INA219 com o resistor de derivação em série com a alimentação (as placas comuns trazem 0,1 Ω, o que dá até 3,2 A), no I²C: SDA no GPIO 21 e SCL no GPIO 22, por padrão. O MCP2515 usa os GPIO 4, 5, 13, 19 e 23, e os LEDs os GPIO 25, 26 e 27: não há conflito.
+
+A medição só existe se for pedida na compilação:
+
+| Opção | Efeito |
+|---|---|
+| `-D IOT_VIN_ADC_PIN=34` | liga a medição da tensão de entrada no pino indicado (GPIO 32 a 39) |
+| `-D IOT_VIN_R1_OHM=100000 -D IOT_VIN_R2_OHM=100000` | os resistores do divisor, em ohms (os padrões) |
+| `-D IOT_VIN_WARN_MV=4750` | abaixo disto a tensão é `BAIXA` e o módulo avisa, no máximo a cada 10 s (padrão 4750) |
+| `-D IOT_VIN_CRIT_MV=4500` | abaixo disto a tensão é `CRITICA` (padrão 4500) |
+| `-D IOT_INA219_ADDR=64` | liga a medição da corrente; endereço I²C do INA219, de 64 (`0x40`) a 79 (`0x4F`) |
+| `-D IOT_INA219_SHUNT_MOHM=100` | resistor de derivação, em mΩ (padrão 100) |
+| `-D IOT_I2C_SDA=21 -D IOT_I2C_SCL=22` | pinos do I²C (os padrões) |
+
+```bash
+PLATFORMIO_BUILD_FLAGS="-D IOT_VIN_ADC_PIN=34 -D IOT_INA219_ADDR=64" ./Codigo/scripts/upload_esp32_can_node.sh 1 /dev/ttyUSB0
+```
+
+`ENERGIA` passa a trazer os campos a mais:
+
+```text
+[NODE 1] [ENERGIA] reinicio=ENERGIA_LIGADA quedas_de_tensao=0 watchdog=0 panico=0 wifi_tx_max_dbm=11.00 vin_mv=4912 vin_min_mv=4880 vin_max_mv=4935 vin=OK corrente_ma=143 corrente_max_ma=312
+```
+
+`vin_mv` é a média das últimas 16 amostras (uma a cada 10 ms); `vin_min_mv` e `vin_max_mv` são os extremos dessas médias desde a partida ou desde o último `ENERGIA LIMPAR`; `vin` é `OK`, `BAIXA` ou `CRITICA` (`SEM_LEITURA` nos primeiros 160 ms). `corrente_ma` é a leitura atual e `corrente_max_ma` o maior valor visto; `corrente=SEM_RESPOSTA` diz que o INA219 não respondeu no I²C. Com a tensão abaixo do limite de aviso o módulo escreve também `[ENERGIA] ATENCAO: tensao de entrada BAIXA, ...`.
+
+**Limites.** A medição mostra o patamar: uma média de 16 amostras a cada 10 ms não vê os pulsos de microssegundos dos beacons, que continuam sendo assunto de osciloscópio (roteiro acima). O conversor do ESP32 erra dezenas de milivolts: compare com um multímetro antes de confiar no valor e use os valores medidos de R1 e R2. A tensão de entrada não é a do 3V3: o ESP32 reinicia quando o 3V3 cai abaixo de cerca de 2,5 V, e a entrada mostra quanto sobrava antes. Nada disto foi validado em hardware; o procedimento é o RT 87 do [roteiro](bancada-fisica/roteiro-de-testes.md) ([Validação](validacao.md#6-bancada-física)).
+
 ## 3. Preparar o computador
 
 ```bash
@@ -151,10 +184,27 @@ pio device list                                            # descobre a porta
 
 Use sempre o script: ele fornece o número e a chave. O botão de gravar do editor não fornece nenhum dos dois, e a compilação sem número para com erro de propósito. Para só compilar, use `build_esp32_can_node.sh <número>`.
 
+Os módulos (1 a 31) só compilam e só gravam com a chave mestra do enlace em `.env.local`. Sem ela o módulo associaria sensores, mas responderia `NO_KEY` e nunca abriria o ponto de acesso, e um aviso no meio da saída do PlatformIO já passou despercebido (CH-056). Por isso o script para com erro; para compilar assim de propósito (por exemplo, só para testar a compilação), acrescente `--sem-chave`. A Probe 00 não usa a chave.
+
 Confira no monitor serial (`pio device monitor -b 115200`), logo depois de ligar:
 
-- na Probe 00: `[PROBE 00] FIRMWARE=...`;
+- em todas as placas: `[NODE <n>] [BOOT] FIRMWARE=<versão> COMMIT=<commit> PROTOCOL=CAN_CLASSIC_V1 ROLE=PROBE` (ou `ROLE=NODE`). É a versão (a do arquivo `VERSION`) e o commit que a placa tem gravado. `COMMIT=...-dirty` diz que ela foi gravada com alterações locais, e `unknown`, que a compilação não estava num repositório git. Placas com versão ou commit diferentes na mesma bancada explicam muito comportamento estranho: confira que todas dizem o mesmo (nos módulos, o comando `VERSION` repete a informação);
+- na Probe 00: `[PROBE 00] FIRMWARE=... COMMIT=... FEATURES=...`;
 - nos módulos: `[WLINK] LINK_KEY=PROVISIONED`. `MISSING` significa que a placa foi gravada sem chave.
+
+O script de fumaça confere tudo isso, e mais, de uma vez (ver [Verificar depois de gravar](#verificar-depois-de-gravar)).
+
+**Autoteste do módulo.** Com a placa ainda fora da rede (sem outra placa transmitindo no barramento), o comando `SELFTEST` no monitor serial confere o controlador CAN sozinho: lê os contadores de erro, manda quatro quadros pelo laço interno do MCP2515 e confere que voltam iguais, e acende os três LEDs um por vez e depois juntos (`SELFTEST CAN` e `SELFTEST LEDS` rodam só uma das partes).
+
+```text
+[NODE 2] [SELFTEST] INICIO PARTES=CAN,LEDS ESTADO=IDLE
+[NODE 2] [SELFTEST] CHECK=CAN_ERRORS RESULT=PASS REASON=OK REC=0 TEC=0 EFLG=0x00
+[NODE 2] [SELFTEST] CHECK=CAN_LOOPBACK RESULT=PASS REASON=OK FRAMES=4/4
+[NODE 2] [SELFTEST] CHECK=LEDS RESULT=VISUAL SEQUENCE=LEADER,STATUS,FAULT,ALL
+[NODE 2] [SELFTEST] RESULT=PASS CHECKS=2 WARN=0 FAIL=0 DURATION_MS=...
+```
+
+Cada defeito vem com uma linha `DICA:` dizendo o que conferir (por exemplo, fio INT ou SCK, MOSI e MISO, ou a alimentação e o cristal do módulo MCP2515). O que reprova aqui é defeito da placa ou da ligação ao controlador, não do barramento. Depois que a placa entra na rede o comando é recusado de propósito (`RECUSADO ESTADO=...`): o teste tira o controlador do barramento por instantes. Reinicie a placa com o cabo solto e repita. O LED não entra no veredito, porque só o olho o confirma.
 
 Opções de compilação dos módulos, passadas por `PLATFORMIO_BUILD_FLAGS`:
 
@@ -163,6 +213,9 @@ Opções de compilação dos módulos, passadas por `PLATFORMIO_BUILD_FLAGS`:
 | `-D IOT_FAULT_INJECTION=0` | remove os ensaios de falha; use fora da bancada |
 | `-D IOT_FOLLOWER_LEADER_WATCHDOG=0` | desativa a vigilância do líder pelos outros módulos |
 | `-D IOT_WIFI_TX_POWER_QDBM=78` | potência máxima do ponto de acesso, em quartos de dBm (8 a 84). O padrão é 44 (11 dBm); 78 devolve os 19,5 dBm do ESP32, para sensores longe do módulo |
+| `-D IOT_ISOLATION_MS=6000`, `-D IOT_ISOLATION_RECOVER_MS=3000` | tempo sem nenhum quadro (e com transmissões sem confirmação) até o módulo se declarar isolado do barramento, e de quadros contínuos até voltar; `IOT_ISOLATION_MS=0` desliga a detecção (ver [Módulo isolado do barramento](#módulo-isolado-do-barramento)) |
+| `-D IOT_VIN_ADC_PIN`, `-D IOT_INA219_ADDR` e demais | medição da tensão de entrada e da corrente (ver [Medir a tensão de entrada e a corrente](#medir-a-tensão-de-entrada-e-a-corrente-opcional)) |
+| `--auth-can` (opção dos scripts `build_esp32_can_node.sh` e `upload_esp32_can_node.sh`, que define `IOT_CAN_AUTH=1`) | autentica os comandos `0x304` e `0x305` da Probe. Grave **todos** os módulos e a Probe 00 com ela; a Probe também precisa da chave de enlace. Estado e acerto do contador: comando serial `CANAUTH` e `CANAUTH SYNC <n>` ([Segurança](seguranca.md#autenticação-de-origem-dos-comandos-opcional)) |
 
 ```bash
 PLATFORMIO_BUILD_FLAGS="-D IOT_FAULT_INJECTION=0" ./Codigo/scripts/upload_esp32_can_node.sh 1 /dev/ttyUSB0
@@ -176,7 +229,9 @@ Na bancada, a forma mais simples grava a chave mestra no sensor:
 ./Codigo/scripts/build_pico.sh
 ```
 
-O script deve informar `Enlace: chave mestra (bancada)`. Para gravar, segure o botão BOOTSEL do Pico W, conecte o USB e copie `Codigo/node-wifi/build/edge_node_firmware.uf2` para a unidade `RPI-RP2` que aparece.
+O script deve informar `Enlace: chave mestra (bancada)`. Sem chave nenhuma ele para com erro, a menos que se acrescente `--sem-chave` (o sensor então anuncia por BLE, mas nunca abre sessão). Para gravar, segure o botão BOOTSEL do Pico W, conecte o USB e copie `Codigo/node-wifi/build/pico_w/edge_node_firmware.uf2` para a unidade `RPI-RP2` que aparece.
+
+Cada placa e cada sensor tem a sua pasta de saída: `build/pico_w/`, `build/pico2_w/`, `build/pico_w-<UUID>/`. Compilar para outra placa ou para outro sensor não apaga o arquivo anterior, então vários sensores podem ficar prontos para gravar de uma vez.
 
 Um sensor de uso permanente não deve guardar a chave mestra. Gere as chaves só dele, a partir do número de identificação (UUID), que aparece no console serial do sensor com o comando `VERSION` (`NODE_UUID=0x...`) ou na tela Sensores sem fio:
 
@@ -185,6 +240,10 @@ Um sensor de uso permanente não deve guardar a chave mestra. Gere as chaves só
 ./Codigo/scripts/build_pico.sh --sensor E6616408432B6F39
 ```
 
+Depois de gravar, no console USB (115200, prompt `EDGE>`), `VERSION` mostra a versão e o commit gravados: `VERSION FIRMWARE=<versão> COMMIT=<commit> PROTOCOL=6 NODE_UUID=0x...`. Se a porta estava aberta na partida, o console escreveu também `BOOT FIRMWARE=... COMMIT=... PROTOCOL=6 PROFILE=VIBRATION`.
+
+**Esperas do sensor.** Dois tempos do sensor pesam na reassociação para outro módulo: 10 s sem `CMD_PING` até largar a sessão e 15 s, depois de entrar no ponto de acesso de um módulo, até seguir a oferta de outro. São parâmetros de compilação, `--espera-sessao <ms>` (de 7000 a 60000) e `--espera-oferta <ms>` (de 1000 a 120000), e os padrões são os de sempre. Só mude com medição na bancada física: o procedimento e a projeção da bancada virtual estão em [Validação](validacao.md#esperas-do-sensor). Cada combinação tem a sua pasta de saída (`build/pico_w-sess7000-oferta5000/`), sem apagar o `.uf2` padrão. Valem também para o sensor acústico.
+
 ### Sensor acústico
 
 O mesmo procedimento, com `--audio`:
@@ -192,9 +251,10 @@ O mesmo procedimento, com `--audio`:
 ```bash
 ./Codigo/scripts/build_pico.sh pico_w --audio                      # Pico W, chave mestra
 ./Codigo/scripts/build_pico.sh pico2_w --audio --sensor <UUID>     # Pico 2 W, chaves só dele
+./Codigo/scripts/build_pico.sh pico_w --audio --mic-pins 10,12     # microfone em outros pinos
 ```
 
-O arquivo gerado é `Codigo/node-audio/build/edge_audio_firmware.uf2`; no Pico 2 W a unidade que aparece com BOOTSEL se chama `RP2350`. Depois de gravar, no console USB (115200), `STATUS` deve mostrar `MIC=OK` e `COVERAGE_PCT=100`. Sem sinal do microfone, o console escreve uma linha `[MIC]` com os pinos a conferir.
+O arquivo gerado é `Codigo/node-audio/build/<placa>[-<UUID>][-mic<SCK>-<SD>]/edge_audio_firmware.uf2`, por exemplo `build/pico_w/` ou `build/pico2_w-mic10-12/`; no Pico 2 W a unidade que aparece com BOOTSEL se chama `RP2350`. `--mic-pins SCK,SD` troca os pinos do INMP441 (o WS é sempre o SCK + 1, e o script recusa os GPIO 23, 24, 25 e 29, que são do rádio); o padrão é `18,20`. Depois de gravar, no console USB (115200), `VERSION` mostra a versão, o commit, o perfil, o chip e a placa (`VERSION FIRMWARE=... COMMIT=... PROTOCOL=6 NODE_UUID=0x... PROFILE=ACOUSTIC CHIP=RP2040 BOARD=...`) e `STATUS` deve mostrar `MIC=OK` e `COVERAGE_PCT=100` (logo depois de ligar, `COVERAGE_PCT` fica em 0 até o microfone medir uma janela inteira, e `MIC=OK` ainda não prova nada, porque antes do primeiro relatório do DSP o firmware informa `OK` por falta de dado: repita `STATUS` depois de 2 s). Os outros valores de `MIC` dizem o defeito: `NO_HARDWARE` (a captura I2S não iniciou: confira SCK, WS e SD, e se `--mic-pins` escolheu GPIO livres), `SILENT` (só zeros, com SD aberto ou o microfone sem VDD: confira VDD em 3,3 V e o pino L/R) e `STUCK_HIGH` (só uns: confira se SD está em curto com 3,3 V). Sem sinal do microfone, o console escreve uma linha `[MIC]` com os pinos a conferir.
 
 ### Painel
 
@@ -206,6 +266,21 @@ Na primeira partida:
 
 1. A tela mostra barras vermelha, verde, azul e branca. Se as cores saírem trocadas, ajuste `CYD_INVERT` ou `CYD_RGB_ORDER` em `build_flags` do ambiente `cyd`, em `Codigo/node-paper/platformio.ini`. Se a imagem sair de lado ou espelhada, ajuste `CYD_ROTATION` (0 a 7). A versão só com micro-USB usa outro controlador de tela: acrescente `-D CYD_PANEL_ILI9341=1`.
 2. Em seguida vem a calibração do toque: toque nos marcadores que aparecem nos quatro cantos. A calibração fica gravada; para refazê-la, ligue a placa segurando o botão BOOT.
+
+### Verificar depois de gravar
+
+Um script confere, logo depois de gravar uma placa, o que antes só aparecia no meio de um ensaio: a partida e os comandos de identificação, a chave do enlace, o microfone ou o MPU-6050 dos sensores, o controlador CAN, e a versão e o commit contra o arquivo `VERSION` e o repositório (placas de versões diferentes reprovam):
+
+```bash
+python3 Codigo/scripts/smoke_boot.py probe    --porta /dev/ttyUSB0
+python3 Codigo/scripts/smoke_boot.py modulo   --porta /dev/ttyUSB1 --no 2 [--selftest]
+python3 Codigo/scripts/smoke_boot.py vibracao --porta /dev/ttyACM0
+python3 Codigo/scripts/smoke_boot.py acustico --porta /dev/ttyACM1
+python3 Codigo/scripts/smoke_boot.py painel   --porta /dev/ttyUSB2
+python3 Codigo/scripts/smoke_boot.py leitor   --porta /dev/ttyACM2
+```
+
+A saída lista cada verificação (`OK`, `AVISO` ou `FALHA`), com o que fazer quando falha, e termina em `SMOKE RESULT=PASS|WARN|FAIL`; o código de saída é 0 se aprovou. As placas ESP32 são reiniciadas ao abrir a porta; os sensores respondem a `VERSION`, `STATUS` e `NET`. Com `--selftest` o módulo roda o `SELFTEST CAN`, o que só vale fora da rede. `--estrito` trata o aviso (`COMMIT=...-dirty` ou desconhecido) como falha. Feche a estação e o monitor serial antes: a porta é de um programa só. Mais detalhes em [Validação](validacao.md#verificação-de-fumaça-depois-de-gravar).
 
 ### Quando gravar de novo
 
@@ -267,6 +342,15 @@ O histórico guarda o nome de quem alterou a rede ou autorizou a entrada de um s
 ```
 
 Daí em diante, a estação mostra `Operador sem login` na faixa de status. Tecle `o`, informe nome e senha e opere normalmente; sem login, a pessoa vê tudo, mas qualquer alteração é recusada. A sessão termina sozinha depois de 15 minutos sem uso, ou quando você tecla `o` e escolhe **Sair da sessão**. Para saber o que cada pessoa fez: `./Codigo/scripts/operadores.sh audit --operator ana --since 24h`. Sem nenhum cadastro, nada disso é exigido: o histórico registra o usuário do sistema operacional. Os detalhes e os limites estão em [Segurança](seguranca.md#5-identificação-do-operador).
+
+`run_tui.sh` repassa três variáveis de ambiente à estação, todas opcionais: `OPERATOR_MODE` (`auto`, `required` ou `off`), `OPERATOR_IDLE` (minutos sem atividade até a sessão do operador expirar; `0` desliga a expiração) e `OPERATORS_FILE` (outro arquivo de cadastro). O que vier depois da porta vai direto para a estação, para qualquer opção que não tenha variável:
+
+```bash
+OPERATOR_IDLE=5 ./Codigo/scripts/run_tui.sh /dev/ttyUSB0
+./Codigo/scripts/run_tui.sh /dev/ttyUSB0 --operator-idle 1 --record-session
+```
+
+`operadores.sh check` confere o cadastro. Com o cadastro vazio, ele avisa que no modo padrão a estação volta a registrar a conta do sistema e não bloqueia nada, e que só o modo `required` bloqueia; com todos os operadores desativados, avisa que a estação vai bloquear os comandos que alteram a rede até que um seja reativado (`enable NOME`) ou cadastrado (`add NOME`).
 
 ## 8. Painel de operação
 
@@ -337,12 +421,20 @@ python3 Simulacao/studio/server.py --binary /tmp/ioc_sim_network --browser    # 
 
 Um sensor real pode participar do laboratório pela USB, no lugar do rádio: `Front/.venv/bin/python Simulacao/usb_sensor_bridge.py --port /dev/ttyACM0 --node 1 --rssi -55`. `./Simulacao/iniciar_laboratorio.py` abre Studio, estação e ponte em três terminais de uma vez. Detalhes em [Validação](validacao.md#4-laboratório-virtual).
 
+### Módulo isolado do barramento
+
+Um módulo com o Wi-Fi ligado e um sensor associado pode perder o barramento (cabo solto, terminação, transceptor sem alimentação) sem perder a energia. O líder o declara em falha, mas o módulo, sozinho, seguiria com o sensor e retendo os dados. Por isso ele mesmo percebe: depois de 6 s sem nenhum quadro do barramento **e** com as próprias transmissões sem confirmação (o controlador em erro passivo de transmissão, `TEC` a partir de 128, ou em bus-off), escreve `[ISOLADO] sem quadros do barramento há ... ms e transmissões sem confirmação (TEC=... EFLG=0x..): sensores liberados, ponto de acesso desligado`, libera os sensores, desliga o ponto de acesso e não pede eleição. O líder entrega o sensor a outro módulo, e na bancada virtual a telemetria volta por ele cerca de 8 s depois de o cabo ser solto. Quando o barramento volta e passam 3 s de quadros contínuos, o módulo escreve `[ISOLADO] barramento de volta após ... ms` e volta a participar, sem disputar o sensor nem a liderança. O comando `ISOLAMENTO` mostra o estado (`ISOLADO` ou `LIGADO`), o tempo de detecção, o silêncio atual e os contadores de erro do controlador. O silêncio sozinho não basta: um barramento calmo, sem nenhum outro módulo falando, não é isolamento.
+
+Os tempos vêm das opções `IOT_ISOLATION_MS` e `IOT_ISOLATION_RECOVER_MS` (seção 5); `IOT_ISOLATION_MS=0` desliga a detecção. Um limite do controlador: quadros que ficaram na fila de transmissão do MCP2515 durante o isolamento saem quando o cabo volta, e a fila não pode ser esvaziada com segurança; eles aparecem como telemetria antiga, com `SEQ` fora de ordem. Só a bancada virtual viu o comportamento: o RT 71 do [roteiro](bancada-fisica/roteiro-de-testes.md) o confirma no hardware.
+
 ## 11. Solução de problemas
 
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
 | Módulos reiniciam sozinhos, vários ao mesmo tempo | alimentação insuficiente | no monitor serial, `rst:0xf (BROWNOUT_RST)` ou, no módulo, `ENERGIA` com `quedas_de_tensao` acima de zero confirmam; use o hub com fonte ou uma fonte de 3 A |
 | LEDs de um módulo piscam fora do ritmo, ou o osciloscópio mostra pulsos no GND | corrente do rádio na alimentação e no aterramento da protoboard, ou reinícios | `ENERGIA` no monitor serial e o roteiro de [LEDs piscando e pulsos no GND](#leds-piscando-e-pulsos-no-gnd) |
+| Um módulo escreve `[ISOLADO] sem quadros do barramento há ... ms` e o sensor dele troca de módulo | o módulo perdeu o barramento (cabo CAN_H ou CAN_L solto, terminação, transceptor sem alimentação) mas continua ligado | recoloque o cabo: depois de 3 s de quadros contínuos ele escreve `[ISOLADO] barramento de volta` e se junta de novo à rede sem disputar o sensor. `ISOLAMENTO` mostra o estado e os contadores de erro ([Módulo isolado do barramento](#módulo-isolado-do-barramento)) |
+| `SELFTEST` reprova ou vem com `DICA:` | defeito da placa ou da ligação ao MCP2515 (não do barramento) | siga a dica da linha; os fios SCK, MOSI, MISO, CS e INT, os 5 V e o cristal são os suspeitos ([Gravar as placas](#probe-00-e-módulos-can)) |
 | Sensor listado como "pré-aprovado, ausente" | o módulo guarda o vínculo, e o sensor está desligado ou fora de alcance | ligue o sensor; para tirá-lo da rede de vez, desassocie-o em Sensores sem fio |
 | Módulo mostra `[WLINK] LINK_KEY=MISSING` | gravado sem chave (`.env.local` antigo ou ausente) | `provision_sensor_security.sh --check`; se faltar a chave, `--add-link-key` e grave de novo |
 | Canal de dados parado em "HELLO recusado: a chave não confere" | sensor e módulo gravados com chaves diferentes | grave os dois com as mesmas credenciais |

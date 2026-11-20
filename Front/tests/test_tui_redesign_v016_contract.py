@@ -70,7 +70,9 @@ def test_v016_uses_single_full_screen_subject_architecture() -> None:
 
 
 def test_v016_version_is_consistent() -> None:
+    # A versão tem uma única fonte, o arquivo VERSION (ver test_version_single_source.py).
+    version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     pyproject = (ROOT / "Front" / "pyproject.toml").read_text(encoding="utf-8")
     init = (FRONT / "__init__.py").read_text(encoding="utf-8")
-    assert 'version = "0.19.0"' in pyproject
-    assert '__version__ = "0.19.0"' in init
+    assert f'version = "{version}"' in pyproject
+    assert f'__version__ = "{version}"' in init

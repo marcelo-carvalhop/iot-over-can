@@ -49,6 +49,10 @@ add_executable(edge_audio_firmware
     ${IOC_LINK_DIR}/ioc_link.c
 )
 
+# Versão e commit (arquivo VERSION e git), impressos no boot e em VERSION.
+include(${CMAKE_CURRENT_LIST_DIR}/../common/ioc_version.cmake)
+ioc_version_definitions(edge_audio_firmware)
+
 # Programa da PIO (receptor I2S) convertido em cabeçalho C no build.
 pico_generate_pio_header(edge_audio_firmware ${CMAKE_CURRENT_LIST_DIR}/inmp441_i2s.pio)
 
@@ -109,3 +113,13 @@ target_compile_definitions(edge_audio_firmware PRIVATE
     AUDIO_PIN_SCK=${AUDIO_PIN_SCK}
     AUDIO_PIN_SD=${AUDIO_PIN_SD}
 )
+
+# Esperas do sensor na reassociação (edge_protocol_definitions.h). Vazio mantém o padrão do arquivo; só mude
+# com medição em bancada física (Codigo/scripts/build_pico.sh --espera-sessao / --espera-oferta).
+set(IOT_SESSION_TIMEOUT_MS "" CACHE STRING "Sem CMD_PING por este tempo (ms, 7000..60000) o sensor larga a sessão")
+set(IOT_OFFER_SWITCH_HOLD_MS "" CACHE STRING "Tempo (ms, 1000..120000) antes de seguir a oferta de outro módulo")
+foreach(_iot_param IOT_SESSION_TIMEOUT_MS IOT_OFFER_SWITCH_HOLD_MS)
+    if(NOT "${${_iot_param}}" STREQUAL "")
+        target_compile_definitions(edge_audio_firmware PRIVATE ${_iot_param}=${${_iot_param}})
+    endif()
+endforeach()

@@ -157,6 +157,11 @@ class LogManager:
             }
         )
 
+    def write_record(self, data: dict[str, Any]) -> None:
+        """Grava direto no arquivo da sessão, sem passar pelo barramento (âncora da auditoria no encerramento)."""
+
+        self._write_jsonl(data)
+
     def _write_jsonl(self, data: dict[str, Any]) -> None:
         if self._file is None:
             return

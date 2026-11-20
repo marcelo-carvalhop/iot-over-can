@@ -101,6 +101,7 @@ void simPrintHelp() {
   puts("#CTRL HELP NODE <id> ADD|REMOVE");
   puts("#CTRL HELP NODE <id> POWER ON|OFF|RESTART");
   puts("#CTRL HELP NODE <id> TX ON|OFF");
+  puts("#CTRL HELP NODE <id> CABLE OK|CUT  (cabo CAN solto: o no nao ouve nem e ouvido)");
   puts("#CTRL HELP NODE <id> BUDGET <1..100>  (percentual de passos do loop)");
   puts("#CTRL HELP SENSOR ADD <uuid> VIBRATION|ACOUSTIC|PANEL");
   puts("#CTRL HELP PANEL PAGE <uuid>  (pagina do painel virtual ou espelho do painel USB)");
@@ -218,7 +219,7 @@ void simControl(const std::string& line, bool& running, bool& quit,
         return;
       }
       if (!(in >> state) || (in >> extra))
-        throw std::runtime_error("uso: NODE <id> POWER ON|OFF|RESTART, TX ON|OFF ou BUDGET <1..100>");
+        throw std::runtime_error("uso: NODE <id> POWER ON|OFF|RESTART, TX ON|OFF, CABLE OK|CUT ou BUDGET <1..100>");
       if (!existing) throw std::runtime_error("Node ausente; use NODE <id> ADD");
       Node& n = *existing;
       state = simUpper(state);
@@ -232,6 +233,9 @@ void simControl(const std::string& line, bool& running, bool& quit,
       if (kind == "TX") {
         if (state != "ON" && state != "OFF") throw std::runtime_error("TX deve ser ON ou OFF");
         n.txDisconnected = state == "OFF";
+      } else if (kind == "CABLE") {
+        if (state != "OK" && state != "CUT") throw std::runtime_error("CABLE deve ser OK ou CUT");
+        n.cableCut = state == "CUT";
       } else if (kind == "POWER") {
         if (state == "OFF") {
           if (!n.powered) throw std::runtime_error("Node ja esta desligado");
@@ -248,7 +252,7 @@ void simControl(const std::string& line, bool& running, bool& quit,
             throw std::runtime_error("limite de boots atingido para esse ID");
           powerOff(n, true);
         } else throw std::runtime_error("POWER deve ser ON, OFF ou RESTART");
-      } else throw std::runtime_error("NODE aceita ADD, REMOVE, POWER ou TX");
+      } else throw std::runtime_error("NODE aceita ADD, REMOVE, POWER, TX ou CABLE");
       printf("#CTRL OK NODE id=%u kind=%s state=%s\n", n.id, kind.c_str(), state.c_str());
       return;
     }

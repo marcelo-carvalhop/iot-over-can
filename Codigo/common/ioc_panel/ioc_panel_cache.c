@@ -10,7 +10,7 @@ static int is_data(uint16_t id) { return id > IOC_ID_DATA_BASE && id <= IOC_ID_D
 ioc_pclass ioc_pcache_classify(uint16_t id, const uint8_t *data, uint8_t len, uint8_t *key) {
     uint8_t k = 0;
     ioc_pclass cls = IOC_PCLASS_LIVE;
-    if (id == IOC_ID_LOAD_HIGH || id == IOC_ID_LOAD_LOW || id == IOC_ID_DATA_CMD) {
+    if (id == IOC_ID_LOAD_HIGH || id == IOC_ID_LOAD_LOW || id == IOC_ID_DATA_CMD || id == IOC_ID_AUTH_TAG) {
         cls = IOC_PCLASS_DROP;
     } else if (id == IOC_ID_ELECTION) {
         cls = IOC_PCLASS_EVENT;

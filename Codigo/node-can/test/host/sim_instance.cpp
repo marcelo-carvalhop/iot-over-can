@@ -122,6 +122,10 @@ class Instance : public ::SimInstance {
     can.rec = rec;
     can.tec = tec;
   }
+  void canSetErrorFlags(uint8_t eflg) override { can.eflg = eflg; }
+  uint8_t canErrorFlags() const override { return can.eflg; }
+  void canSetLoopbackFault(int fault) override { can.loopbackFault = fault; }
+  bool canLoopback() const override { return can.loopback; }
 
   std::string serialTake() override {
     std::string out;

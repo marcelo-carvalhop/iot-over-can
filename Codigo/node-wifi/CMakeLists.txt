@@ -39,6 +39,10 @@ add_executable(edge_node_firmware
     ${IOC_LINK_DIR}/ioc_bench.c
 )
 
+# Versão e commit (arquivo VERSION e git), impressos no boot e em VERSION.
+include(${CMAKE_CURRENT_LIST_DIR}/../common/ioc_version.cmake)
+ioc_version_definitions(edge_node_firmware)
+
 # Adiciona diretórios de cabeçalho (inclui também lwipopts.h, que precisa
 # estar visível no include path do pico_cyw43_arch_lwip_*)
 target_include_directories(edge_node_firmware PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${IOC_LINK_DIR})
@@ -86,3 +90,13 @@ target_compile_definitions(edge_node_firmware PRIVATE
     EDGE_LINK_DEVICE_UUID_HEX="${EDGE_LINK_DEVICE_UUID}"
     EDGE_LINK_MASTER_KEY_HEX="${EDGE_LINK_MASTER_KEY}"
 )
+
+# Esperas do sensor na reassociação (edge_protocol_definitions.h). Vazio mantém o padrão do arquivo; só mude
+# com medição em bancada física (Codigo/scripts/build_pico.sh --espera-sessao / --espera-oferta).
+set(IOT_SESSION_TIMEOUT_MS "" CACHE STRING "Sem CMD_PING por este tempo (ms, 7000..60000) o sensor larga a sessão")
+set(IOT_OFFER_SWITCH_HOLD_MS "" CACHE STRING "Tempo (ms, 1000..120000) antes de seguir a oferta de outro módulo")
+foreach(_iot_param IOT_SESSION_TIMEOUT_MS IOT_OFFER_SWITCH_HOLD_MS)
+    if(NOT "${${_iot_param}}" STREQUAL "")
+        target_compile_definitions(edge_node_firmware PRIVATE ${_iot_param}=${${_iot_param}})
+    endif()
+endforeach()

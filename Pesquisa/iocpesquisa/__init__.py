@@ -8,4 +8,4 @@ análise que regenera todas as tabelas e figuras a partir dos registros.
 Ver Pesquisa/README.md e Pesquisa/metodologia.md.
 """
 
-__version__ = "0.21.0"
+__version__ = "0.22.0"

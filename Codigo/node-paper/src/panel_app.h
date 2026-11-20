@@ -19,7 +19,10 @@
 #include "ioc_view.h"
 #include "panel_signal.h"
 
-#define PANEL_FW_VERSION "0.21.0"
+/* Versão e commit vêm do build (arquivo VERSION e git; ver ioc_version.h). */
+#include "ioc_version.h"
+#define PANEL_FW_VERSION IOT_FW_VERSION
+#define PANEL_FW_COMMIT IOT_FW_COMMIT
 
 /* Teclas do CardKB v1.1 (I2C 0x5F). */
 enum : uint8_t {

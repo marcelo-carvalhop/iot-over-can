@@ -69,7 +69,7 @@ O [Guia de uso](Documentacao/guia-de-uso.md) mostra também como reproduzir uma 
 
 Para ler esta documentação longe do computador, há um leitor de papel eletrônico: o M5Stack PaperColor com o firmware de [`Codigo/leitor`](Codigo/leitor), que traz este README e todos os documentos acima ([Guia de uso, seção 9](Documentacao/guia-de-uso.md#9-leitor-da-documentação)).
 
-Documentos de etapas anteriores ficam, sem revisão, em [`Documentacao/historico/`](Documentacao/historico/). A ferramenta de pesquisa tem a própria documentação em [`Pesquisa/`](Pesquisa/README.md).
+O roteiro de testes da bancada física (89 requisitos de teste) e o modelo de registro de sessão ficam em [`Documentacao/bancada-fisica/`](Documentacao/bancada-fisica/). Documentos de etapas anteriores ficam, sem revisão, em [`Documentacao/historico/`](Documentacao/historico/). A ferramenta de pesquisa tem a própria documentação em [`Pesquisa/`](Pesquisa/README.md).
 
 ## Licença
 

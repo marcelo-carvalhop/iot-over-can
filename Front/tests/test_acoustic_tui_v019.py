@@ -466,3 +466,19 @@ async def test_config_dialog_proposes_the_threshold_of_each_mode(prefs_file) -> 
         dialog.query_one("#cfg-mode", Select).value = "EVENTS"
         await settle(pilot, 2)
         assert threshold.value == "5"
+
+
+@pytest.mark.parametrize(
+    ("state", "text"),
+    [("OK", "Sinal presente"), ("SILENT", "Sem sinal (SD aberto"), ("STUCK_HIGH", "SD preso em nível alto"),
+     ("NO_HARDWARE", "I2S não iniciou"), ("OUTRO", "Outro")],
+)
+def test_microphone_state_reported_by_status_is_explained(state: str, text: str) -> None:
+    """O firmware informa MIC=OK ou o motivo da falha (e não YES/NO, que a tela exibia como "Yes")."""
+
+    from pico_tui.acoustic_view import microphone_text
+    from pico_tui.core.models import SensorNode
+
+    sensor = SensorNode(parent_node_id=2, child_id=1)
+    sensor.health.microphone_state = state
+    assert text in str(microphone_text(sensor))

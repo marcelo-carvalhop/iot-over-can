@@ -601,7 +601,7 @@ const char *ioc_wd_event_name(uint8_t event) {
 const char *ioc_wd_event_reason_name(uint8_t reason) {
     static const char *const names[] = {
         "NONE", "FORMAT", "NOT_BOUND", "KEY", "PROTOCOL", "REPLAY", "BUSY",
-        "SEND", "TIMEOUT", "UNBOUND", "SLEEP", "TEST", "RADIO_OFF", "IDLE",
+        "SEND", "TIMEOUT", "UNBOUND", "SLEEP", "TEST", "RADIO_OFF", "IDLE", "ISOLATED",
     };
     return reason < sizeof(names) / sizeof(names[0]) ? names[reason] : "UNKNOWN";
 }

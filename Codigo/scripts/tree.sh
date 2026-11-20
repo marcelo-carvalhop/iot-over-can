@@ -6,5 +6,6 @@ find . \
   -path './.git' -prune -o \
   -path './Front/.venv' -prune -o \
   -path './Codigo/node-wifi/build' -prune -o \
+  -path './Codigo/node-audio/build' -prune -o \
           -path './Codigo/node-can/.pio' -prune -o \
   -print | sort

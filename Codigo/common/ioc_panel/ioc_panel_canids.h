@@ -23,6 +23,7 @@
 #define IOC_ID_DATA_CMD        0x304
 #define IOC_ID_TEST_CMD        0x305
 #define IOC_ID_TEST_STATUS     0x306
+#define IOC_ID_AUTH_TAG        0x307
 #define IOC_ID_ASSOC_STATUS_BASE 0x320
 #define IOC_ID_ASSOC_STATUS_LAST 0x35F
 #define IOC_ID_DATA_BASE       0x380

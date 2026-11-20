@@ -24,6 +24,7 @@ Quanto menor o identificador, maior a prioridade no barramento.
 | `0x304` | Probe 00 | comando a um sensor sem fio | [7](#7-canal-de-dados) |
 | `0x305` | Probe 00 | comando de ensaio | [12](#12-ensaios-de-falha) |
 | `0x306` | módulos | estado de ensaio | [12](#12-ensaios-de-falha) |
+| `0x307` | Probe 00 | etiqueta de autenticação do comando `0x304` ou `0x305` (só com `IOT_CAN_AUTH=1`) | [7](#etiqueta-de-autenticação-0x307) |
 | `0x320 + 2N`, `+1` (`0x320`–`0x35F`) | módulo N | estado de um vínculo, em duas partes | [6](#6-associação) |
 | `0x380 + N` (`0x381`–`0x39F`) | módulo N | dados dos sensores do módulo, segmentados | [7](#7-canal-de-dados) |
 | `0x7EF` | Probe 00 | carga artificial de baixa prioridade (ensaio) | [12](#12-ensaios-de-falha) |
@@ -65,7 +66,7 @@ A estação conversa com a Probe 00 por linhas de texto na serial USB (115200 ba
 
 | Comando | Efeito |
 |---|---|
-| `PROBE_VERSION` (ou `VERSION`) | versão do firmware, protocolo e lista `FEATURES` |
+| `PROBE_VERSION` (ou `VERSION`) | versão e commit do firmware, protocolo e lista `FEATURES` (formato em «Identificação do firmware») |
 | `PROBE_STATUS` (ou `STATUS`) | estado do CAN e tempo ligado |
 | `22 ...` | comando CAN de quatro bytes (seção 2) |
 | `WIRELESS BIND <node> <uuid> [AUTO]`, `UNBIND`, `POLICY` | associação (seção 6) |
@@ -74,9 +75,30 @@ A estação conversa com a Probe 00 por linhas de texto na serial USB (115200 ba
 | `METRICS ON\|OFF\|RESET` | medição do barramento (seção 11) |
 | `FAULT ...` | ensaios de falha (seção 12) |
 | `ECHO`, `CONFIG`, `BENCH CRYPTO` | instrumentação de medição (seção 11) |
-| `ENERGIA`, `ENERGIA LIMPAR` | motivo da última partida da placa e contagem dos reinícios anormais (queda de tensão, watchdog, falha do programa); vale para a Probe 00 e para os módulos, no monitor serial |
+| `ENERGIA`, `ENERGIA LIMPAR` | motivo da última partida da placa e contagem dos reinícios anormais (queda de tensão, watchdog, falha do programa) e, se ligadas na compilação, a tensão de entrada e a corrente; vale para a Probe 00 e para os módulos, no monitor serial |
+| `SELFTEST [CAN\|LEDS]` | autoteste do controlador CAN (contadores de erro e quatro quadros pelo laço interno do MCP2515) e dos LEDs; só com a placa fora da rede (Probe 00 ou módulo em `IDLE`); no monitor serial |
+| `ISOLAMENTO` | estado do detector de isolamento do barramento; só nos módulos |
+| `CANAUTH`, `CANAUTH SYNC <n>` | estado da autenticação dos comandos `0x304` e `0x305` e acerto do contador de um módulo; só na compilação com `IOT_CAN_AUTH=1` (seção 7) |
 
 A placa escreve `[NODE n] [ENERGIA] ATENCAO: reinicio=... quedas_de_tensao=... watchdog=... panico=...` só quando a partida anterior foi anormal; uma partida normal, inclusive a provocada pela abertura da porta serial, não escreve nada. `ENERGIA` mostra a mesma linha sem o `ATENCAO:`, com `wifi_tx_max_dbm`.
+
+A saída de `ENERGIA` ganha os campos da medição, quando ligada: `vin_mv=<mV> vin_min_mv=<mV> vin_max_mv=<mV> vin=OK|BAIXA|CRITICA|SEM_LEITURA` e `corrente_ma=<mA> corrente_max_ma=<mA>` (ou `corrente=SEM_RESPOSTA|SEM_LEITURA`). `SELFTEST` escreve uma linha `[NODE n] [SELFTEST] CHECK=<verificação> RESULT=PASS|WARN|FAIL|VISUAL REASON=...`, uma linha `DICA:` por defeito e a final `RESULT=... CHECKS=... WARN=... FAIL=... DURATION_MS=...`; recusado dentro da rede com `RECUSADO ESTADO=...`. `ISOLAMENTO` responde `[NODE n] [ISOLADO] estado=ISOLADO|LIGADO detecao_ms=... silencio_ms=... TEC=... REC=... EFLG=0x..`, e as transições escrevem `[ISOLADO] sem quadros do barramento ha ... ms ...` e `[ISOLADO] barramento de volta apos ... ms ...`.
+
+### Identificação do firmware
+
+Todo firmware diz que versão e que commit tem gravados. A versão é a do arquivo `VERSION` da raiz, a única fonte; o commit é o do git na compilação, com `-dirty` se havia alterações e `unknown` fora de um repositório (a bancada virtual usa `sim`).
+
+```text
+[NODE 2] [BOOT] FIRMWARE=0.22.0 COMMIT=abc1234 PROTOCOL=CAN_CLASSIC_V1 ROLE=NODE        (partida de cada ESP32; ROLE=PROBE na Probe 00)
+[PROBE 00] FIRMWARE=0.22.0 COMMIT=abc1234 FEATURES=WIRELESS_DATA,...
+PROBE_VERSION FIRMWARE=0.22.0 COMMIT=abc1234 PROTOCOL=CAN_CLASSIC_V1 NODE=0 FEATURES=...
+NODE_VERSION NODE=2 FIRMWARE=0.22.0 COMMIT=abc1234 PROTOCOL=CAN_CLASSIC_V1 FEATURES=...  (comando VERSION no monitor de um módulo)
+VERSION FIRMWARE=0.22.0 COMMIT=abc1234 PROTOCOL=6 NODE_UUID=0x...                      (console do sensor de vibração)
+VERSION FIRMWARE=0.22.0 COMMIT=abc1234 PROTOCOL=6 NODE_UUID=0x... PROFILE=ACOUSTIC CHIP=RP2040 BOARD=pico_w   (sensor acústico)
+BOOT FIRMWARE=0.22.0 COMMIT=abc1234 PROTOCOL=6 PROFILE=VIBRATION                         (sensores, só se a porta USB estava aberta na partida)
+```
+
+`PROTOCOL` é o protocolo do barramento (`CAN_CLASSIC_V1`) nos ESP32 e o do canal de dados (`6`) nos sensores. `Codigo/scripts/smoke_boot.py` confere estas linhas contra o arquivo `VERSION` e o repositório (seção «Verificação de fumaça» de [Validação](validacao.md#verificação-de-fumaça-depois-de-gravar)).
 
 `FEATURES` diz o que o firmware da Probe entende: `WIRELESS_DATA`, `ACOUSTIC_DATA`, `BUS_METRICS`, `FAULT_INJECTION`, `FAILOVER`, `RESEARCH` e `TIME_SYNC`. A estação só usa um recurso que a Probe anuncia.
 
@@ -200,6 +222,21 @@ tag = HMAC-SHA256(chave, cabeçalho || conteúdo)[0..7]
 
 O contador começa em 1 em cada sentido e só é aceito se for maior que o último. As mensagens transportadas por `DATA_UP` e `DATA_DOWN` estão definidas em `Codigo/node-wifi/edge_protocol_definitions.h`.
 
+### Etiqueta de autenticação (`0x307`)
+
+Opcional: só existe quando a Probe 00 e os módulos são compilados com `--auth-can` (`IOT_CAN_AUTH=1`). A Probe transmite a etiqueta logo depois de cada comando `0x304` ou `0x305`, e os módulos só executam o comando quando a etiqueta confere.
+
+```text
+tipo | atualidade (2 bytes, big-endian) | MAC (5 bytes)
+```
+
+- **tipo**: `0` para o comando `0x304`, `1` para o `0x305`.
+- **MAC**: `HMAC-SHA256` com `K_bus` sobre o identificador do comando (2 bytes), os 8 bytes do comando e a atualidade completa (8 bytes), nessa ordem, truncado em 5 bytes, com `K_bus = HMAC-SHA256(K_master, "ioc-can-v1")`.
+- **atualidade**: um contador de 64 bits que a Probe incrementa a cada comando; só os 16 bits baixos viajam. O módulo reconstrói o valor completo, só o aceita se for maior que o último aceito e no máximo 65 535 à frente, e confere o MAC com ele.
+- **ordem e prazo**: o módulo guarda o comando e o executa quando a etiqueta chega, até 100 ms depois. Etiqueta sem comando, comando sem etiqueta e etiqueta que não confere são descartados e contados (`CANAUTH`). Uma etiqueta falsa não descarta o comando guardado: a verdadeira ainda pode chegar dentro do prazo.
+
+Formato e regras: `Codigo/common/ioc_link/ioc_canauth.h`. Ver [Segurança](seguranca.md#autenticação-de-origem-dos-comandos-opcional).
+
 ### Comando a um sensor (`0x304`)
 
 ```text
@@ -293,7 +330,7 @@ evento | motivo | quantidade(2) | valor | estações | segundos desde o vínculo
 | `SESSION_UP` | sessão autenticada | último número do IP |
 | `SESSION_DOWN` | sessão encerrada (`reason`) | — |
 
-Motivos: `NONE`, `FORMAT` (HELLO mal formado), `NOT_BOUND` (sensor não associado a este módulo; o relato traz o UUID), `KEY` (chave não confere), `PROTOCOL` (versão diferente), `REPLAY` (repetição do HELLO da sessão em vigor), `BUSY` (autenticação anterior em andamento), `SEND` (falha ao enviar o CHALLENGE), `TIMEOUT`, `UNBOUND`, `SLEEP` (painel dormindo), `TEST` (ensaio), `RADIO_OFF`, `IDLE` (nenhum sensor associado). O filho 0 marca um fato do módulo, antes de o sensor se identificar. Fatos repetidos são agrupados: o primeiro sai na hora e os seguintes no máximo a cada 5 s, com `count` igual ao número agrupado.
+Motivos: `NONE`, `FORMAT` (HELLO mal formado), `NOT_BOUND` (sensor não associado a este módulo; o relato traz o UUID), `KEY` (chave não confere), `PROTOCOL` (versão diferente), `REPLAY` (repetição do HELLO da sessão em vigor), `BUSY` (autenticação anterior em andamento), `SEND` (falha ao enviar o CHALLENGE), `TIMEOUT`, `UNBOUND`, `SLEEP` (painel dormindo), `TEST` (ensaio), `RADIO_OFF`, `IDLE` (nenhum sensor associado), `ISOLATED` (o módulo perdeu o barramento CAN e liberou o sensor; ver «Módulo isolado do barramento» em `arquitetura.md`). O filho 0 marca um fato do módulo, antes de o sensor se identificar. Fatos repetidos são agrupados: o primeiro sai na hora e os seguintes no máximo a cada 5 s, com `count` igual ao número agrupado.
 
 ## 8. Sensor acústico no canal de dados
 
@@ -344,7 +381,7 @@ PANEL NODE=2 CHILD=1 TYPE=MARK SEQ=1 KIND=ACK STEP=2 AGE_MS=850 TEXT_HEX=<texto 
 
 ## 10. Console USB dos sensores
 
-Comandos de leitura: `VERSION`, `STATUS`, `NET`, `AUTH STATUS`, `FFT ONCE`, `TELEMETRY ONCE`, `DTC`. Comandos que alteram o sensor exigem uma sessão de manutenção (`AUTH UNLOCK <token>`; ver [Segurança](seguranca.md)). `NET` mostra o estado do canal de dados, as chaves presentes (`LINK_KEYS=DEVICE`, `MASTER`, `NONE` ou `UUID_MISMATCH`), o módulo e o filho. O sensor escreve uma linha `[NET]` a cada passo até a sessão:
+Comandos de leitura: `VERSION` (versão e commit, formato em «Identificação do firmware»), `STATUS`, `NET`, `AUTH STATUS`, `FFT ONCE`, `TELEMETRY ONCE`, `DTC`. Comandos que alteram o sensor exigem uma sessão de manutenção (`AUTH UNLOCK <token>`; ver [Segurança](seguranca.md)). `NET` mostra o estado do canal de dados, as chaves presentes (`LINK_KEYS=DEVICE`, `MASTER`, `NONE` ou `UUID_MISMATCH`), o módulo e o filho. O sensor escreve uma linha `[NET]` a cada passo até a sessão:
 
 ```text
 [NET] oferta do Node 2 conferida: entrando no Wi-Fi IOC-02

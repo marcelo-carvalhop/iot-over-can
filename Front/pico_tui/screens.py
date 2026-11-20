@@ -1577,6 +1577,7 @@ class HelpScreen(BaseScreen):
                 Text(":wireless   :bind [uuid] [módulo] [auto]   :unbind [uuid] [módulo]   :policy [sensor] auto|manual"),
                 Text(":metrics [on|off|reset|export]   :ensaios [nome|stop]   :export metrics"),
                 Text(":login   :logout   :operador (quem está identificado e como)"),
+                Text(":rotulo NOME | off   grava os eventos sonoros com um rótulo (exemplos para treino futuro)"),
                 Text(":disconnect   :reconnect   :export csv   :snapshot   :security   :lock   :quit"),
             ],
             indent=2,

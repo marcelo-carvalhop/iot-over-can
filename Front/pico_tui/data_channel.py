@@ -34,6 +34,7 @@ REASON_TEXT = {
     "TEST": "ensaio de falha",
     "RADIO_OFF": "rádio do módulo desligado",
     "IDLE": "nenhum sensor associado ao módulo",
+    "ISOLATED": "o módulo perdeu o barramento CAN e liberou o sensor",
 }
 
 # Fatos que são parte do caminho normal; os demais pedem atenção.

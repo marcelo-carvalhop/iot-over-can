@@ -12,6 +12,10 @@
 #include "pesquisa.h"
 #include "relogio.h"
 #include "energia.h"
+#include "autoteste.h"
+#include "isolamento.h"
+#include "canauth.h"
+#include "firmware_info.h"
 
 /* =========================================================
  * VARIAVEIS EXTERNAS DO .ino
@@ -83,8 +87,15 @@ static void printHexByte(uint8_t value) {
 }
 
 static void printProbeVersion() {
-  Serial.println("PROBE_VERSION FIRMWARE=0.21.0 PROTOCOL=CAN_CLASSIC_V1 NODE=0 "
-                 "FEATURES=WIRELESS_DATA,ACOUSTIC_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER,RESEARCH,TIME_SYNC");
+  Serial.println("PROBE_VERSION FIRMWARE=" IOT_FW_VERSION " COMMIT=" IOT_FW_COMMIT
+                 " PROTOCOL=" IOT_PROTOCOL_NAME " NODE=0 FEATURES=" IOT_FEATURES);
+}
+
+// Um módulo também diz o que tem gravado: sem isso, uma mistura de versões na
+// bancada só aparece quando alguma coisa se comporta de forma estranha.
+static void printNodeVersion() {
+  Serial.printf("NODE_VERSION NODE=%u FIRMWARE=%s COMMIT=%s PROTOCOL=%s FEATURES=%s\n",
+                static_cast<unsigned>(NODE_ID), IOT_FW_VERSION, IOT_FW_COMMIT, IOT_PROTOCOL_NAME, IOT_FEATURES);
 }
 
 static void printProbeStatus() {
@@ -94,6 +105,10 @@ static void printProbeStatus() {
 
 static bool handleProbeIntrospectionCommand(const char *command) {
   if (NODE_ID != 0) {
+    if (strcmp(command, "VERSION") == 0 || strcmp(command, "NODE_VERSION") == 0) {
+      printNodeVersion();
+      return true;
+    }
     return false;
   }
 
@@ -297,6 +312,18 @@ void handleSerialCommands() {
       }
 
       if (energiaHandleSerialCommand(buffer)) {
+        return;
+      }
+
+      if (autotesteHandleSerialCommand(buffer)) {
+        return;
+      }
+
+      if (isolamentoHandleSerialCommand(buffer)) {
+        return;
+      }
+
+      if (canauthHandleSerialCommand(buffer)) {
         return;
       }
 

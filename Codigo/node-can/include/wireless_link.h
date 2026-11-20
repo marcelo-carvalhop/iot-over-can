@@ -40,6 +40,13 @@ bool wirelessLinkHasKey();
  */
 void wirelessLinkStationEvent(uint8_t kind, const uint8_t* mac, uint32_t ip);
 
+/*
+ * Chamado por isolamento.cpp: o Node perdeu (ou recuperou) o barramento CAN. Isolado, libera os sensores
+ * (CMD_RELEASE), desliga ponto de acesso e ofertas; os vínculos ficam, e o ponto de acesso volta com o
+ * barramento.
+ */
+void wirelessLinkSetIsolated(bool isolated);
+
 /* true quando há sessão de dados autenticada com o sensor. */
 bool wirelessLinkIsSecure(uint64_t uuid);
 

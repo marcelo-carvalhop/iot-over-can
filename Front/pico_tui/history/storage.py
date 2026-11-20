@@ -183,6 +183,7 @@ class HistoryStore:
         add_column("events", "chain", "TEXT")
         add_column("sessions", "station", "TEXT NOT NULL DEFAULT ''")
         db.execute("CREATE INDEX IF NOT EXISTS idx_events_actor ON events(actor, epoch) WHERE actor IS NOT NULL")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_events_chain ON events(chain) WHERE chain IS NOT NULL")
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=3.0)
@@ -317,6 +318,32 @@ class HistoryStore:
                 (*params, limit),
             ).fetchall()
         return [_event_from_row(row) for row in rows]
+
+    def audit_head(self) -> tuple[int, str]:
+        """Tamanho da cadeia de auditoria e hash do último elo: (registros, hash).
+
+        É o par que a estação anota fora do banco ao encerrar a sessão: com ele,
+        o corte dos últimos registros, que a própria cadeia não revela, passa a
+        ser detectado (``audit_position``).
+        """
+
+        with self._connect() as db:
+            count = db.execute("SELECT COUNT(chain) FROM events WHERE category=?", (AUDIT_CATEGORY,)).fetchone()[0]
+            row = db.execute("SELECT chain FROM events WHERE category=? AND chain IS NOT NULL "
+                             "ORDER BY id DESC LIMIT 1", (AUDIT_CATEGORY,)).fetchone()
+        return int(count), (row[0] if row else "")
+
+    def audit_position(self, head: str) -> int | None:
+        """Posição (1 é o primeiro registro) do elo com este hash, ou None se a cadeia não o contém."""
+
+        if not head:
+            return None
+        with self._connect() as db:
+            row = db.execute("SELECT id FROM events WHERE category=? AND chain=?", (AUDIT_CATEGORY, head)).fetchone()
+            if row is None:
+                return None
+            return int(db.execute("SELECT COUNT(chain) FROM events WHERE category=? AND id<=?",
+                                  (AUDIT_CATEGORY, row[0])).fetchone()[0])
 
     def verify_audit_chain(self) -> tuple[int, int | None]:
         """Confere a cadeia de auditoria: (registros conferidos, id do primeiro registro adulterado)."""

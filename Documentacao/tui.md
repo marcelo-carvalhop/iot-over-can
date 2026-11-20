@@ -28,6 +28,7 @@ O programa instalado é `Front/.venv/bin/iot-over-can-tui`. Opções:
 | `--messages`, `--no-messages` | mostra ou oculta as mensagens recentes no Início |
 | `--ascii` | símbolos simples, para terminais sem Unicode |
 | `--no-file-log` | não grava a sessão em arquivo |
+| `--record-session` | grava também a serial inteira da Probe 00 em `logs/gravacao_<data>_<sessão>.log` (pode ocupar muito disco; ver a seção 6) |
 
 Python 3.11 ou mais novo; as versões das bibliotecas estão fixadas em `Front/pyproject.toml` (Textual 8.2.8, Rich 15.0.0, pySerial 3.5).
 
@@ -117,7 +118,7 @@ A estação não cria nem remove sensores por conta própria: o sensor aparece q
 
 ### Comandos
 
-O lugar dos comandos operacionais. O alvo pode ser a rede, um módulo ou um sensor; `t` troca o alvo. As ações, agrupadas em Consultar, Operar e Manutenção, trazem descrição, parâmetro guiado, a linha CAN quando houver e a exigência de autorização. Depois do envio, a tela volta para onde foi aberta. `a` abre o campo de **comando manual**, para diagnóstico: texto sem `:` vai ao equipamento conectado; com `:`, executa um comando interno, por exemplo `:status`, `:node 04.01`, `:can 22 20 FF 00`, `:bind`, `:unbind`, `:policy`, `:metrics`, `:ensaios`, `:tel`, `:fft`, `:dtc`, `:config`, `:measure`, `:baseline`, `:cal`, `:connect`, `:snapshot`, `:security`, `:lock`, `:login`, `:logout`, `:operador` e `:quit`.
+O lugar dos comandos operacionais. O alvo pode ser a rede, um módulo ou um sensor; `t` troca o alvo. As ações, agrupadas em Consultar, Operar e Manutenção, trazem descrição, parâmetro guiado, a linha CAN quando houver e a exigência de autorização. Depois do envio, a tela volta para onde foi aberta. `a` abre o campo de **comando manual**, para diagnóstico: texto sem `:` vai ao equipamento conectado; com `:`, executa um comando interno, por exemplo `:status`, `:node 04.01`, `:can 22 20 FF 00`, `:bind`, `:unbind`, `:policy`, `:metrics`, `:ensaios`, `:tel`, `:fft`, `:dtc`, `:config`, `:measure`, `:baseline`, `:cal`, `:connect`, `:snapshot`, `:security`, `:lock`, `:login`, `:logout`, `:operador`, `:rotulo` e `:quit`. `:rotulo <nome>` liga a coleta de exemplos de sons rotulados (ver [Sensor acústico](sensor-acustico.md#63-events--eventos-sonoros)); `:rotulo off` a encerra e `:rotulo` sozinho mostra o estado.
 
 O **lançador de comandos** (`k`) é uma linha de entrada rápida: o operador digita, por exemplo, `22 00 FF 01`, a janela explica o que vai acontecer e `Enter` envia. As setas recuperam os últimos 50 comandos. As regras de autorização são as mesmas.
 
@@ -186,7 +187,7 @@ Na tela de um sensor, `l` abre os limites de alarme do perfil: valor eficaz, PPV
 
 ## 6. Gravação e reprodução
 
-Cada sessão com hardware é gravada em `logs/gravacao_<data>_<sessão>.log`, com os comandos enviados como comentários. Tokens e chaves são gravados como `***`. A gravação é reproduzida como uma sessão normal:
+Com `--record-session`, a sessão com hardware é gravada, linha a linha, em `logs/gravacao_<data>_<sessão>.log`, com os comandos enviados como comentários. Sem a opção, só o histórico (`logs/historico.sqlite3`) e o arquivo da sessão (`logs/session_<id>.jsonl`) são escritos: a gravação integral é opcional porque pode ocupar muito disco. Em `run_tui.sh`, a opção vai depois da porta (`./Codigo/scripts/run_tui.sh /dev/ttyUSB0 --record-session`). Tokens e chaves são gravados como `***`. A gravação é reproduzida como uma sessão normal:
 
 ```bash
 cd Front
@@ -216,7 +217,7 @@ Antes de enviar um comando que altera a rede, a estação consulta o `SecurityMa
 
 A estação sabe quem a usa e grava o nome de quem agiu no histórico. Com operadores cadastrados (`./Codigo/scripts/operadores.sh add NOME`), a faixa de status mostra `Operador sem login` até alguém teclar `o`, informar nome e senha e entrar; dali em diante mostra o nome. Sem login, a pessoa vê tudo e não altera nada: o comando é recusado e a tentativa fica registrada. A sessão expira depois de 15 minutos sem teclado, mouse ou comando; `o` de novo mostra a sessão e permite sair. Sem nenhum cadastro, o responsável é o usuário do sistema operacional, marcado como `(sistema)`.
 
-No histórico (`h`), as ações aparecem na faixa `AUDIT`, com o autor na lista e em **Responsável** nos detalhes. A resposta do firmware a uma associação aparece em **Autorizado por**, com o nome de quem pediu. Como cadastrar operadores, consultar e conferir a auditoria: [Segurança](seguranca.md#5-identificação-do-operador).
+No histórico (`h`), as ações aparecem na faixa `AUDIT`, com o autor na lista e em **Responsável** nos detalhes. A resposta do firmware a uma associação aparece em **Autorizado por**, com o nome de quem pediu, qualquer que seja a forma em que o identificador do sensor foi digitado. Como cadastrar operadores, consultar e conferir a auditoria: [Segurança](seguranca.md#5-identificação-do-operador).
 
 ## 9. Arquivos da estação
 
@@ -227,6 +228,7 @@ No histórico (`h`), as ações aparecem na faixa `AUDIT`, com o autor na lista 
 | `~/.config/iot-over-can/operators.json` | operadores cadastrados, com a senha em hash (permissão só do dono) |
 | `logs/` | registro da sessão, gravações, histórico (`historico.sqlite3`) e capturas |
 | `exports/` | métricas e ensaios exportados |
+| `logs/exemplos_sonoros.csv` | exemplos de eventos sonoros com o rótulo dado por `:rotulo`, acrescentados a cada sessão |
 
 `logs/` e `exports/` ficam na pasta em que a estação é aberta (`Front/`, pelos scripts). Uma falha ao ler as preferências não impede a abertura: a estação usa os padrões e avisa.
 

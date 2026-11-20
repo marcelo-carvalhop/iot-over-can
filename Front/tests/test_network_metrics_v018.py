@@ -65,7 +65,7 @@ SCENARIOS = (
     "formation", "sensor", "owner_failover", "sensor_moves", "manual_policy", "leader_failure",
     "leader_failure_no_probe", "silence_leader", "ap_outage", "drop_session", "bus_load", "two_sensors",
     "failover_retry", "failover_dead_target", "silence_leader_with_sensor", "acoustic_sensor",
-    "restart_keeps_binding", "panel", "handshake_slow_radio", "first_session_slow",
+    "restart_keeps_binding", "panel", "handshake_slow_radio", "first_session_slow", "selftest", "isolated_node",
 )
 UUID = "0xE6616408432B6F39"
 
@@ -84,6 +84,7 @@ def test_can_identifiers_for_experiments_do_not_collide_with_project_traffic() -
     ids = (NODE / "include/can_ids.h").read_text()
     assert "#define CAN_ID_TEST_CMD                   0x305" in ids
     assert "#define CAN_ID_TEST_STATUS                0x306" in ids
+    assert "#define CAN_ID_AUTH_TAG                   0x307" in ids
     assert "#define CAN_ID_TEST_LOAD_HIGH             0x010" in ids
     assert "#define CAN_ID_TEST_LOAD_LOW              0x7EF" in ids
     # A carga de alta prioridade vence a eleição (0x050); a de baixa perde
@@ -95,7 +96,8 @@ def test_can_identifiers_for_experiments_do_not_collide_with_project_traffic() -
     assert numbers["CAN_ID_HEARTBEAT"] < numbers["CAN_ID_TEST_LOAD_MID"] < numbers["CAN_ID_SENSOR"]
     assert numbers["CAN_ID_TEST_LOAD_MID"] < numbers["CAN_ID_WIRELESS_DISCOVERY_BASE"]
     assert "intermediária" in describe(0x1F0).name
-    for can_id, expected in ((0x100, "presença"), (0x381, "Módulo 01"), (0x305, "ensaio"), (0x322, "Módulo 01")):
+    for can_id, expected in ((0x100, "presença"), (0x381, "Módulo 01"), (0x305, "ensaio"), (0x322, "Módulo 01"),
+                             (0x307, "autenticação")):
         assert expected in describe(can_id).name
 
 
@@ -158,7 +160,11 @@ def test_can_fd_predisposition_is_present_but_not_wired() -> None:
     assert "IOC_SECPDU_MAC_FD" in (LINK / "ioc_secpdu.h").read_text()
     for source in (NODE / "src").iterdir():
         text = source.read_text()
-        assert "ioc_secpdu" not in text, source.name
+        # O único uso do PDU autenticado no firmware é a autenticação de origem dos comandos do CAN clássico
+        # (IOT_CAN_AUTH, ioc_canauth.h); o perfil do CAN FD e os segmentos maiores continuam sem ligação.
+        if source.name != "canauth.cpp":
+            assert "ioc_secpdu" not in text, source.name
+        assert "IOC_SECPDU_MAC_FD" not in text, source.name
         assert "_ex(" not in text, source.name
     assert "Preparação para CAN FD" in (ROOT / "Documentacao/arquitetura.md").read_text(encoding="utf-8")
 

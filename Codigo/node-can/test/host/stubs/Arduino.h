@@ -21,9 +21,11 @@ typedef uint8_t byte;
 
 #define HEX 16
 #define DEC 10
+#define INPUT 0
 #define OUTPUT 1
 #define LOW 0
 #define HIGH 1
+#define ADC_11db 3
 
 uint32_t millis();
 uint32_t micros();
@@ -31,6 +33,9 @@ inline uint32_t getCpuFrequencyMhz() { return 240; }
 void delay(uint32_t ms);
 inline void pinMode(int, int) {}
 inline void digitalWrite(int, int) {}
+// Conversor analógico (energia.cpp, medição da tensão de entrada): sem divisor ligado, o pino lê 0 mV.
+inline void analogSetPinAttenuation(int, int) {}
+inline uint32_t analogReadMilliVolts(int) { return 0; }
 
 // Seções críticas do FreeRTOS: no host há uma única linha de execução.
 typedef int portMUX_TYPE;

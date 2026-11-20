@@ -1,6 +1,6 @@
 {
   "name": "iot-over-can",
-  "version": "0.19.0",
+  "version": "0.22.0",
   "description": "Plataforma experimental de IoT embarcada sobre CAN/CAN FD com descoberta, associação e plano de dados wireless autenticado, dois tipos de sensor sem fio (vibração e acústico), reassociação automática, medição da rede, ensaios de falha, diagnóstico e supervisão local.",
   "paths": {
     "tui": "Front",

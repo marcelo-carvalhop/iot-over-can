@@ -36,10 +36,17 @@
 
 #include "sim_prelude.h"
 #include "panel_app.h"
+#include "isolamento.h"   // só as constantes IOT_ISOLATION_*; as funções são de cada instância
 #include <memory>
 
 #ifndef IOT_LINK_MASTER_KEY_HEX
 #error "IOT_LINK_MASTER_KEY_HEX precisa ser definido (chave de teste)"
+#endif
+
+// Autenticação de origem dos comandos (node-can/include/canauth.h): desligada por padrão. Ligada
+// (IOC_SIM_CXXFLAGS="-DIOT_CAN_AUTH=1"), a bancada tem o cenário can_auth.
+#ifndef IOT_CAN_AUTH
+#define IOT_CAN_AUTH 0
 #endif
 
 /* Instâncias do firmware. Um reinício consome uma instância: o estado em RAM
@@ -103,6 +110,10 @@ struct Node {
   bool bootScheduled = false;
   uint64_t bootAtUs = 0;
   bool txDisconnected = false;   // o que este nó transmite não chega ao barramento
+  // Cabo CAN solto: o nó não ouve nem é ouvido, o controlador não recebe confirmação dos quadros dele (o
+  // contador de erros de transmissão sobe até o erro passivo e fica lá) e os quadros esperam na fila, como
+  // no MCP2515. Diferente de txDisconnected, que só perde o que o nó transmite e o deixa ouvindo.
+  bool cableCut = false;
   std::string partial;
   std::vector<std::pair<uint32_t, std::string>> log;
   uint8_t tec = 0;
@@ -224,6 +235,26 @@ void powerOff(Node& n, bool rebootAfter) {
 
 /* ---------------------------------------------------------- barramento */
 
+// Cabo solto: cada tentativa sem confirmação soma 8 ao contador de erros de transmissão, até o erro passivo
+// (128), onde ele fica (um nó em erro passivo não soma mais por falta de confirmação). Os sinais do
+// controlador acompanham o contador: aviso de erro (0x01), aviso de transmissão (0x04) em 96 e erro
+// passivo de transmissão (0x10) em 128. Os demais bits ficam como estão.
+void cutCableAttempt(Node& n) {
+  n.tec = n.tec > 120 ? 128 : static_cast<uint8_t>(n.tec + 8);
+  n.inst->canSetErrorCounters(0, n.tec);
+  uint8_t eflg = n.inst->canErrorFlags();
+  eflg = static_cast<uint8_t>(eflg & ~0x15u);
+  if (n.tec >= 96) eflg |= 0x05;
+  if (n.tec >= 128) eflg |= 0x10;
+  n.inst->canSetErrorFlags(eflg);
+}
+
+#if IOT_CAN_AUTH
+// Quem escuta o cabo: guarda os comandos da Probe e as etiquetas, para o atacante do cenário can_auth repeti-los.
+std::vector<::SimCanFrame> g_tap;
+bool g_tap_on = false;
+#endif
+
 // Transmite os quadros que cabem até `untilUs`: vence o menor identificador;
 // sem outro nó para confirmar, o quadro permanece na fila de quem transmite.
 void pumpBus(uint64_t untilUs) {
@@ -236,6 +267,10 @@ void pumpBus(uint64_t untilUs) {
       if (!n.inst->canPeek(frame)) continue;
       if (n.txDisconnected) {  // o quadro deixa o nó e se perde
         n.inst->canPop();
+        continue;
+      }
+      if (n.cableCut) {  // o controlador tenta de novo e não recebe confirmação
+        cutCableAttempt(n);
         continue;
       }
       if (!winner || frame.id < best.id) {
@@ -254,7 +289,7 @@ void pumpBus(uint64_t untilUs) {
 
     bool acked = false;
     for (Node& n : g_nodes) {
-      if (&n == winner || !n.powered || !n.inst) continue;
+      if (&n == winner || !n.powered || !n.inst || n.cableCut) continue;
       if (!n.inst->canListenOnly()) acked = true;
     }
     if (!acked) {
@@ -269,8 +304,11 @@ void pumpBus(uint64_t untilUs) {
     winner->inst->canPop();
     g_bus_bits += bits;
     ++g_bus_frames;
+#if IOT_CAN_AUTH
+    if (g_tap_on && (best.id == 0x304 || best.id == 0x305 || best.id == 0x307)) g_tap.push_back(best);
+#endif
     for (Node& n : g_nodes) {
-      if (&n == winner || !n.powered || !n.inst) continue;
+      if (&n == winner || !n.powered || !n.inst || n.cableCut) continue;
       n.inst->canDeliver(best);
     }
   }
@@ -2289,6 +2327,197 @@ int scenarioFirstSessionSlow() {
   return 0;
 }
 
+// Autoteste (SELFTEST, autoteste.cpp): o laço interno do MCP2515, os contadores de erro e os LEDs, com o
+// módulo ainda fora da rede. Cada defeito da bancada (nada volta, bit trocado, controlador que não entra no
+// modo laço, bus-off, contadores altos) tem de aparecer no resultado e na dica; o controlador sempre volta ao
+// modo normal; dentro da rede o comando é recusado e não cala ninguém.
+int scenarioSelftest() {
+  runUntil(1000);
+  CHECK(node(1).inst->nodeState() == ST_IDLE && node(2).inst->nodeState() == ST_IDLE &&
+        node(3).inst->nodeState() == ST_IDLE);
+
+  // Identificação: o módulo e a Probe dizem a versão e o commit gravados (a verificação de fumaça, smoke_boot.py,
+  // confere estas linhas contra o arquivo VERSION).
+  uint32_t t = nowMs();
+  node(1).inst->serialWrite("VERSION\nNODE_VERSION\n");
+  node(2).inst->serialWrite("VERSION\n");
+  node(3).inst->serialWrite("VERSION\n");
+  probe().inst->serialWrite("VERSION\nPROBE_VERSION\nPROBE_STATUS\n");
+  runFor(600);
+  CHECK(logCount(node(1), "NODE_VERSION NODE=1 FIRMWARE=", t) == 2);
+  CHECK(logHas(node(2), "NODE_VERSION NODE=2 FIRMWARE=", t) && logHas(node(3), "NODE_VERSION NODE=3 FIRMWARE=", t));
+  CHECK(logHas(node(1), " COMMIT=sim PROTOCOL=CAN_CLASSIC_V1 FEATURES=WIRELESS_DATA,ACOUSTIC_DATA,BUS_METRICS,"
+                        "FAULT_INJECTION,FAILOVER,RESEARCH,TIME_SYNC", t));
+  CHECK(logCount(probe(), "PROBE_VERSION FIRMWARE=", t) == 2);
+  CHECK(logHas(probe(), " COMMIT=sim PROTOCOL=CAN_CLASSIC_V1 NODE=0 FEATURES=WIRELESS_DATA", t));
+  CHECK(logHas(probe(), "PROBE_STATUS NODE=0 STATE=ONLINE CAN=CLASSIC ARB=500000 DATA=0 WIFI=OFF BLE_SCAN=OFF UPTIME_MS=", t));
+
+  // Módulo saudável: tudo passa, o controlador volta ao modo normal e a rede ainda não foi tocada.
+  t = nowMs();
+  node(1).inst->serialWrite("SELFTEST\n");
+  runFor(3000);
+  CHECK(logHas(node(1), "[NODE 1] [SELFTEST] INICIO PARTES=CAN,LEDS ESTADO=IDLE", t));
+  CHECK(logHas(node(1), "CHECK=CAN_ERRORS RESULT=PASS REASON=OK REC=0 TEC=0 EFLG=0x00", t));
+  CHECK(logHas(node(1), "CHECK=CAN_LOOPBACK RESULT=PASS REASON=OK FRAMES=4/4", t));
+  CHECK(logHas(node(1), "CHECK=LEDS RESULT=VISUAL SEQUENCE=LEADER,STATUS,FAULT,ALL", t));
+  CHECK(logHas(node(1), "[SELFTEST] RESULT=PASS CHECKS=2 WARN=0 FAIL=0 DURATION_MS=", t));
+  CHECK(!node(1).inst->canLoopback() && !node(1).inst->canListenOnly());
+  CHECK(logCount(node(1), "[SELFTEST] DICA:", t) == 1);   // só a dos LEDs
+  // O teste dos LEDs leva cerca de um segundo (4 passos de 250 ms) e o veredito diz quanto levou.
+  const std::string* done = logLast(node(1), "[SELFTEST] RESULT=");
+  CHECK(done != nullptr);
+  if (done) CHECK(field(*done, "DURATION_MS") >= 1000.0 && field(*done, "DURATION_MS") < 1500.0);
+  CHECK(!logHas(probe(), "[SELFTEST]", t));   // nada do que o módulo faz sai pelo barramento
+
+  // Nada volta pelo laço (INT sem sinal): falha com a dica do fio INT.
+  node(2).inst->canSetLoopbackFault(1);
+  t = nowMs();
+  node(2).inst->serialWrite("SELFTEST CAN\n");
+  runFor(2000);
+  CHECK(logHas(node(2), "CHECK=CAN_LOOPBACK RESULT=FAIL REASON=SEM_QUADRO FRAMES=0/4", t));
+  CHECK(logHas(node(2), "DICA: o controlador respondeu pelo SPI mas nenhum quadro voltou: confira o fio INT", t));
+  CHECK(logHas(node(2), "[SELFTEST] RESULT=FAIL CHECKS=2 WARN=0 FAIL=1", t));
+  CHECK(!logHas(node(2), "CHECK=LEDS", t));   // SELFTEST CAN não pisca os LEDs
+  CHECK(!node(2).inst->canLoopback());
+
+  // Quadro volta com um bit trocado (SPI).
+  node(2).inst->canSetLoopbackFault(2);
+  t = nowMs();
+  node(2).inst->serialWrite("selftest can\n");   // maiúsculas e minúsculas valem
+  runFor(2000);
+  CHECK(logHas(node(2), "CHECK=CAN_LOOPBACK RESULT=FAIL REASON=DADOS FRAMES=0/4", t));
+  CHECK(logHas(node(2), "DICA: o quadro voltou diferente do enviado: confira SCK, MOSI e MISO", t));
+  CHECK(!node(2).inst->canLoopback());
+
+  // O controlador não entra no modo laço: falha, e o retorno ao modo normal é tentado do mesmo jeito.
+  node(2).inst->canSetLoopbackFault(3);
+  t = nowMs();
+  node(2).inst->serialWrite("SELFTEST CAN\n");
+  runFor(2000);
+  CHECK(logHas(node(2), "CHECK=CAN_LOOPBACK RESULT=FAIL REASON=MODO_LACO FRAMES=0/4", t));
+  CHECK(logHas(node(2), "DICA: o controlador nao entrou no modo de laco interno", t));
+  CHECK(!logHas(node(2), "CAN_RESTORE", t));
+  CHECK(!node(2).inst->canLoopback() && !node(2).inst->canListenOnly());
+  node(2).inst->canSetLoopbackFault(0);
+
+  // Contadores de erro: bus-off é falha e os contadores altos são aviso; o laço continua passando.
+  node(3).inst->canSetErrorCounters(0, 255);
+  node(3).inst->canSetErrorFlags(0x20);
+  t = nowMs();
+  node(3).inst->serialWrite("SELFTEST CAN\n");
+  runFor(2000);
+  CHECK(logHas(node(3), "CHECK=CAN_ERRORS RESULT=FAIL REASON=BUS_OFF REC=0 TEC=255 EFLG=0x20", t));
+  CHECK(logHas(node(3), "DICA: o controlador se desligou do barramento por excesso de erros: confira terminacao de 120 ohms", t));
+  CHECK(logHas(node(3), "CHECK=CAN_LOOPBACK RESULT=PASS", t));
+  CHECK(logHas(node(3), "[SELFTEST] RESULT=FAIL CHECKS=2 WARN=0 FAIL=1", t));
+  node(3).inst->canSetErrorCounters(100, 0);
+  node(3).inst->canSetErrorFlags(0x00);
+  t = nowMs();
+  node(3).inst->serialWrite("SELFTEST CAN\n");
+  runFor(2000);
+  CHECK(logHas(node(3), "CHECK=CAN_ERRORS RESULT=WARN REASON=CONTADOR_ALTO REC=100 TEC=0 EFLG=0x00", t));
+  CHECK(logHas(node(3), "[SELFTEST] RESULT=WARN CHECKS=2 WARN=1 FAIL=0", t));
+  node(3).inst->canSetErrorCounters(0, 0);
+
+  // Só os LEDs: sem veredito automático. Argumento inválido: ajuda.
+  t = nowMs();
+  node(1).inst->serialWrite("SELFTEST LEDS\nSELFTEST TUDO\n");
+  runFor(3000);
+  CHECK(logHas(node(1), "INICIO PARTES=LEDS ESTADO=IDLE", t));
+  CHECK(logHas(node(1), "[SELFTEST] RESULT=VISUAL CHECKS=0 WARN=0 FAIL=0", t));
+  CHECK(!logHas(node(1), "CHECK=CAN_", t));
+  CHECK(logHas(node(1), "[SELFTEST] uso: SELFTEST | SELFTEST CAN | SELFTEST LEDS", t));
+
+  // A Probe 00 também faz o teste (ela não entra na eleição).
+  t = nowMs();
+  probe().inst->serialWrite("SELFTEST CAN\n");
+  runFor(2000);
+  CHECK(logHas(probe(), "[NODE 0] [SELFTEST] INICIO PARTES=CAN ESTADO=GATEWAY", t));
+  CHECK(logHas(probe(), "[NODE 0] [SELFTEST] RESULT=PASS CHECKS=2 WARN=0 FAIL=0", t));
+
+  // Depois dos testes os módulos, todos de volta ao modo normal, formam a rede como sempre.
+  formNetwork();
+  runFor(3000);
+
+  // Dentro da rede o comando é recusado: nada é calado e a rede segue com um só líder.
+  const int heartbeatsBefore = logCount(probe(), "[GW] HEARTBEAT lider=3");
+  t = nowMs();
+  node(1).inst->serialWrite("SELFTEST\n");   // seguidor
+  node(3).inst->serialWrite("SELFTEST CAN\n");   // líder
+  runFor(4000);
+  CHECK(logHas(node(1), "[NODE 1] [SELFTEST] RECUSADO ESTADO=FOLLOWER", t));
+  CHECK(logHas(node(3), "[NODE 3] [SELFTEST] RECUSADO ESTADO=LEADER", t));
+  CHECK(!logHas(node(1), "[SELFTEST] INICIO", t) && !logHas(node(3), "[SELFTEST] INICIO", t));
+  CHECK(!node(1).inst->canLoopback() && !node(3).inst->canLoopback());
+  CHECK(logCount(probe(), "[GW] HEARTBEAT lider=3") >= heartbeatsBefore + 3);   // o líder não parou
+  CHECK(leaderCount() == 1 && currentLeader() == 3);
+  return 0;
+}
+
+// O cabo CAN do Node responsável pelo sensor se solta. O módulo segue ligado, com o ponto de acesso no ar e o
+// sensor em sessão, mas nada do que ele recebe do sensor chega à rede. Ele percebe o isolamento (sem quadros
+// e sem confirmação das transmissões), libera o sensor e desliga o ponto de acesso; o líder passa o vínculo
+// ao Node 2 e a telemetria volta por ele. Quando o cabo volta, o Node 1 não disputa o sensor.
+int scenarioIsolatedNode() {
+  formNetwork();
+  bindSensorA(true);
+  runFor(8000);
+  CHECK(g_sensors[0].parent == 1 && g_sensors[0].mode == Sensor::Mode::Bound);
+  CHECK(!logHas(node(1), "[ISOLADO]"));
+  std::string ssid, psk;
+  int channel = 0;
+  CHECK(node(1).inst->apInfo(ssid, psk, channel));
+
+  const uint32_t t0 = nowMs();
+  note("cabo CAN do node=1 solto");
+  node(1).cableCut = true;
+
+  // O Node 1 percebe: IOT_ISOLATION_MS sem quadro algum e transmissões sem confirmação.
+  CHECK(runUntilTrue([t0] { return logHas(node(1), "[ISOLADO] sem quadros do barramento", t0); }, IOT_ISOLATION_MS + 4000));
+  const long isolatedAt = logTime(node(1), "[ISOLADO] sem quadros do barramento", t0);
+  note("node=1 isolado %ld ms depois do cabo solto", isolatedAt - static_cast<long>(t0));
+  CHECK(isolatedAt - static_cast<long>(t0) >= static_cast<long>(IOT_ISOLATION_MS) - 1000);
+
+  // Libera o sensor, desliga o ponto de acesso e para de oferecer.
+  CHECK(logHas(node(1), "[WLINK] child=1 sessao liberada (modulo isolado do barramento)", t0));
+  CHECK(runUntilTrue([] { return g_sensors[0].mode != Sensor::Mode::Bound; }, 3000));
+  runFor(2000);
+  CHECK(!node(1).inst->apInfo(ssid, psk, channel));
+  std::string offer;
+  CHECK(!node(1).inst->bleOffer(offer));
+  CHECK(g_sensors[0].parent != 1);
+
+  // O líder entrega o vínculo ao Node 2 e a telemetria volta por ele.
+  CHECK(runUntilTrue([t0] { return logHas(probe(), "[GW] WIRELESS_FAILOVER uuid=0xE6616408432B6F39 from=1 to=2 reason=OWNER_LOST", t0); },
+                     40000));
+  CHECK(runUntilTrue([t0] { return logHas(probe(), "TEL NODE=2 CHILD=1 ", t0); }, 30000));
+  note("sensor de volta pelo node=2 %ld ms depois do cabo solto", logTime(probe(), "TEL NODE=2 CHILD=1 ", t0) - static_cast<long>(t0));
+  CHECK(g_sensors[0].parent == 2);
+  CHECK(!logHas(probe(), "TEL NODE=1 ", t0 + 2000));
+
+  // Isolado, o Node 1 não pede eleição: o pedido não chegaria a ninguém e sairia velho na volta do cabo.
+  CHECK(!logHas(node(1), "[VIGILANCIA]", t0));
+  CHECK(node(1).inst->nodeState() == ST_FOLLOWER);
+
+  // O cabo volta: o Node 1 sai do isolamento e não disputa o sensor.
+  node(1).cableCut = false;
+  const uint32_t t1 = nowMs();
+  note("cabo CAN do node=1 de volta");
+  CHECK(runUntilTrue([t1] { return logHas(node(1), "[ISOLADO] barramento de volta", t1); }, 15000));
+  runFor(30000);
+  CHECK(g_sensors[0].parent == 2);
+  // O que já estava na fila do controlador sai de uma vez (os últimos quadros de telemetria, por exemplo),
+  // e nada depois disso: o Node 1 não tem mais o sensor.
+  CHECK(!logHas(probe(), "TEL NODE=1 ", t1 + 1000));
+  CHECK(logCount(probe(), "TEL NODE=2 CHILD=1 ", t1 + 5000) >= 10);
+  CHECK(logCount(probe(), "[GW] WIRELESS_FAILOVER") == 1);
+  // A rede não refaz a eleição por causa de quem voltou: o líder é o mesmo e o heartbeat não parou.
+  CHECK(!logHas(probe(), "Requisicao de eleicao observada", t1));
+  CHECK(!logHas(probe(), "Lider anunciado", t1));
+  CHECK(leaderCount() == 1 && currentLeader() == 3);
+  return 0;
+}
+
 /* ------------------------------------------------------------ pesquisa */
 
 // Parâmetros de um experimento (--param chave=valor, --seed N): ver
@@ -2434,6 +2663,184 @@ int scenarioResearch() {
   return 0;
 }
 
+#if IOT_CAN_AUTH
+/* ------------------------------------------------------------ autenticação de origem (IOT_CAN_AUTH=1) */
+
+// Um dispositivo qualquer ligado ao cabo: o quadro ocupa o barramento e chega a todos os nós, como qualquer outro.
+void rogueFrame(uint16_t id, const uint8_t* data, uint8_t len) {
+  ::SimCanFrame frame;
+  frame.id = id;
+  frame.len = len;
+  memcpy(frame.data, data, len);
+  const uint32_t bits = ioc_can_frame_bits(id, len, data);
+  g_bus_free_us = std::max(g_bus_free_us, g_now_us) + static_cast<uint64_t>(bits) * CAN_BIT_US;
+  g_bus_bits += bits;
+  ++g_bus_frames;
+  for (Node& n : g_nodes) {
+    if (n.powered && n.inst && !n.cableCut) n.inst->canDeliver(frame);
+  }
+}
+
+// Linha de estado do CANAUTH de um nó (a mais recente).
+const std::string* canAuthStatus(uint8_t id) {
+  node(id).inst->serialWrite("CANAUTH\n");
+  runFor(100);
+  return logLast(node(id), "[CANAUTH] estado=");
+}
+
+// Os comandos 0x304 e 0x305 só valem com a etiqueta da Probe: falsificação, etiqueta falsa, repetição e sincronismo.
+int scenarioCanAuth() {
+  formNetwork();
+  bindSensorA(true);
+  runFor(5000);
+  CHECK(logHas(probe(), "[CANAUTH] LIGADO papel=PROBE"));
+  for (uint8_t id = 1; id <= 3; ++id) CHECK(logHas(node(id), "[CANAUTH] LIGADO papel=MODULO"));
+  {
+    // A Probe grava o teto antes de usar qualquer valor: nenhuma queda de energia pode repeti-lo.
+    probe().inst->serialWrite("CANAUTH\n");
+    runFor(100);
+    const std::string* st = logLast(probe(), "[CANAUTH] estado=");
+    CHECK(st && st->find("papel=PROBE") != std::string::npos && field(*st, "gravada") >= 32.0);
+  }
+
+  // 1. Comando legítimo: a Probe o etiqueta e os módulos o obedecem.
+  g_tap.clear();
+  g_tap_on = true;
+  const uint32_t t0 = nowMs();
+  probeCommand("FAULT DROP_SESSION 1");
+  CHECK(runUntilTrue([t0] { return logHas(probe(), "[GW] FAULT_EVENT node=1 kind=DROP_SESSION state=ENDED", t0); }, 1000));
+  CHECK(runUntilTrue([t0] { return logHas(probe(), "[GW] WIRELESS_LINK node=1 child=1 state=SECURE", t0); }, 20000));
+  CHECK(g_sensors[0].sessions == 2);
+  g_tap_on = false;
+  // O que passou pelo cabo: o comando 0x305 e, logo depois, a etiqueta 0x307.
+  ::SimCanFrame recCmd, recTag;
+  bool haveCmd = false, haveTag = false;
+  for (const ::SimCanFrame& f : g_tap) {
+    if (f.id == 0x305 && !haveCmd) {
+      recCmd = f;
+      haveCmd = true;
+    } else if (f.id == 0x307 && haveCmd && !haveTag) {
+      recTag = f;
+      haveTag = true;
+    }
+  }
+  CHECK(haveCmd && haveTag && recTag.len == 8 && recTag.data[0] == 1);   // tipo 1: comando de ensaio
+  CHECK(logHas(node(1), "[CANAUTH] descartado", t0) == false);          // nada de legítimo foi descartado
+  {
+    const std::string* st = canAuthStatus(1);
+    CHECK(st && field(*st, "aceitos") >= 1.0 && field(*st, "invalidos") == 0.0 && field(*st, "sem_etiqueta") == 0.0);
+  }
+  // Um comando de sensor (0x304) também passa, com a mesma etiqueta.
+  probeCommand("CMD TARGET=01.01 ACTION=STATUS TX=B00001");
+  CHECK(runUntilTrue([] { return logHas(probe(), "ACK COMMAND=STATUS STATE=APPLIED TX=B00001"); }, 2000));
+
+  // 2. Comando forjado, sem etiqueta: o Node 1 o descarta e a sessão do sensor continua.
+  runFor(1200);
+  const uint32_t t1 = nowMs();
+  const uint8_t forged[8] = {0x90, 1, 0x04 /* DROP_SESSION */, 0, 0, 0, 0, 0xA5};
+  rogueFrame(0x305, forged, 8);
+  runFor(600);
+  CHECK(!logHas(probe(), "FAULT_EVENT node=1 kind=DROP_SESSION", t1));
+  CHECK(logHas(node(1), "[CANAUTH] descartado id=0x305 motivo=SEM_ETIQUETA", t1));
+  CHECK(g_sensors[0].sessions == 2);
+
+  // 3. Comando forjado com etiqueta inventada.
+  runFor(600);
+  const uint32_t t2 = nowMs();
+  const uint8_t fakeTag[8] = {1, 0x00, 0x30, 0xDE, 0xAD, 0xBE, 0xEF, 0x01};
+  rogueFrame(0x305, forged, 8);
+  rogueFrame(0x307, fakeTag, 8);
+  runFor(600);
+  CHECK(!logHas(probe(), "FAULT_EVENT node=1 kind=DROP_SESSION", t2));
+  CHECK(logHas(node(1), "[CANAUTH] descartado id=0x305 motivo=ETIQUETA_INVALIDA", t2));
+  CHECK(g_sensors[0].sessions == 2);
+
+  // 4. Repetição, igualzinha, do comando e da etiqueta que o atacante gravou no cabo no passo 1.
+  runFor(600);
+  const uint32_t t3 = nowMs();
+  rogueFrame(recCmd.id, recCmd.data, recCmd.len);
+  rogueFrame(recTag.id, recTag.data, recTag.len);
+  runFor(600);
+  CHECK(!logHas(probe(), "FAULT_EVENT node=1 kind=DROP_SESSION", t3));
+  CHECK(logHas(node(1), "[CANAUTH] descartado id=0x305 motivo=ETIQUETA_INVALIDA", t3));
+  CHECK(g_sensors[0].sessions == 2);
+
+  // 5. Etiqueta sem comando.
+  runFor(600);
+  const uint32_t t4 = nowMs();
+  rogueFrame(recTag.id, recTag.data, recTag.len);
+  runFor(300);
+  CHECK(logHas(node(1), "[CANAUTH] descartado id=0x307 motivo=ETIQUETA_SEM_COMANDO", t4));
+
+  // 6. Comando forjado ao sensor (0x304), sem etiqueta.
+  runFor(900);
+  const uint32_t t5 = nowMs();
+  const uint8_t forgedData[8] = {0x70, 1, 1, 0x01, 0, 0, 0, 0};
+  rogueFrame(0x304, forgedData, 8);
+  runFor(600);
+  CHECK(logHas(node(1), "[CANAUTH] descartado id=0x304 motivo=SEM_ETIQUETA", t5));
+
+  // O que os módulos contaram.
+  {
+    const std::string* st = canAuthStatus(1);
+    CHECK(st && field(*st, "invalidos") >= 2.0 && field(*st, "sem_etiqueta") >= 2.0 && field(*st, "orfas") >= 1.0);
+    CHECK(st && field(*st, "aceitos") >= 2.0);
+  }
+
+  // 7. Depois do ataque, a Probe continua mandando: o comando verdadeiro é obedecido.
+  probeCommand("CMD TARGET=01.01 ACTION=STATUS TX=B00002");
+  CHECK(runUntilTrue([] { return logHas(probe(), "ACK COMMAND=STATUS STATE=APPLIED TX=B00002"); }, 2000));
+  CHECK(g_sensors[0].sessions == 2);
+
+  // 8. Sincronismo pela serial do módulo: um módulo à frente da Probe (aqui, de propósito) recusa os comandos
+  //    verdadeiros até receber CANAUTH SYNC 0, o procedimento para depois de trocar a Probe.
+  node(2).inst->serialWrite("CANAUTH SYNC 100000\n");
+  runFor(100);
+  CHECK(logHas(node(2), "[CANAUTH] atualidade acertada em 100000"));
+  runFor(1200);
+  const uint32_t t6 = nowMs();
+  probeCommand("FAULT DROP_SESSION 2");
+  runFor(800);
+  CHECK(!logHas(probe(), "FAULT_EVENT node=2 kind=DROP_SESSION", t6));
+  CHECK(logHas(node(2), "[CANAUTH] descartado id=0x305 motivo=ETIQUETA_INVALIDA", t6));
+  node(2).inst->serialWrite("CANAUTH SYNC 0\n");
+  runFor(1200);
+  const uint32_t t7 = nowMs();
+  probeCommand("FAULT DROP_SESSION 2");
+  CHECK(runUntilTrue([t7] { return logHas(probe(), "[GW] FAULT_EVENT node=2 kind=DROP_SESSION state=ENDED", t7); }, 1000));
+  node(2).inst->serialWrite("CANAUTH SYNC abc\n");
+  probe().inst->serialWrite("CANAUTH SYNC 5\n");
+  runFor(200);
+  CHECK(logHas(node(2), "[CANAUTH] uso: CANAUTH SYNC <numero>"));
+  CHECK(logHas(probe(), "[CANAUTH] SYNC so vale nos modulos"));
+
+  // 9. A atualidade sobrevive ao reinício do módulo (gravada a cada 8 comandos aceitos) e o módulo volta a obedecer.
+  for (int i = 0; i < 10; ++i) {
+    probeCommand("FAULT DROP_SESSION 3");
+    runFor(300);
+  }
+  const std::string* before = canAuthStatus(1);
+  CHECK(before && field(*before, "gravada") >= 8.0);
+  const double saved = before ? field(*before, "gravada") : 0.0;
+  probeCommand("FAULT POWER_CYCLE 1 3");
+  CHECK(runUntilTrue([] { return node(1).restarts >= 1 && logHas(node(1), "[CANAUTH] LIGADO papel=MODULO atualidade=", 0) &&
+                                 logCount(node(1), "[CANAUTH] LIGADO papel=MODULO") >= 2; }, 15000));
+  const std::string* boot = nullptr;
+  for (auto it = node(1).log.rbegin(); it != node(1).log.rend(); ++it) {
+    if (it->second.find("[CANAUTH] LIGADO papel=MODULO") != std::string::npos) {
+      boot = &it->second;
+      break;
+    }
+  }
+  CHECK(boot && field(*boot, "atualidade") >= saved);
+  runFor(3000);
+  const uint32_t t8 = nowMs();
+  probeCommand("FAULT DROP_SESSION 1");
+  CHECK(runUntilTrue([t8] { return logHas(probe(), "[GW] FAULT_EVENT node=1 kind=DROP_SESSION state=ENDED", t8); }, 1500));
+  return 0;
+}
+#endif
+
 struct Scenario {
   const char* name;
   int (*run)();
@@ -2461,6 +2868,11 @@ const Scenario SCENARIOS[] = {
   {"panel", scenarioPanel, "painel: retrato, nota, queda de Node e sono na bateria"},
   {"handshake_slow_radio", scenarioHandshakeSlowRadio, "dois sensores no mesmo Node com 3,6 s de atraso no radio"},
   {"first_session_slow", scenarioFirstSessionSlow, "primeiro canal de dados lento: AUTO e MANUAL abrem no Node escolhido"},
+  {"isolated_node", scenarioIsolatedNode, "cabo CAN do Node responsavel solto: libera o sensor, o lider o move e o Node nao disputa na volta"},
+  {"selftest", scenarioSelftest, "autoteste SELFTEST: laco interno do MCP2515, contadores de erro e LEDs; recusado dentro da rede"},
+#if IOT_CAN_AUTH
+  {"can_auth", scenarioCanAuth, "comandos 0x304/0x305 forjados, com etiqueta falsa ou repetidos sao descartados; os da Probe passam"},
+#endif
 };
 
 // Fora de SCENARIOS: não faz verificações nem tem gravação de referência.

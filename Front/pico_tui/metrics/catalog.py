@@ -59,6 +59,8 @@ def describe(can_id: int) -> MessageInfo:
         return MessageInfo(can_id, "Comando de ensaio", "Ensaio")
     if can_id == 0x306:
         return MessageInfo(can_id, "Estado de ensaio", "Ensaio")
+    if can_id == 0x307:
+        return MessageInfo(can_id, "Etiqueta de autenticação do comando", "Sem fio")
     if 0x320 <= can_id <= 0x35F:
         node, part = divmod(can_id - 0x320, 2)
         return MessageInfo(can_id, f"Estado de associação, Módulo {node:02d}, parte {'AB'[part]}", "Sem fio", node)

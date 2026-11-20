@@ -383,7 +383,8 @@ typedef enum {
     IOC_WD_EVR_SLEEP     = 10, /* painel dormindo por intervalo declarado */
     IOC_WD_EVR_TEST      = 11, /* ensaio (sessões descartadas, queda do ponto de acesso) */
     IOC_WD_EVR_RADIO_OFF = 12, /* rádio do Node desligado */
-    IOC_WD_EVR_IDLE      = 13  /* nenhum sensor associado: o ponto de acesso não é mais necessário */
+    IOC_WD_EVR_IDLE      = 13, /* nenhum sensor associado: o ponto de acesso não é mais necessário */
+    IOC_WD_EVR_ISOLATED  = 14  /* o Node perdeu o barramento CAN e liberou os sensores */
 } ioc_wd_event_reason;
 
 typedef struct {

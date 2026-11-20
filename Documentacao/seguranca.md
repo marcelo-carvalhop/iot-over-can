@@ -14,7 +14,7 @@ A proteção atua em três pontos, de forma independente: a estação não é a 
 
 Além de proteger, a estação registra **quem agiu**: cada alteração e cada autorização de sensor entra no histórico com o nome de quem a fez (seção 5).
 
-O barramento CAN é tratado como domínio confiável: os quadros não têm autenticação de origem (seção 8).
+O barramento CAN é tratado como domínio confiável: por padrão os quadros não têm autenticação de origem. Os comandos `0x304` e `0x305` da Probe podem ser autenticados com a opção `--auth-can` (seção 8); o restante do barramento continua sem autenticação.
 
 ## 2. Chaves
 
@@ -113,9 +113,9 @@ Cada ação vira um evento da faixa **AUDIT** do histórico (tecla `h`), com ins
 | `SENSOR_BIND`, `SENSOR_UNBIND`, `SENSOR_POLICY` | autorização de entrada, remoção e política de reassociação de um sensor |
 | `SENSOR_CONFIG`, `NETWORK_COMMAND`, `FAULT_COMMAND`, `WIFI_PROVISION` e outros | os demais comandos que alteram a rede |
 | `ALARM_LIMITS` | mudança dos limites de alarme de um sensor, com o valor anterior e o novo |
-| `COMMAND_DENIED`, `COMMAND_FAILED` | comando recusado (sem login, observador, chave ausente) ou que não chegou a sair |
+| `COMMAND_DENIED`, `COMMAND_FAILED` | comando recusado (sem login, observador, chave ausente) ou que não chegou a sair; o título diz o que foi pedido ("Recusado: pedido de entrada do sensor ... no Node 02"), nunca que foi feito |
 
-A resposta do firmware a uma associação (`ASSOCIATING`, `BOUND`, `ONLINE`) é atribuída a quem enviou o comando, por até 2 minutos (`authorized_by`). O que a rede faz sozinha, como um sensor que some ou uma reassociação automática, fica sem autor, que é o retrato correto.
+A resposta do firmware a uma associação (`ASSOCIATING`, `BOUND`, `ONLINE`) é atribuída a quem enviou o comando, por até 2 minutos (`authorized_by`); o identificador do sensor é comparado pelo valor, então `0x1122`, `4386` e `0x0000000000001122` são o mesmo sensor, como para a Probe. O que a rede faz sozinha, como um sensor que some ou uma reassociação automática, fica sem autor, que é o retrato correto.
 
 Senhas, tokens e chaves nunca entram nos registros: `AUTH UNLOCK ***`, `NET WIFI PROVISION rede ***`, campos `KEY=`, `TOKEN=` e `PASS=` mascarados. Uma tentativa de entrada recusada grava o nome digitado só se ele existir no cadastro, porque um engano comum é digitar a senha no campo do nome. As mesmas ações vão também para o arquivo da sessão (`logs/session_*.jsonl`, fonte `AUDITORIA`), uma segunda cópia independente do banco.
 
@@ -129,7 +129,8 @@ iot-over-can-operators passwd ana                      # encerra as sessões abe
 iot-over-can-operators disable visita                  # enable, role, remove
 iot-over-can-operators check                           # confere formato e permissões
 iot-over-can-operators audit --operator ana --since 24h
-iot-over-can-operators audit --verify                  # confere a cadeia de hashes
+iot-over-can-operators audit --verify                  # confere a cadeia de hashes e as âncoras das sessões
+iot-over-can-operators audit --verify --anchors <pasta>  # âncoras em outra pasta (padrão: a do banco)
 ```
 
 No repositório, `./Codigo/scripts/operadores.sh` faz o mesmo no ambiente virtual da estação e na pasta onde o histórico é gravado; use-o no lugar de `iot-over-can-operators` se o comando não estiver no `PATH`. A senha é sempre pedida no terminal, sem eco (ou lida da entrada padrão com `--password-stdin`, para scripts). Nunca vai como argumento: ficaria no histórico do shell e na lista de processos. Tem de 8 a 256 caracteres; uma frase longa vale mais que uma palavra com símbolos.
@@ -137,7 +138,7 @@ No repositório, `./Codigo/scripts/operadores.sh` faz o mesmo no ambiente virtua
 ### 5.5 Garantias e limites
 
 - **Separa pessoas, não resiste a administradores.** A identificação distingue quem fez o quê entre pessoas que dividem a bancada e deixa um rastro. Quem tem acesso de administrador à estação pode trocar o código da TUI, ler a memória do processo, editar o cadastro ou apagar o banco.
-- **Cadeia de hashes.** Cada registro de auditoria traz o SHA-256 do anterior mais o seu conteúdo. Editar ou apagar um registro do meio quebra a cadeia, e `audit --verify` aponta onde. Apagar os últimos registros, ou o banco inteiro, não é detectado; para isso existe a segunda cópia no arquivo da sessão.
+- **Cadeia de hashes e âncora.** Cada registro de auditoria traz o SHA-256 do anterior mais o seu conteúdo. Editar ou apagar um registro do meio quebra a cadeia, e `audit --verify` aponta onde. A cadeia sozinha não revela o corte dos últimos registros; por isso a estação anota o último hash e o número de registros (uma linha `audit_head`) no arquivo da sessão, `logs/session_*.jsonl`, depois de cada gravação que trouxe ações do operador e uma última vez ao encerrar. `audit --verify` confere o último hash de cada arquivo de sessão da pasta contra a cadeia do banco: se ele não está mais lá, ou está numa posição diferente da anotada, escreve `CORTE OU SUBSTITUIÇÃO: ...` e sai com código 2. Sem nenhum arquivo de sessão ao lado do banco, avisa que o corte não pode ser verificado. O limite: quem apaga o fim do banco **e** o arquivo da sessão correspondente, ou substitui o banco e o arquivo juntos, não é detectado; se isso importa, guarde uma cópia do arquivo da sessão fora desta máquina. O banco apagado por inteiro aparece como ausência de histórico, não como adulteração.
 - **Usuário do sistema é declarado, não verificado.** Sem cadastro, o registro leva a conta do sistema (`sys:...`). Se a conta é compartilhada, o nome identifica a conta, não a pessoa.
 - **Só vê o que passa pela estação.** Comandos digitados direto no console USB de um sensor, ou enviados por outra estação, não são registrados por esta. Marcas feitas no painel físico continuam na faixa `OPERATOR`, sem autor: o painel não identifica quem o toca.
 - **Tentativas limitadas por processo.** Reiniciar a TUI zera o contador de erros. Quem consegue ler o `operators.json` ainda precisa quebrar o `scrypt`, que é caro de propósito.
@@ -183,12 +184,29 @@ Interferência em 2,4 GHz interrompe o canal; o protocolo garante que isso não 
 
 ## 8. Limites conhecidos
 
-- **CAN sem autenticação de origem.** Qualquer equipamento ligado ao barramento pode emitir comandos (`0x080`, `0x304`, `0x305`), pedidos de associação e reassociação ou dados falsos (`0x380 + N`). Com isso pode mover um sensor entre módulos ou deixá-lo sem responsável, mas não consegue ler os dados do sensor nem se passar por ele, porque a sessão continua exigindo `K_dev`. A autenticação no barramento está preparada em biblioteca ([Arquitetura](arquitetura.md#9-preparação-para-can-fd)).
+- **CAN sem autenticação de origem.** Qualquer equipamento ligado ao barramento pode emitir comandos (`0x080`, `0x304`, `0x305`), pedidos de associação e reassociação ou dados falsos (`0x380 + N`). Com isso pode mover um sensor entre módulos ou deixá-lo sem responsável, mas não consegue ler os dados do sensor nem se passar por ele, porque a sessão continua exigindo `K_dev`. Os comandos `0x304` e `0x305` têm autenticação opcional (abaixo); o resto continua aberto.
 - **Chave mestra em todos os módulos.** A extração da memória de um módulo compromete o canal de todos os sensores. Entregar `K_dev` pela estação na associação eliminaria isso; é a base da proposta de comissionamento sem compilação.
 - **Sem elemento seguro.** As chaves ficam na memória flash dos microcontroladores.
 - **Código de autenticação de 64 bits**, adequado ao volume e à duração das sessões do projeto, não um parâmetro para uso geral.
 - **Chave física verificada só pela presença.** A verificação FIDO2/OTP ainda não existe; o modo `otp` permanece bloqueado. Enquanto isso, quem opera se identifica por senha (seção 5), com os limites descritos ali.
 
+### Autenticação de origem dos comandos (opcional)
+
+Compile **todos os módulos e a Probe 00** com `--auth-can` (`IOT_CAN_AUTH=1`; vem desligada). A Probe passa a transmitir, logo depois de cada comando de sensor sem fio (`0x304`) e de cada comando de ensaio (`0x305`), uma etiqueta no quadro `0x307`, e os módulos só executam o comando quando ela confere ([formato](protocolo.md#etiqueta-de-autenticação-0x307)). A Probe passa a precisar da chave de enlace; sem ela a compilação para.
+
+- **O que muda.** Quem apenas liga um equipamento ao cabo deixa de conseguir comandar os módulos por esses dois identificadores: o comando forjado, o comando com etiqueta inventada e a repetição de um comando que já foi aceito são descartados e contados (comando serial `CANAUTH`). A bancada virtual confere cada caso (cenário `can_auth`, com todos os demais cenários passando com a opção ligada) e traz o controle negativo: com a verificação removida, o mesmo quadro forjado derruba a sessão do sensor.
+- **Atualidade e reinícios.** A Probe grava na NVS um teto de atualidade 32 acima do que usou (uma gravação por partida e uma a cada 32 comandos), de modo que nunca repete um valor; um reinício dela pula até 32. O módulo grava o último valor aceito a cada 8 comandos e, depois de um reinício, volta a esse valor: um atacante que gravou o cabo pode repetir uma vez, no máximo, os 7 últimos comandos que o módulo tinha aceitado. É o resíduo de repetição deste desenho; gravar a cada comando o eliminaria, ao custo de desgaste da NVS.
+- **Sincronismo.** Se a Probe for trocada (o contador recomeça do zero), execute `CANAUTH SYNC 0` na serial de cada módulo; para um módulo novo ligado a uma Probe com mais de 65 535 comandos, `CANAUTH SYNC <valor mostrado por CANAUTH na Probe>`. Exige acesso físico à serial do módulo, o mesmo que já permite regravar o firmware.
+- **Custo.** Um quadro a mais por comando (cerca de 130 µs a 500 kbit/s) e o comando só é executado quando a etiqueta chega, no máximo 100 ms depois.
+
+O que esta opção **não** cobre:
+
+- **`0x080` (controle).** Líder e gateway mudam de módulo, e o quadro não diz quem o enviou. Autenticá-lo exigiria um contador por emissor, mantido por todos os módulos, e proteger só uma parte dele deixaria o resto forjável. Fica aberto: pedido de eleição, comandos de sensor e de frequência do sinal de presença, estado dos módulos.
+- **Eleição (`0x050`), líder (`0x060`), sinal de presença (`0x100`), relógio (`0x120+N`), associação (`0x300`–`0x303`, `0x320+`) e dados (`0x380+N`).** Continuam abertos.
+- **Quem tem a chave.** Todos os módulos compartilham a chave do barramento: quem a extrai de um módulo forja etiquetas. A prova é de que o quadro veio de alguém com a chave, não de qual módulo.
+- **Mistura de firmwares.** Um módulo sem a opção continua obedecendo a comandos sem etiqueta, e um módulo com a opção recusa os comandos de uma Probe sem ela. Grave todos com a mesma opção.
+- **Hardware.** Não foi validado em ESP32 e MCP2515 reais: a bancada virtual simula o barramento, e o tempo de espera da etiqueta (100 ms) e a gravação na NVS precisam ser vistos na bancada física.
+
 ## 9. Ensaios de falha
 
-Os comandos `FAULT` derrubam módulos, desligam pontos de acesso e ocupam o barramento. Na estação eles pedem autorização e confirmação, mostrando o comando. No barramento, o quadro `0x305` não é autenticado. Fora da bancada, compile os módulos com `-D IOT_FAULT_INJECTION=0`, que remove o tratamento do comando, e não deixe a Probe 00 ligada a uma rede em operação: ela continua capaz de gerar carga. Cada ensaio dura no máximo 120 s, e um módulo aceita um ensaio por vez.
+Os comandos `FAULT` derrubam módulos, desligam pontos de acesso e ocupam o barramento. Na estação eles pedem autorização e confirmação, mostrando o comando. No barramento, o quadro `0x305` não é autenticado, a menos que a autenticação de origem esteja ligada (seção 8). Fora da bancada, compile os módulos com `-D IOT_FAULT_INJECTION=0`, que remove o tratamento do comando, e não deixe a Probe 00 ligada a uma rede em operação: ela continua capaz de gerar carga. Cada ensaio dura no máximo 120 s, e um módulo aceita um ensaio por vez.

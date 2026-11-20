@@ -29,6 +29,7 @@
 #include <esp_sleep.h>
 
 #include "documentos.h"
+#include "ioc_version.h"
 #include "leitor_layout.h"
 
 namespace {
@@ -675,6 +676,7 @@ void setup() {
     noPapel = estado;
     papelValido = true;
   }
+  Serial.printf("#LEITOR firmware %s commit %s\n", IOT_FW_VERSION, IOT_FW_COMMIT);
   Serial.printf("#LEITOR documentação %s, %u documentos; tela %s\n", DOCS_VERSAO, static_cast<unsigned>(DOCUMENTOS_QTD),
                 naTela ? "já mostra a página" : "precisa ser desenhada");
 

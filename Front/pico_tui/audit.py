@@ -47,6 +47,10 @@ class CommandInfo:
     uuid: str | None = None
     action: str = ""
     fields: dict[str, str] = field(default_factory=dict)
+    # Frase neutra do pedido, para o registro de uma recusa ou falha: o título
+    # de uma ação feita ("... autorizada no Node 02") não pode acompanhar um
+    # "Recusado:" sem se contradizer.
+    request: str = ""
 
 
 _GATEWAY_LABELS = {
@@ -83,6 +87,32 @@ _DIRECT_TITLES = (
 )
 
 
+def uuid_value(text: str | None) -> int | None:
+    """Valor de um identificador de sensor, lido como a Probe o lê (``strtoull`` com base 0).
+
+    ``0x1122``, ``4386`` e ``0X0000000000001122`` são o mesmo sensor; comparar
+    pelo texto perderia a associação entre o comando digitado e a resposta do
+    firmware, que sempre imprime ``0x`` e 16 dígitos.
+    """
+
+    token = (text or "").strip()
+    if not token:
+        return None
+    try:
+        if token[:2].lower() == "0x":
+            digits, base = token[2:], 16
+        elif len(token) > 1 and token[0] == "0":
+            digits, base = token[1:], 8
+        else:
+            digits, base = token, 10
+        if not digits or not digits.isalnum():
+            return None
+        value = int(digits, base)
+    except ValueError:
+        return None
+    return value or None
+
+
 def _int(token: str | None) -> int | None:
     try:
         return int(str(token), 0)
@@ -104,9 +134,10 @@ def _wireless(text: str, parts: list[str]) -> CommandInfo:
     if action == "BIND" and uuid:
         suffix = " (reassociação automática)" if option == "AUTO" else ""
         return CommandInfo("SENSOR_BIND", f"Entrada do sensor {uuid} autorizada no {where}{suffix}",
-                           text, node, None, uuid, "BIND")
+                           text, node, None, uuid, "BIND", request=f"pedido de entrada do sensor {uuid} no {where}")
     if action == "UNBIND" and uuid:
-        return CommandInfo("SENSOR_UNBIND", f"Sensor {uuid} desassociado do {where}", text, node, None, uuid, "UNBIND")
+        return CommandInfo("SENSOR_UNBIND", f"Sensor {uuid} desassociado do {where}", text, node, None, uuid, "UNBIND",
+                           request=f"pedido para desassociar o sensor {uuid} do {where}")
     if action == "POLICY" and uuid:
         return CommandInfo("SENSOR_POLICY", f"Reassociação do sensor {uuid} no {where}: {option or '?'}",
                            text, node, None, uuid, "POLICY")
@@ -178,7 +209,7 @@ def make_action(kind: str, title: str, actor: Actor | None, *, outcome: str = "O
 
 def command_action(info: CommandInfo, actor: Actor | None, *, outcome: str = "OK", reason: str = "") -> OperatorAction:
     prefix = {"DENIED": "Recusado", "FAILED": "Falhou"}.get(outcome)
-    title = f"{prefix}: {info.title}" if prefix else info.title
+    title = f"{prefix}: {info.request or info.title}" if prefix else info.title
     return make_action(
         info.kind if outcome == "OK" else f"COMMAND_{outcome}", title, actor, outcome=outcome,
         node_id=info.node, sensor_id=info.sensor, command=info.command, uuid=info.uuid,
@@ -231,17 +262,22 @@ class AuthorizationLedger:
     def __init__(self, ttl_s: float = TTL_S, clock: Callable[[], float] = time.monotonic) -> None:
         self.ttl_s = ttl_s
         self._clock = clock
-        self._pending: dict[tuple[int, str], _Pending] = {}
+        self._pending: dict[tuple[int, int | str], _Pending] = {}
+
+    @staticmethod
+    def _key(node: int, uuid: str) -> tuple[int, int | str]:
+        value = uuid_value(uuid)
+        return int(node), value if value is not None else str(uuid).strip().lower()
 
     def remember(self, node: int | None, uuid: str | None, action: str, actor: Actor | None) -> None:
         if actor is None or node is None or not uuid or action not in _STAMPED_STATES:
             return
         now = self._clock()
         self._pending = {key: item for key, item in self._pending.items() if item.expires > now}
-        self._pending[(int(node), uuid.lower())] = _Pending(actor.id, action, now + self.ttl_s)
+        self._pending[self._key(node, uuid)] = _Pending(actor.id, action, now + self.ttl_s)
 
     def claim(self, node: int, uuid: str, state: str) -> dict[str, str] | None:
-        key = (int(node), str(uuid).lower())
+        key = self._key(node, uuid)
         item = self._pending.get(key)
         if item is None:
             return None

@@ -124,10 +124,18 @@ def _cmd_check(args: argparse.Namespace) -> int:
     if registry.error:
         print(f"PROBLEMA: {registry.error}", file=sys.stderr)
         return 1
+    records = registry.records()
     active = registry.active_count()
-    print(f"Cadastro válido: {len(registry.records())} operador(es), {active} ativo(s). Arquivo: {registry.path}")
-    if not active:
-        print("AVISO: nenhum operador ativo; a TUI vai bloquear os comandos que alteram a rede.", file=sys.stderr)
+    print(f"Cadastro válido: {len(records)} operador(es), {active} ativo(s). Arquivo: {registry.path}")
+    if not records:
+        # Cadastro vazio não bloqueia no modo padrão: a estação volta a responder
+        # pela conta do sistema, como se o arquivo não existisse.
+        print("AVISO: o cadastro está vazio. No modo padrão (auto) a TUI volta a registrar a conta do sistema e não "
+              "bloqueia nada; com --operator-mode required ela bloqueia os comandos que alteram a rede.",
+              file=sys.stderr)
+    elif not active:
+        print("AVISO: todos os operadores estão desativados; a TUI vai bloquear os comandos que alteram a rede "
+              "até que um seja reativado (enable NOME) ou cadastrado (add NOME).", file=sys.stderr)
     return 0
 
 
@@ -147,6 +155,53 @@ def _parse_since(text: str | None) -> float | None:
         raise OperatorError("Use --since 24h, 7d ou uma data como 2026-11-12.") from exc
 
 
+def _session_anchors(directory: Path) -> list[tuple[Path, dict]]:
+    """Última âncora (``audit_head``) de cada arquivo de sessão da pasta."""
+
+    found: list[tuple[Path, dict]] = []
+    for path in sorted(directory.glob("session_*.jsonl")):
+        last: dict | None = None
+        try:
+            with path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    if '"audit_head"' not in line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(record, dict) and record.get("type") == "audit_head":
+                        last = record
+        except OSError:
+            continue
+        if last is not None:
+            found.append((path, last))
+    return found
+
+
+def _verify_anchors(store: HistoryStore, directory: Path) -> tuple[int, list[str]]:
+    """Confere o hash final anotado ao encerrar cada sessão contra a cadeia do banco.
+
+    A cadeia sozinha não revela o corte dos últimos registros; a âncora, gravada
+    em outro arquivo, revela: se o hash anotado não está mais na cadeia, ou está
+    numa posição menor, registros foram apagados ou trocados.
+    """
+
+    problems: list[str] = []
+    anchors = _session_anchors(directory)
+    for path, record in anchors:
+        head = str(record.get("head", ""))
+        count = int(record.get("count", 0) or 0)
+        position = store.audit_position(head)
+        if position is None:
+            problems.append(f"{path.name}: o hash final anotado ({count} registro(s), {head[:16]}…) "
+                            "não está na cadeia do banco")
+        elif position != count:
+            problems.append(f"{path.name}: o hash final anotado era o do registro {count}, mas na cadeia do banco "
+                            f"ele está na posição {position}")
+    return len(anchors), problems
+
+
 def _cmd_audit(args: argparse.Namespace) -> int:
     db_path = Path(args.db)
     if not db_path.exists():
@@ -162,6 +217,16 @@ def _cmd_audit(args: argparse.Namespace) -> int:
             print(f"ADULTERAÇÃO: o registro {bad} não confere com a cadeia ({checked} anteriores íntegros).",
                   file=sys.stderr)
             status = 2
+        directory = Path(args.anchors) if args.anchors else db_path.parent
+        anchored, problems = _verify_anchors(store, directory)
+        if problems:
+            for problem in problems:
+                print(f"CORTE OU SUBSTITUIÇÃO: {problem}.", file=sys.stderr)
+            status = 2
+        elif anchored:
+            print(f"Âncoras de sessão: {anchored} arquivo(s) conferido(s); o hash final de cada um está na cadeia.")
+        else:
+            print(f"Sem âncoras de sessão em {directory}: o corte dos últimos registros não pode ser verificado.")
         if not (args.operator or args.since):
             return status
     events = store.list_audit(actor=args.operator, since=_parse_since(args.since), limit=args.limit)
@@ -229,6 +294,8 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--since", default=None, metavar="PERÍODO", help="24h, 7d ou uma data (2026-11-12)")
     audit.add_argument("--limit", type=int, default=200, help="Máximo de registros (padrão 200)")
     audit.add_argument("--verify", action="store_true", help="Confere a cadeia de hashes e aponta registros adulterados")
+    audit.add_argument("--anchors", default=None, metavar="PASTA",
+                       help="Pasta com os arquivos session_*.jsonl e o hash final de cada sessão (padrão: a pasta do banco)")
     audit.add_argument("--json", action="store_true", help="Uma linha JSON por registro")
     audit.set_defaults(run=_cmd_audit)
     return parser

@@ -45,10 +45,24 @@
 // anexados por pacote.
 #define NET_MAX_SAFE_PAYLOAD_BYTES 1472
 
+// Os dois tempos de espera que mais pesam na reassociação de um sensor a outro
+// módulo (cerca de 25 s na bancada virtual: 10 s para largar a sessão e 15 s
+// antes de aceitar a oferta de outro módulo) podem ser trocados na compilação,
+// para o ajuste com medição em bancada física (Documentacao/validacao.md). Os
+// padrões são os de sempre: nada muda sem -D.
+//   IOT_SESSION_TIMEOUT_MS      de 7000 a 60000 ms (precisa passar de dois CMD_PING perdidos)
+//   IOT_OFFER_SWITCH_HOLD_MS    de 1000 a 120000 ms
+#ifndef IOT_SESSION_TIMEOUT_MS
+#define IOT_SESSION_TIMEOUT_MS   10000
+#endif
+#ifndef IOT_OFFER_SWITCH_HOLD_MS
+#define IOT_OFFER_SWITCH_HOLD_MS 15000
+#endif
+
 // Timeout de sessão: se o nó CAN pai não enviar nenhum comando válido
 // (CMD_SET_CONFIG ou CMD_PING) dentro desse intervalo, o sensor assume que a
 // sessão caiu/reiniciou e volta para NET_STATE_DISCOVERY.
-#define NET_SESSION_TIMEOUT_MS   10000
+#define NET_SESSION_TIMEOUT_MS   IOT_SESSION_TIMEOUT_MS
 // Tempo máximo em DISCOVERY, após entrar em um AP por oferta, sem conseguir
 // autenticar. Depois disso o Wi-Fi é desligado e o sensor volta a aguardar
 // uma nova oferta BLE (o Node pode ter reiniciado ou removido o vínculo).
@@ -61,9 +75,23 @@
 #define NET_WIFI_LINK_DOWN_MS    10000
 // Depois de entrar no AP de um Node por oferta, ofertas de outro Node só são
 // seguidas após este tempo. Limita o efeito de uma oferta antiga repetida.
-#define NET_OFFER_SWITCH_HOLD_MS 15000
+#define NET_OFFER_SWITCH_HOLD_MS IOT_OFFER_SWITCH_HOLD_MS
 // Intervalo alvo em que o nó CAN pai deveria mandar CMD_PING.
 #define NET_LIVENESS_INTERVAL_MS 3000
+
+// Valores fora destas faixas fazem a compilação falhar, em vez de produzir um sensor que larga a sessão
+// por um CMD_PING perdido ou que alterna de ponto de acesso a cada oferta repetida.
+#ifdef __cplusplus
+static_assert(NET_SESSION_TIMEOUT_MS >= 2 * NET_LIVENESS_INTERVAL_MS + 1000 && NET_SESSION_TIMEOUT_MS <= 60000,
+              "IOT_SESSION_TIMEOUT_MS fora de 7000..60000 ms");
+static_assert(NET_OFFER_SWITCH_HOLD_MS >= 1000 && NET_OFFER_SWITCH_HOLD_MS <= 120000,
+              "IOT_OFFER_SWITCH_HOLD_MS fora de 1000..120000 ms");
+#else
+_Static_assert(NET_SESSION_TIMEOUT_MS >= 2 * NET_LIVENESS_INTERVAL_MS + 1000 && NET_SESSION_TIMEOUT_MS <= 60000,
+               "IOT_SESSION_TIMEOUT_MS fora de 7000..60000 ms");
+_Static_assert(NET_OFFER_SWITCH_HOLD_MS >= 1000 && NET_OFFER_SWITCH_HOLD_MS <= 120000,
+               "IOT_OFFER_SWITCH_HOLD_MS fora de 1000..120000 ms");
+#endif
 // HELLOs com o mesmo nonce antes de trocá-lo (1,5 a 3,5 s entre eles: ~20 s).
 // O Node guarda o handshake pendente por 5 s e o refaz com o mesmo nonce.
 #ifndef NET_HELLO_NONCE_MAX_USES

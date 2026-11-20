@@ -59,8 +59,26 @@ Se dois líderes coexistem por um instante (por exemplo, um líder que travou e 
 | o líder sumiu | a Probe 00 | 4 sinais | pede uma eleição |
 | o líder sumiu | cada seguidor | 6 sinais, mais 20 ms por posição abaixo do número 31 | pede uma eleição; o de maior número reage primeiro |
 | o próprio laço do programa parou | cada módulo | mais de um período | rearma as vigilâncias acima, sem declarar ninguém ausente |
+| o próprio módulo perdeu o barramento | cada módulo | 6 s sem quadro algum e transmissões sem confirmação | libera os sensores, desliga o ponto de acesso e não pede eleição (ver abaixo) |
 
 Na bancada virtual, com o sinal a cada segundo, a rede volta a ter líder em cerca de 11,5 s com a Probe 00 presente e em cerca de 14 s sem ela. Uma falha confirmada pelo líder fica registrada até o operador limpá-la (comando *Limpar falha*); eleições e a volta do módulo não a apagam.
+
+### Módulo isolado do barramento
+
+Com o cabo CAN solto, o módulo continua ligado: o ponto de acesso segue no ar e o sensor segue em sessão com ele, mas nada do que o módulo recebe chega à rede. Os outros módulos o declaram ausente e o líder pode passar o sensor a outro, mas o sensor só aceita uma oferta nova depois de largar a sessão que tem, e o módulo isolado nunca a larga.
+
+O módulo se considera isolado quando as duas condições valem juntas (`ioc_isolation.h`):
+
+| Condição | Como o módulo sabe |
+|---|---|
+| nenhum quadro chegou do barramento por 6 s (`IOT_ISOLATION_MS`) | o líder e os outros módulos falam pelo menos uma vez por segundo |
+| o controlador diz que os quadros dele não são confirmados | contador de erros de transmissão a partir de 128 (erro passivo) ou bus-off; sem outro nó ligado ao fio ninguém confirma, e o contador sobe até 128 e fica lá |
+
+Só o silêncio não basta: um barramento calado, com os quadros do módulo confirmados, é uma rede parada, e não um módulo desligado dela.
+
+Isolado, o módulo libera os sensores (`CMD_RELEASE`: o sensor desliga o Wi-Fi e passa a aceitar a primeira oferta, sem as esperas de quem perdeu a sessão), desliga o ponto de acesso e as ofertas, não pede eleição (o pedido não chegaria a ninguém, e o módulo se elegeria sozinho) e registra o evento `SESSION_DOWN` com o motivo `ISOLATED`. Os vínculos continuam gravados. O barramento volta quando os quadros chegam sem interrupção por 3 s (`IOT_ISOLATION_RECOVER_MS`): o ponto de acesso e as ofertas voltam, e o módulo cede o sensor ao novo responsável quando o ouve publicar o vínculo. O comando `ISOLAMENTO` mostra o estado, o silêncio e os contadores do controlador; `-D IOT_ISOLATION_MS=0` desliga a detecção.
+
+Na bancada virtual (cenário `isolated_node`), o módulo percebe o isolamento em 6 s e a telemetria volta pelo outro módulo cerca de 8 s depois do cabo solto. Os quadros que já estavam na fila do controlador quando o cabo soltou (os últimos relatos de telemetria, por exemplo) saem de uma vez quando ele volta e chegam à estação fora de hora; é o comportamento do MCP2515, e a rede não refaz a eleição por isso.
 
 ### Função local
 
@@ -186,7 +204,7 @@ O líder não desfaz o vínculo anterior: ele pede a associação ao novo módul
 
 Se dois módulos mantêm o mesmo sensor por um instante, cede quem não tem sessão com ele, ou quem já não o ouve; sem sessão em nenhum dos dois, fica o de maior número.
 
-Na bancada virtual, com o responsável desligado, a rede decide em cerca de 5 s, e a telemetria volta pelo novo módulo em cerca de 25 s. A maior parte desse tempo é espera do sensor (10 s para desistir da sessão e 15 s antes de aceitar outra oferta). Reduzir essas esperas é possível, mas deve ser feito com medição em bancada física.
+Na bancada virtual, com o responsável desligado, a rede decide em cerca de 5 s, e a telemetria volta pelo novo módulo em cerca de 25 s. A maior parte desse tempo é espera do sensor (10 s para desistir da sessão e 15 s antes de aceitar outra oferta). As duas esperas são parâmetros de compilação do sensor (`IOT_SESSION_TIMEOUT_MS`, de 7000 a 60000 ms, e `IOT_OFFER_SWITCH_HOLD_MS`, de 1000 a 120000 ms; `build_pico.sh --espera-sessao` e `--espera-oferta`), com os padrões de sempre. Reduzi-las é possível, mas só com medição em bancada física: a bancada virtual projeta o ganho (de 24,3 s para 11,4 s com 7 s e 5 s, por exemplo) e não diz se o rádio real suporta ([Validação](validacao.md#esperas-do-sensor)). Quando é o módulo responsável que perde o barramento, e não a energia, o atalho do isolamento (`CMD_RELEASE`) dispensa as duas esperas e a telemetria volta em cerca de 8 s.
 
 ## 5. Painel de operação
 
@@ -270,17 +288,17 @@ A migração exigiria trocar o controlador e o transceptor de **todas** as placa
 
 **Recomendação: não migrar agora.** A ocupação medida fica perto de 1 % e o barramento não é o gargalo. E o propósito do projeto fica mais claro em CAN clássico: integrar sensores sem fio a uma rede existente sem mexer nela. Vale rever a decisão se a ocupação passar de 30 % em operação normal, se o espectro precisar ser transmitido continuamente, se a autenticação de origem no barramento virar requisito ou se for preciso medir variação de período abaixo de 1 ms (o MCP2518FD tem carimbo de tempo no hardware).
 
-Se a autenticação dos comandos for necessária antes disso, há uma alternativa em CAN clássico: cada comando seria seguido de um quadro com atualidade e código de autenticação truncado (`ioc_secpdu` no perfil clássico). Não está implementada.
+Para a autenticação dos comandos não é preciso esperar o CAN FD: em CAN clássico cada comando da Probe (`0x304` e `0x305`) é seguido de um quadro de etiqueta (`0x307`) com atualidade e código de autenticação truncado, no modelo do `ioc_secpdu` (`ioc_canauth.h`, opção `IOT_CAN_AUTH`, desligada por padrão; ver [Segurança](seguranca.md#autenticação-de-origem-dos-comandos-opcional)). O controle `0x080`, com vários emissores, não está coberto.
 
 ## 10. Limites conhecidos e evoluções previstas
 
 | Limite | Situação |
 |---|---|
-| os quadros CAN não têm autenticação de origem | o canal de dados termina autenticado no módulo; o barramento é tratado como domínio confiável. Preparação em biblioteca (seção 9) |
+| os quadros CAN não têm autenticação de origem | o canal de dados termina autenticado no módulo; o barramento é tratado como domínio confiável. Os comandos `0x304` e `0x305` têm autenticação opcional (seção 9); o controle `0x080`, a eleição e o resto continuam abertos |
 | a chave mestra fica em todos os módulos e as chaves ficam na memória flash, sem elemento seguro | ver [Segurança](seguranca.md) |
-| a reassociação leva cerca de 25 s, quase todos de espera do sensor | ajustar as esperas com medição em bancada física |
-| um módulo isolado do barramento, com o Wi-Fi ligado, mantém os sensores e retém os dados | detecção do isolamento pelo próprio módulo, a fazer |
-| o consumo de cada módulo não é monitorado | o motivo de cada reinício e a contagem dos anormais já são registrados (`ENERGIA`, [Guia de uso](guia-de-uso.md#leds-piscando-e-pulsos-no-gnd)); falta medir a tensão de entrada com um divisor resistivo e, opcionalmente, a corrente com um INA219 |
-| a chave do sensor entra no firmware na gravação | proposta de comissionamento sem compilação: firmware único, código de instalação na etiqueta e chave entregue pela rede depois da aprovação do operador ([proposta](historico/proposta-comissionamento-de-sensores.md)) |
-| a chave física do operador é verificada só pela presença no USB | verificação FIDO2/OTP, a fazer |
+| a reassociação leva cerca de 25 s, quase todos de espera do sensor | as esperas viraram parâmetros de compilação, com os padrões de sempre; o valor novo depende da medição em bancada física (RT 89 do [roteiro](bancada-fisica/roteiro-de-testes.md)) |
+| um módulo isolado do barramento, com o Wi-Fi ligado, mantinha os sensores e retinha os dados | resolvido: o módulo detecta o próprio isolamento e libera os sensores (seção 2, «Módulo isolado do barramento»). Só foi visto na bancada virtual; falta confirmar no hardware (RT 71). Limite: quadros que ficaram na fila do MCP2515 saem na volta do cabo |
+| o consumo de cada módulo não é monitorado | o motivo de cada reinício e a contagem dos anormais são registrados (`ENERGIA`, [Guia de uso](guia-de-uso.md#leds-piscando-e-pulsos-no-gnd)), e a tensão de entrada (divisor resistivo no ADC1) e a corrente (INA219) podem ser medidas e informadas, sem agir sobre elas ([Guia de uso](guia-de-uso.md#medir-a-tensão-de-entrada-e-a-corrente-opcional)); falta validar em hardware (RT 87) e decidir se o módulo deve agir sobre os valores |
+| a chave do sensor entra no firmware na gravação | adiado: proposta de comissionamento sem compilação: firmware único, código de instalação na etiqueta e chave entregue pela rede depois da aprovação do operador ([proposta](historico/proposta-comissionamento-de-sensores.md)) |
+| a chave física do operador é verificada só pela presença no USB | verificação FIDO2/OTP, adiada para quando o projeto estiver mais evoluído |
 | a bancada virtual não reproduz o rádio | complementos possíveis, de prioridade baixa: ponte com o barramento virtual do Linux (SocketCAN `vcan`), GNU Octave para análise, OMNeT++ com FiCo4OMNeT para estudos de escala |

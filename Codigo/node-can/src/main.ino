@@ -15,6 +15,9 @@
 #include "pesquisa.h"
 #include "relogio.h"
 #include "energia.h"
+#include "firmware_info.h"
+#include "isolamento.h"
+#include "canauth.h"
 
 /* =========================================================
  * CONFIGURACAO LOCAL DO NO
@@ -505,6 +508,13 @@ void turnAllLedsOff() {
   digitalWrite(LED_LEADER, LED_OFF);
   digitalWrite(LED_STATUS, LED_OFF);
   digitalWrite(LED_FAULT, LED_OFF);
+}
+
+// Autoteste (autoteste.cpp): acende só os LEDs da máscara (bit 0 líder, bit 1 estado, bit 2 falha).
+void selftestLeds(uint8_t mask) {
+  digitalWrite(LED_LEADER, (mask & 0x01) ? LED_ON : LED_OFF);
+  digitalWrite(LED_STATUS, (mask & 0x02) ? LED_ON : LED_OFF);
+  digitalWrite(LED_FAULT, (mask & 0x04) ? LED_ON : LED_OFF);
 }
 
 void pulseHeartbeatLed() {
@@ -1105,6 +1115,11 @@ void followerCheckLeaderFailure() {
     return;
   }
 
+  /* Sem o barramento não há com quem eleger: o pedido ficaria na fila do controlador e sairia, velho, quando o
+   * cabo voltasse. O seguidor confere agora (o prazo dele pode vencer antes da próxima consulta periódica). */
+  if (!isolamentoActive()) isolamentoPoll(true);
+  if (isolamentoActive()) return;
+
   Serial.print("[NODE ");
   Serial.print(NODE_ID);
   Serial.print("] [VIGILANCIA] Lider NODE ");
@@ -1651,10 +1666,7 @@ void handleControlCanMessage(const CANMessage& rx) {
   handleControlMessage(rx);
 }
 
-void handleReceivedCanMessage(const CANMessage& rx) {
-  netMetricsOnReceive(rx);
-  wirelessLinkTap(rx, false);   // painel: retrato, caixa postal e encaminhamento ao vivo
-
+static void dispatchCanMessage(const CANMessage& rx) {
   if (faultInjectionHandleCanMessage(rx)) {
     return;
   }
@@ -1692,6 +1704,25 @@ void handleReceivedCanMessage(const CANMessage& rx) {
   }
 }
 
+void handleReceivedCanMessage(const CANMessage& rx) {
+  isolamentoOnReceive();   // um quadro do barramento: o módulo não está isolado
+  netMetricsOnReceive(rx);
+  wirelessLinkTap(rx, false);   // painel: retrato, caixa postal e encaminhamento ao vivo
+
+  // IOT_CAN_AUTH=1: os comandos 0x304 e 0x305 ficam guardados até a etiqueta (0x307) conferir; só então seguem.
+  CANMessage released;
+  switch (canauthOnReceive(rx, released)) {
+    case CANAUTH_CONSUMED:
+      return;
+    case CANAUTH_RELEASE:
+      dispatchCanMessage(released);
+      return;
+    case CANAUTH_PASS:
+      break;
+  }
+  dispatchCanMessage(rx);
+}
+
 /* =========================================================
  * SETUP
  * ========================================================= */
@@ -1716,6 +1747,10 @@ void setup() {
   Serial.print("Iniciando NODE ");
   Serial.println(NODE_ID);
   Serial.println("========================================");
+  // Versão e commit antes de tudo: é a primeira linha que o script de fumaça
+  // (smoke_boot.py) e quem olha o monitor serial precisam para saber o que está gravado.
+  Serial.printf("[NODE %u] [BOOT] FIRMWARE=%s COMMIT=%s PROTOCOL=%s ROLE=%s\n", static_cast<unsigned>(NODE_ID),
+                IOT_FW_VERSION, IOT_FW_COMMIT, IOT_PROTOCOL_NAME, NODE_ID == 0 ? "PROBE" : "NODE");
   Serial.println("[LEDS] IDLE: todos acesos. Logica invertida: LOW=ligado, HIGH=desligado");
   if (NODE_ID == 0) {
     Serial.println("[PROBE 00] CAPS=CAN_MONITOR,SERIAL_INSTRUMENTATION LOCAL_PROFILE=NONE");
@@ -1759,6 +1794,8 @@ void setup() {
 
   wirelessDiscoveryInit();
   wirelessLinkInit();
+  isolamentoInit();
+  canauthInit();
   netMetricsInit();
   faultInjectionInit();
 
@@ -1779,7 +1816,7 @@ void setup() {
     Serial.println("[GW] Iniciar eleicao: 22 00 FF 01");
     Serial.println("[GW] Solicitar status: 22 20 FF 00");
     Serial.println("[GW] Velocidade heartbeat: 22 30 FF 01..05");
-    Serial.println("[PROBE 00] FIRMWARE=0.21.0 FEATURES=WIRELESS_DATA,ACOUSTIC_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER,RESEARCH,TIME_SYNC");
+    Serial.println("[PROBE 00] FIRMWARE=" IOT_FW_VERSION " COMMIT=" IOT_FW_COMMIT " FEATURES=" IOT_FEATURES);
     pesquisaPrintConfig();
   } else {
     state = STATE_IDLE;
@@ -1849,6 +1886,9 @@ void loop() {
   wirelessLinkPoll();
   wirelessDiscoveryPoll();
   relogioPoll(state == STATE_LEADER);
+  isolamentoPoll();
+  energiaPoll();
+  canauthPoll();
 
   CANMessage rx;
 

@@ -95,6 +95,13 @@
  * ========================================================= */
 #define CAN_ID_TEST_CMD                   0x305
 #define CAN_ID_TEST_STATUS                0x306
+/*
+ * Etiqueta de autenticacao (opcional, IOT_CAN_AUTH=1): a Probe 00 a transmite logo depois de cada
+ * comando 0x304 ou 0x305, e os modulos so executam o comando quando ela confere.
+ *   tipo (0 = 0x304, 1 = 0x305) | atualidade (2 bytes) | MAC (5 bytes)
+ * Formato e regras em Codigo/common/ioc_link/ioc_canauth.h. Unico transmissor: a Probe 00.
+ */
+#define CAN_ID_AUTH_TAG                   0x307
 #define CAN_ID_TEST_LOAD_HIGH             0x010
 #define CAN_ID_TEST_LOAD_LOW              0x7EF
 /*

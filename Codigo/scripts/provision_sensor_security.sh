@@ -181,7 +181,9 @@ EOF_SENSOR
   chmod 600 "$SENSOR_ENV"
   echo "Chaves do sensor 0x$UUID_HEX gravadas em $SENSOR_ENV."
   echo "Compile o firmware deste sensor com:"
-  echo "  ./Codigo/scripts/build_pico.sh --sensor $UUID_HEX"
+  echo "  ./Codigo/scripts/build_pico.sh --sensor $UUID_HEX            # vibração"
+  echo "  ./Codigo/scripts/build_pico.sh --audio --sensor $UUID_HEX     # acústico"
+  echo "O arquivo .uf2 fica em uma pasta própria deste sensor (build/<placa>-$UUID_HEX/)."
   echo "Nenhum segredo foi exibido no terminal."
   exit 0
 fi

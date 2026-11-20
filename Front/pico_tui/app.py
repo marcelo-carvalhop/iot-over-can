@@ -8,7 +8,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import asdict, is_dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
@@ -101,6 +101,7 @@ from pico_tui.operators import (
     OperatorSession,
     normalize_name,
 )
+from pico_tui.sound_examples import SoundExampleCollector, normalize_label
 from pico_tui.security import SecurityManager, is_mutating_command
 from pico_tui.serial_client import SerialClient
 from pico_tui.services.controller import DomainController
@@ -285,9 +286,15 @@ class PicoTuiApp(App[None]):
             enable_file=enable_file_log,
             persist_streams=False,
         )
+        # Coleta de exemplos sonoros rotulados (:rotulo): só grava com um rótulo ativo.
+        self.sound_examples = SoundExampleCollector(Path.cwd() / "logs", self.session_id)
+        self.controller.on_acoustic_event = self.sound_examples.record
         self.history: HistoryService | None = None
         self.captures: CaptureManager | None = None
         self._history_flush_running = False
+        # Âncora da auditoria: (registros, hash final) da cadeia, gravada fora do banco.
+        self.audit_anchor: tuple[int, str] | None = None
+        self._audit_dirty = False
         self.demo_producer = DemoProducer(self.bus)
         self.serial_client: SerialClient | None = None
         self._line_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=5000)
@@ -352,12 +359,68 @@ class PicoTuiApp(App[None]):
         if self.history is not None:
             try:
                 await asyncio.to_thread(self.history.flush)
+                await asyncio.to_thread(self._anchor_audit_head, True)
                 if self.captures is not None:
                     await asyncio.to_thread(self.captures.close)
                 await asyncio.to_thread(self.history.close)
             except Exception as exc:
                 self.notify(f"Falha ao encerrar histórico: {exc}", severity="error")
         self.log_manager.close()
+
+    async def _command_sound_label(self, args: list[str]) -> None:
+        """:rotulo NOME liga a coleta de exemplos sonoros; :rotulo off a desliga; :rotulo mostra o estado."""
+
+        collector = self.sound_examples
+        if not args:
+            await self.bus.publish(LogEvent("INFO", collector.status(), "COLETA"))
+            return
+        word = " ".join(args)
+        if word.lower() in {"off", "desligar", "parar", "fim"}:
+            collector.set_label(None)
+            await self.bus.publish(LogEvent("INFO", f"Coleta de exemplos sonoros desligada ({collector.count} gravados "
+                                                    "nesta sessão).", "COLETA"))
+            return
+        label = normalize_label(word)
+        if label is None:
+            await self.bus.publish(LogEvent(
+                "WARNING", "Rótulo inválido: use até 40 letras, números, ponto, hífen ou sublinhado, sem espaços "
+                           "(por exemplo :rotulo bate-palma).", "COLETA"))
+            return
+        collector.set_label(label)
+        await self.bus.publish(LogEvent(
+            "INFO", f"Coleta ligada: os próximos eventos sonoros serão gravados com o rótulo '{label}' em "
+                    f"{collector.path}. Faça o som diante do sensor acústico (modo EVENTS). :rotulo off encerra.",
+            "COLETA"))
+
+    def _anchor_audit_head(self, final: bool = False) -> None:
+        """Anota o último hash da cadeia de auditoria no arquivo da sessão (fora do banco).
+
+        A cadeia revela edição e remoção no meio, não o corte do fim. Com o hash
+        final guardado em outro arquivo, ``iot-over-can-operators audit --verify``
+        passa a notar que registros desapareceram. Roda depois de cada gravação
+        que trouxe ações do operador e, uma última vez, ao encerrar.
+        """
+
+        if self.history is None or self.operators.kind == "off":
+            return
+        try:
+            count, head = self.history.store.audit_head()
+        except Exception as exc:
+            self.notify(f"Falha ao anotar o hash da auditoria: {exc}", severity="error", timeout=8)
+            return
+        if not head or (self.audit_anchor == (count, head) and not final):
+            # Ainda não chegou ao banco: a marca continua e o próximo ciclo tenta de novo.
+            return
+        self._audit_dirty = False
+        self.audit_anchor = (count, head)
+        self.log_manager.write_record({
+            "type": "audit_head",
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "session_id": self.session_id,
+            "count": count,
+            "head": head,
+            "final": final,
+        })
 
     def _flush_history(self) -> None:
         if self.history is None or self._history_flush_running:
@@ -369,6 +432,8 @@ class PicoTuiApp(App[None]):
         try:
             if self.history is not None:
                 await asyncio.to_thread(self.history.flush)
+                if self._audit_dirty:
+                    await asyncio.to_thread(self._anchor_audit_head)
                 if self.captures is not None:
                     await asyncio.to_thread(self.captures.flush)
         except Exception as exc:
@@ -1108,6 +1173,8 @@ class PicoTuiApp(App[None]):
         elif cmd in {"operador", "operator", "quem", "whoami"}:
             for line in self.operators.describe():
                 await self.bus.publish(LogEvent("INFO", line, "OPERADOR"))
+        elif cmd in {"rotulo", "rótulo", "label"}:
+            await self._command_sound_label(args)
         elif cmd == "config":
             await self._command_config(args)
         elif cmd in {"measure", "medicao", "medição"}:
@@ -1881,6 +1948,7 @@ class PicoTuiApp(App[None]):
 
         if self.operators.kind == "off":
             return
+        self._audit_dirty = True
         self.run_worker(self.bus.publish(action))
         self.run_worker(self.bus.publish(log_event_for(action, actor)))
 

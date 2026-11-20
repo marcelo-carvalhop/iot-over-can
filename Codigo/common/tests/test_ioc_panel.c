@@ -31,6 +31,7 @@ static void test_ids(void) {
     CHECK(IOC_ID_DATA_BASE == CAN_ID_WIRELESS_DATA_BASE);
     CHECK(IOC_ID_DATA_CMD == CAN_ID_WIRELESS_DATA_CMD);
     CHECK(IOC_ID_TEST_STATUS == CAN_ID_TEST_STATUS);
+    CHECK(IOC_ID_AUTH_TAG == CAN_ID_AUTH_TAG);
     CHECK(IOC_ID_LOAD_LOW == CAN_ID_TEST_LOAD_LOW);
     CHECK(IOC_SUB_JOIN_REQUEST == CTRL_SUBCMD_JOIN_REQUEST);
     CHECK(IOC_SUB_STATE_UPDATE == CTRL_SUBCMD_STATE_UPDATE);
@@ -407,6 +408,9 @@ static void test_view_time(void) {
     CHECK(v.time_utc_ms == 1793000000123LL && v.time_at_ms == 3500);
     /* Só ao vivo: o retrato do Node não guarda uma hora que envelhece. */
     CHECK(ioc_pcache_classify(IOC_ID_TIME_BASE + 5, d, sizeof(d), NULL) == IOC_PCLASS_LIVE);
+    /* A etiqueta de autenticação, como o comando que ela acompanha, não interessa ao painel. */
+    CHECK(ioc_pcache_classify(IOC_ID_AUTH_TAG, d, sizeof(d), NULL) == IOC_PCLASS_DROP);
+    CHECK(ioc_pcache_classify(IOC_ID_DATA_CMD, d, sizeof(d), NULL) == IOC_PCLASS_DROP);
 }
 
 int main(void) {

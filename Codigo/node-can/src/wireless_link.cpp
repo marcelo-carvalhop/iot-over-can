@@ -20,6 +20,7 @@
 #include <atomic>   // fila de eventos do ponto de acesso (ver diagnóstico)
 
 #include "can_ids.h"
+#include "canauth.h"
 #include "net_metrics.h"
 #include "node_config.h"
 #include "pesquisa.h"
@@ -275,6 +276,9 @@ bool apOutageActive = false;
 uint32_t apOutageStartMs = 0;
 uint32_t apOutageDurationMs = 0;
 bool radioOff = false;
+bool busIsolated = false;          // isolamento.cpp: sem o barramento, o módulo não serve sensores
+bool isolationStopPending = false; // o ponto de acesso cai um pouco depois, para o CMD_RELEASE sair
+uint32_t isolationStopAtMs = 0;
 uint32_t lastApAttemptMs = 0;
 uint32_t txNextTransferAtMs = 0;
 bool offerAdvertising = false;
@@ -738,7 +742,7 @@ void handleStationEvents() {
 
 void startAccessPoint() {
   apStopPending = false; // um novo vínculo cancela o desligamento agendado
-  if (apRunning || !haveKey || apOutageActive || radioOff) return;
+  if (apRunning || !haveKey || apOutageActive || radioOff || busIsolated) return;
   lastApAttemptMs = millis();
   char ssid[IOC_LINK_SSID_LEN];
   char psk[IOC_LINK_PSK_LEN];
@@ -809,7 +813,7 @@ bool wantsOffer(const Link& link, uint32_t now) {
 // alterna entre eles; com um só, o anúncio fica no ar sem ser reiniciado.
 void updateOfferAdvertising() {
   if (!haveKey) return;
-  if (apOutageActive || radioOff) {
+  if (apOutageActive || radioOff || busIsolated) {
     stopOfferAdvertising(); // sem ponto de acesso não há para onde chamar o sensor
     return;
   }
@@ -2879,6 +2883,16 @@ void wirelessLinkTap(const CANMessage& msg, bool own) {
 bool canSend(const CANMessage& msg) {
   if (!can.tryToSend(msg)) return false;
   wirelessLinkTap(msg, true);
+  // IOT_CAN_AUTH=1, só na Probe: a etiqueta do comando vai logo atrás dele, no mesmo buffer de transmissão,
+  // que mantém a ordem. Sem etiqueta o comando não é obedecido pelos módulos.
+  CANMessage tag;
+  if (canauthTagFor(msg, tag)) {
+    if (can.tryToSend(tag)) {
+      netMetricsOnTransmit(tag);
+    } else {
+      canauthTagNotSent();
+    }
+  }
   return true;
 }
 
@@ -2930,6 +2944,40 @@ void wirelessLinkInjectApOutage(uint32_t durationMs) {
   apOutageDurationMs = durationMs;
 }
 
+// O módulo perdeu o barramento (isolamento.cpp). Com o ponto de acesso no ar o sensor segue em sessão com um
+// módulo que ninguém ouve, e como o sensor só aceita uma nova oferta depois de largar a sessão, o líder não
+// consegue movê-lo. Por isso o módulo o libera: CMD_RELEASE (o sensor desliga o Wi-Fi e passa a aceitar a
+// primeira oferta, sem as esperas de quem perdeu a sessão), sem ponto de acesso nem oferta. Os vínculos ficam:
+// se o barramento voltar antes de o líder mover o sensor, o ponto de acesso volta e o sensor retoma a sessão.
+void wirelessLinkSetIsolated(bool isolated) {
+  if (NODE_ID == 0 || busIsolated == isolated) return;
+  busIsolated = isolated;
+  if (!isolated) {
+    lastApAttemptMs = 0;   // o ponto de acesso volta já na próxima passagem de wirelessLinkPoll()
+    return;
+  }
+  for (uint8_t i = 0; i < MAX_LINKS; ++i) {
+    Link& link = links[i];
+    if (!link.used) continue;
+    if (link.pending.active) {
+      ioc_secure_zero(link.pending.sessionKey, IOC_LINK_KEY_LEN);
+      link.pending.active = false;
+    }
+    if (!link.secure) continue;
+    Serial.printf("[NODE %u] [WLINK] child=%u sessao liberada (modulo isolado do barramento)\n", NODE_ID,
+                  static_cast<unsigned>(link.childId));
+    sendSimpleCommand(link, CMD_RELEASE);
+    dropSession(link);
+    linkEvent(link, IOC_WD_EV_SESSION_DOWN, IOC_WD_EVR_ISOLATED);
+    publishLink(link, true);
+  }
+  updatePanelMailbox();
+  stopOfferAdvertising();
+  apStopPending = false;
+  isolationStopPending = true;
+  isolationStopAtMs = millis() + AP_STOP_DELAY_MS;   // o CMD_RELEASE acabou de ir para a pilha de rede
+}
+
 void wirelessLinkRadioOff() {
   if (NODE_ID == 0) return;
   for (uint8_t i = 0; i < MAX_LINKS; ++i) {
@@ -2944,7 +2992,7 @@ void wirelessLinkRadioOff() {
 }
 
 bool wirelessLinkSensorWaiting() {
-  if (NODE_ID == 0 || !haveKey || !apRunning || apOutageActive || radioOff) return false;
+  if (NODE_ID == 0 || !haveKey || !apRunning || apOutageActive || radioOff || busIsolated) return false;
   for (uint8_t i = 0; i < MAX_LINKS; ++i) {
     const Link& link = links[i];
     // O painel dormindo não está tentando entrar no ponto de acesso.
@@ -2963,7 +3011,7 @@ void wirelessLinkPoll() {
   }
   // Há vínculos, mas o ponto de acesso não está no ar (a ativação falhou):
   // sem nova tentativa os sensores ficariam sem caminho até o próximo vínculo.
-  if (!apRunning && haveKey && !apOutageActive && !radioOff && !apStopPending && usedLinkCount() > 0 &&
+  if (!apRunning && haveKey && !apOutageActive && !radioOff && !busIsolated && !apStopPending && usedLinkCount() > 0 &&
       millis() - lastApAttemptMs >= AP_RETRY_MS) {
     startAccessPoint();
   }
@@ -2979,6 +3027,10 @@ void wirelessLinkPoll() {
   if (apStopPending && static_cast<int32_t>(millis() - apStopAtMs) >= 0) {
     if (usedLinkCount() == 0) stopAccessPoint(IOC_WD_EVR_IDLE);
     apStopPending = false;
+  }
+  if (isolationStopPending && static_cast<int32_t>(millis() - isolationStopAtMs) >= 0) {
+    isolationStopPending = false;
+    if (busIsolated) stopAccessPoint(IOC_WD_EVR_ISOLATED);
   }
 }
 

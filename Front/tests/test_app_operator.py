@@ -306,3 +306,41 @@ async def test_narrow_screens_still_warn_that_nobody_is_logged_in(tmp_path, pref
     async with app.run_test(size=(60, 30)) as pilot:
         await settle(pilot)
         assert "sem login" in app.screen.query_one("#status-band").source_text()
+
+
+async def test_the_audit_chain_head_is_anchored_in_the_session_file(tmp_path, prefs_file, operators_file):
+    """Ao encerrar, o último hash da cadeia vai para o arquivo da sessão: o corte do fim passa a ser detectável."""
+
+    import json
+    from pathlib import Path
+
+    from pico_tui.history.storage import HistoryStore
+    from pico_tui.operators_cli import _verify_anchors
+
+    app = PicoTuiApp(enable_file_log=True, security_mode="off", preferences_path=prefs_file,
+                     operator_mode="auto", operators_path=operators_file)
+    app.operators._station = station_actor("marcelo", "bancada")
+    async with app.run_test(size=(140, 45)) as pilot:
+        await settle(pilot)
+        app.serial_client = FakeClient()
+        assert app.operator_login("ana", ANA_PASSWORD).ok
+        assert app._send_raw("WIRELESS BIND 2 AABBCCDD") is True
+        await settle(pilot, 3)
+    assert app.audit_anchor is not None
+    count, head = app.audit_anchor
+    assert count == 3 and len(head) == 64  # SESSION_START, LOGIN, SENSOR_BIND
+
+    session_file = Path("logs") / f"session_{app.session_id}.jsonl"
+    anchors = [json.loads(line) for line in session_file.read_text(encoding="utf-8").splitlines() if '"audit_head"' in line]
+    assert anchors and anchors[-1]["final"] is True and anchors[-1]["head"] == head and anchors[-1]["count"] == count
+
+    store = HistoryStore(Path("logs") / "historico.sqlite3")
+    assert store.audit_head() == (count, head)
+    assert _verify_anchors(store, Path("logs")) == (1, [])
+
+
+async def test_no_anchor_when_identification_is_off(tmp_path, prefs_file):
+    app = make_app(tmp_path, prefs_file, mode="off")
+    async with app.run_test(size=(140, 45)) as pilot:
+        await settle(pilot)
+    assert app.audit_anchor is None

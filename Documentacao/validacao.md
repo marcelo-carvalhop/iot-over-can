@@ -12,7 +12,7 @@ Como o projeto é verificado, do teste de uma função à bancada com o hardware
 | bancada virtual | o firmware completo de vários módulos num processo, com barramento, rádios e sensores simulados | idem |
 | leitor da documentação | conversão dos documentos, diagramação de todas as páginas e o firmware sobre imitações da placa: telas dentro dos 400×600, navegação, posição guardada, sono e desligamento | idem |
 | testes da estação | decodificadores, estado, telas, segurança, identificação do operador e auditoria, métricas e ensaios, alimentados pelas gravações da bancada virtual | idem |
-| compilação | todos os firmwares para as placas reais | idem |
+| compilação | todos os firmwares para as placas reais, as opções de compilação documentadas e a versão única (`versao.py --check`) | idem |
 | bancada física | comportamento com o hardware: rádio, alimentação, tempos reais | em sessões de bancada |
 
 ## 2. Testes automatizados
@@ -22,9 +22,13 @@ Como o projeto é verificado, do teste de uma função à bancada com o hardware
 ./Codigo/scripts/test_tui.sh                      # estação de operação
 python3 -m unittest discover -s Simulacao/tests   # laboratório virtual
 python3 -m unittest discover -s Pesquisa/tests    # ferramenta de pesquisa
+python3 Codigo/scripts/versao.py --check          # a versão do arquivo VERSION em todos os lugares
+./Codigo/scripts/check_build_variants.sh          # as opções de compilação documentadas ainda compilam
 ```
 
-`test_native_firmware.sh` precisa de `cc` e `c++` e executa, em ordem: a validação de configuração do sensor; os testes de `ioc_link` (criptografia, canal de dados, segmentação, relatório acústico, custo da criptografia); a parte de rede de `ioc_link` (duração de quadro, mensagem autenticada, segmentação em quadros maiores, reassociação, tabela de vínculos, relógio, motivo de reinício); os testes do painel; o fuzz dos decodificadores; o processamento do sensor acústico; a simulação do canal de dados; a bancada virtual com todos os cenários; e o leitor da documentação.
+`test_native_firmware.sh` precisa de `cc` e `c++` e executa, em ordem: a validação de configuração do sensor; os testes de `ioc_link` (criptografia, canal de dados, segmentação, relatório acústico, custo da criptografia); a parte de rede de `ioc_link` (duração de quadro, mensagem autenticada, segmentação em quadros maiores, reassociação, tabela de vínculos, relógio, motivo de reinício, autoteste, medição da alimentação, detecção de isolamento e autenticação dos comandos CAN); os testes do painel; o fuzz dos decodificadores; o processamento do sensor acústico; a simulação do canal de dados; a bancada virtual com todos os cenários; a mesma bancada com a autenticação de origem ligada (`IOT_CAN_AUTH=1`); as opções de compilação documentadas; e o leitor da documentação.
+
+`versao.py --check` falha se `MANIFEST.json`, os pacotes Python ou os `library.json` repetirem uma versão diferente da do arquivo `VERSION`, ou se algum firmware voltar a ter a versão escrita no código. `check_build_variants.sh` compila (só a verificação de sintaxe) o firmware dos módulos com cada opção documentada ligada: medição da alimentação, isolamento ajustado ou desligado, esperas do sensor, potência do Wi-Fi, autenticação dos comandos CAN. A bancada virtual só roda com os padrões, e uma opção que ninguém liga acumula erros sem que ninguém veja; o script também confere que a autenticação ligada sem a chave de enlace não compila.
 
 Os testes da estação percorrem as telas em 48×18, 60×24, 80×24, 100×30 e 160×48 para garantir que nada seja cortado, conferem a biblioteca C contra implementações independentes em Python e reproduzem o exemplo publicado da análise de tempo de resposta. Um deles refaz as gravações da bancada virtual e as compara com as versionadas. Outros cobrem a identificação do operador: senhas e cadastro (permissões, formato, adulteração), bloqueio de tentativas, expiração por inatividade, perfis, os três modos, a gravação do autor de cada ação no histórico, a atribuição da resposta de uma associação a quem a pediu, a ausência de segredos nos registros, a migração de bancos antigos e a detecção de registros de auditoria editados ou apagados. Outros cobrem a abertura da estação com a rede já montada: o sensor pré-aprovado e ausente não gera alerta nem entra nas contagens, e o que foi visto vivo e depois some continua alertando.
 
@@ -63,6 +67,9 @@ Os testes da estação percorrem as telas em 48×18, 60×24, 80×24, 100×30 e 1
 | `restart_keeps_binding` | o módulo reinicia e retoma da memória o vínculo gravado; uma partida normal não escreve nada sobre a alimentação, e a que vem de uma queda de tensão é avisada, contada na memória e consultável por `ENERGIA` |
 | `handshake_slow_radio` | dois sensores no mesmo módulo com 3,6 s de atraso de rádio; cada sessão abre em cerca de 5 s |
 | `first_session_slow` | primeiro canal de dados lento (40 s para entrar no Wi-Fi) com o módulo responsável surdo ao BLE enquanto o cria: o sensor em reassociação automática abre a sessão no módulo escolhido, no mesmo tempo que o em manual, sem nenhuma reassociação |
+| `isolated_node` | o cabo CAN do módulo responsável se solta (o módulo segue ligado, com o Wi-Fi no ar): ele percebe o isolamento (6 s sem quadro algum e transmissões sem confirmação), libera o sensor e desliga o ponto de acesso, não pede eleição, o líder entrega o vínculo a outro módulo e a telemetria volta por ele em cerca de 8 s; na volta do cabo o módulo sai do isolamento sem disputar o sensor nem refazer a eleição, e os quadros que ficaram na fila do controlador saem de uma vez |
+| `selftest` | a identificação (`VERSION`, `PROBE_VERSION`, `PROBE_STATUS`) e o autoteste `SELFTEST`: laço interno do controlador CAN, contadores de erro e LEDs; cada defeito injetado (nada volta, bit trocado, controlador que não entra no modo laço, bus-off, contadores altos) aparece no resultado com a dica certa, o controlador sempre volta ao modo normal e, dentro da rede, o comando é recusado sem calar ninguém |
+| `can_auth` | só existe na compilação com `IOT_CAN_AUTH=1` (seção 8 de [Segurança](seguranca.md)): o comando legítimo, do ensaio e do sensor, é obedecido; o comando forjado sem etiqueta, com etiqueta inventada ou repetido do que passou pelo cabo é descartado e contado, sem efeito na rede; a etiqueta sem comando é descartada; `CANAUTH SYNC` acerta um módulo à frente da Probe; a atualidade sobrevive ao reinício do módulo. Um controle negativo, compilado sem a verificação, mostra que o comando forjado passaria |
 | `acoustic_sensor` | o sensor acústico de ponta a ponta |
 | `panel` | o painel: retrato, marcas, alerta e ciência, sono na bateria e relógio da rede |
 
@@ -105,7 +112,7 @@ A ponte não contorna a autorização do firmware: use `--passive` se o sensor j
 
 ## 5. Integração contínua
 
-A cada envio, `.github/workflows/ci.yml` roda os testes da estação, os testes nativos (com a bancada virtual), os testes do laboratório e da ferramenta de pesquisa e a compilação de todos os firmwares: sensor de vibração, sensor acústico (Pico W e Pico 2 W), Probe 00 e módulos, painel e leitor da documentação. A lista dos trabalhos está em [Integração](integracao.md#8-testes-e-integração-contínua).
+A cada envio, `.github/workflows/ci.yml` roda os testes da estação, os testes nativos (com a bancada virtual), os testes do laboratório e da ferramenta de pesquisa e a compilação de todos os firmwares: sensor de vibração, sensor acústico (Pico W e Pico 2 W), Probe 00 e módulos, painel e leitor da documentação. A lista dos trabalhos está em [Integração](integracao.md#8-testes-e-integração-contínua). Fora desse fluxo, `.github/workflows/bancada-fisica.yml` roda só quando alguém pede, num computador do laboratório com as placas ligadas por USB (seção 6, «Bancada física na integração contínua»).
 
 ## 6. Bancada física
 
@@ -131,6 +138,12 @@ Depois dessa sessão, a abertura do canal de dados foi corrigida: o nonce passou
 | painel CYD | cores, toque, LED e som, tempo de redesenho, hora vinda da rede |
 | leitor da documentação | fontes e cores na tela, botões, sono e despertar, desligamento e volta à página sem redesenho, CardKB |
 | relógio da rede | ajuste ao conectar a estação; hora no painel; pedidos sem resposta sem terminal |
+| isolamento do módulo | CAN_H solto de um módulo com sensor: `[ISOLADO]` em cerca de 6 s, sensor liberado e reassociado em cerca de 8 s, volta do cabo sem disputar o sensor; quadros antigos que ficaram na fila do MCP2515 aparecem na volta? (RT 71) |
+| autoteste | `SELFTEST` em cada placa, fora da rede: laço interno do MCP2515 com os quatro quadros, contadores de erro e LEDs (RT 86) |
+| medição da alimentação | tensão pelo divisor no ADC1 contra um multímetro e corrente pelo INA219 contra um medidor, em repouso e em carga: só o patamar, não o pico (RT 87) |
+| autenticação dos comandos CAN | com `--auth-can`, os comandos `0x304` e `0x305` passam, o comando sem etiqueta é descartado, a etiqueta chega a tempo com o barramento carregado e o contador sobrevive ao reinício (RT 88) |
+| esperas do sensor | tempo da decisão do líder até a sessão no módulo novo, com os padrões, contra a bancada virtual, antes de qualquer mudança (RT 89) |
+| coleta de exemplos sonoros | `:rotulo` com sons reais diante do sensor acústico: quantos eventos viram linha em `exemplos_sonoros.csv` (RT 49) |
 | alimentação e LEDs | `ENERGIA` em cada módulo depois de horas ligado (contagens em zero); medida entre 3V3 e GND com mola de aterramento, na Probe 00, no módulo sem sensor e no módulo com sensor, com o ponto de acesso a 11 e a 19,5 dBm; se o sensor ainda entra no Wi-Fi do módulo a 11 dBm, na distância de uso |
 
 ### Roteiro
@@ -148,4 +161,47 @@ Grave a Probe 00 e todos os módulos com a mesma versão.
 9. **Ensaios.** Em Ensaios (`F9`): queda do líder, queda de um módulo com um sensor em reassociação automática e carga de alta prioridade de 40 % por 15 s. Depois, *Limpar falha* no módulo.
 10. **Exportação.** `x` em Métricas ou Ensaios; guarde os arquivos de `exports/` junto do registro da sessão.
 
-Registre cada sessão em `historico/`, como a de 08/10/2026, e os problemas encontrados em [Desafios](desafios.md).
+O roteiro completo, com 89 requisitos de teste (RT) em 12 fases, da compilação à longa duração, está em [`bancada-fisica/roteiro-de-testes.md`](bancada-fisica/roteiro-de-testes.md). Cada RT traz os comandos, as saídas esperadas, o que fazer quando sai outra coisa, a condição de aceite e o que anotar. Ele é versionado com o repositório e acompanha o firmware: ao mudar um comando ou uma mensagem, corrija o RT que a cita.
+
+### Registro da sessão
+
+Cada sessão vira uma entrada em `historico/bancada-fisica-AAAA-MM-DD.md`, escrita a partir do [modelo de sessão](bancada-fisica/modelo-de-sessao.md) (identificação, montagem, resultado por RT, medidas contra a bancada virtual, o que funcionou, o que falhou, o que não foi validado, arquivos e mudanças pedidas ao repositório). Os problemas encontrados entram em [Desafios](desafios.md), com um número `CH-`.
+
+### Verificação de fumaça depois de gravar
+
+```bash
+python3 Codigo/scripts/smoke_boot.py <probe|modulo|vibracao|acustico|painel|leitor> --porta <porta> [--no <n>] [--selftest] [--estrito]
+```
+
+Confere, logo depois de gravar, o que antes só aparecia no meio de um ensaio: a partida e os comandos de identificação, a chave do enlace (`LINK_KEY=MISSING` reprova), o microfone e o MPU-6050 dos sensores, o controlador CAN, e a versão e o commit contra o arquivo `VERSION` e o repositório (placas de versões diferentes na mesma captura reprovam). As placas ESP32 são reiniciadas ao abrir a porta; os sensores Pico respondem a `VERSION`, `STATUS` e `NET`. Com `--selftest` o módulo ou a Probe 00, fora da rede, roda o `SELFTEST CAN`. `--estrito` trata o aviso (commit `-dirty` ou desconhecido) como falha. A saída termina em `SMOKE RESULT=PASS|WARN|FAIL`, e o código de saída é 0 (aprovado), 1 (reprovado), 2 (uso incorreto) ou 3 (nenhuma linha recebida). `--arquivo <captura>` confere um texto já capturado, sem placa.
+
+Foi testado com capturas de texto (parte delas tirada da bancada virtual) e confere que cada linha esperada é escrita pelo código-fonte do firmware, mas nunca com uma porta real: a primeira rodada numa placa é a validação dele.
+
+### Comparar a gravação física com a bancada virtual
+
+```bash
+python3 Simulacao/comparar_bancada.py logs/gravacao_<data>_<sessão>.log --cenario owner_failover
+```
+
+A estação grava a sessão com `--record-session`, no mesmo formato (`@<ms> <linha>`) das gravações de `Front/replays/`. O script mede, nas duas, a troca de líder (`troca_de_lider_ms`: do último sinal de presença do líder que saiu ao primeiro do novo), a reassociação (`reassociacao_ms`: da decisão `WIRELESS_FAILOVER` até o sensor voltar a ter sessão `SECURE` no módulo escolhido) e a abertura do canal (`abertura_do_canal_ms`: da primeira associação à primeira sessão `SECURE`), e as põe lado a lado. Uma medida está dentro da tolerância se a diferença for de no máximo 1500 ms (a latência da USB e do laço do firmware) ou 25 % do valor da bancada virtual, o que for maior (`--tolerancia-absoluta-ms`, `--tolerancia-relativa`). As medidas são comparadas na ordem em que aparecem. A saída termina em `COMPARACAO RESULT=OK|FORA|SEM_DADOS`; código de saída 0 (todas dentro), 1 (alguma fora, ou sem dado na gravação com `--exigir`), 2 (uso incorreto) e 3 (nenhuma medida comparável). `--bancada <arquivo>` usa outra gravação virtual como referência, e `--json` escreve o resultado em JSON.
+
+Um resultado `FORA` não é uma falha do firmware: diz que o modelo da bancada virtual não descreve a montagem, e o tempo medido na física é o que vale.
+
+### Esperas do sensor
+
+Duas esperas do sensor pesam na reassociação: 10 s sem `CMD_PING` até largar a sessão e 15 s, depois de entrar no ponto de acesso de um módulo, até seguir a oferta de outro. Elas são parâmetros de compilação (`build_pico.sh --espera-sessao <ms>` e `--espera-oferta <ms>`, valem para o sensor de vibração e para o acústico), com os padrões de sempre, e só devem mudar com medição na bancada física: o RT 89 descreve o procedimento. A bancada virtual dá a projeção do ganho (cenário `owner_failover`, 5,2 s do corte do módulo até a decisão do líder, em todas as linhas):
+
+| Sessão / oferta | decisão → sessão (`reassociacao_ms`) | falha → sessão |
+|---|---|---|
+| 10 s / 15 s (padrão) | 19,1 s | 24,3 s |
+| 10 s / 5 s | 9,2 s | 14,4 s |
+| 7 s / 15 s | 16,1 s | 21,3 s |
+| 7 s / 5 s | 6,2 s | 11,4 s |
+| 7 s / 3 s | 4,1 s | 9,3 s |
+| 7 s / 1 s | 2,3 s | 7,5 s |
+
+A espera da sessão tem piso de 7 s (mais de dois `CMD_PING` perdidos, um a cada 3 s) e a da oferta vai de 1 s a 120 s; fora disso a compilação falha. A espera da oferta existe para limitar o efeito de uma oferta antiga repetida: curta demais, o sensor pode alternar entre módulos. Para repetir a projeção: `IOC_SIM_CXXFLAGS="-DIOT_SESSION_TIMEOUT_MS=7000 -DIOT_OFFER_SWITCH_HOLD_MS=5000" ./Codigo/scripts/build_network_sim.sh /tmp/sim_espera`, e `comparar_bancada.py` sobre a saída de `owner_failover`.
+
+### Bancada física na integração contínua
+
+`.github/workflows/bancada-fisica.yml` roda só por pedido (Actions, *Bancada física*, *Run workflow*), num computador que o laboratório registra como runner com o rótulo `bancada-fisica` e que tem a Probe 00, os módulos e os sensores ligados por USB. Os runners do GitHub não enxergam as placas e nunca pegam esse trabalho. O fluxo **não grava nada nas placas**: roda `smoke_boot.py` na Probe 00, em cada módulo informado (`NÓ=PORTA`, com `SELFTEST` se pedido) e em cada sensor informado (`TIPO=PORTA`, com `vibracao` ou `acustico`), sempre com `--estrito`, e, se for dada uma gravação da sessão, a compara com a bancada virtual no cenário escolhido. Os resultados saem como artefato `bancada-fisica`. Um teste do repositório confere a estrutura do fluxo, mas ele só pôde ser lido, não executado: a primeira execução num runner com placas é a validação dele.

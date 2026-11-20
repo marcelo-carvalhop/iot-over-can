@@ -2,6 +2,7 @@
 @301 ========================================
 @301 Iniciando NODE 0
 @301 ========================================
+@301 [NODE 0] [BOOT] FIRMWARE=0.22.0 COMMIT=sim PROTOCOL=CAN_CLASSIC_V1 ROLE=PROBE
 @301 [LEDS] IDLE: todos acesos. Logica invertida: LOW=ligado, HIGH=desligado
 @301 [PROBE 00] CAPS=CAN_MONITOR,SERIAL_INSTRUMENTATION LOCAL_PROFILE=NONE
 @301 [NODE 0] [FALHA] Modulo de falha real inicializado; simulacao por software removida
@@ -16,7 +17,7 @@
 @301 [GW] Iniciar eleicao: 22 00 FF 01
 @301 [GW] Solicitar status: 22 20 FF 00
 @301 [GW] Velocidade heartbeat: 22 30 FF 01..05
-@301 [PROBE 00] FIRMWARE=0.21.0 FEATURES=WIRELESS_DATA,ACOUSTIC_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER,RESEARCH,TIME_SYNC
+@301 [PROBE 00] FIRMWARE=0.22.0 COMMIT=sim FEATURES=WIRELESS_DATA,ACOUSTIC_DATA,BUS_METRICS,FAULT_INJECTION,FAILOVER,RESEARCH,TIME_SYNC
 @301 [GW] CONFIG node=0 bitrate=500000 hb_period_ms=1000 assoc_stale_ms=15000 assoc_lost_ms=45000 assoc_hysteresis_ms=0 stream_period_ms=1000 ping_ms=3000 session_timeout_ms=10000 offer_hold_ms=15000 load_ids=0x010,0x1F0,0x7EF fault_injection=1 follower_watchdog=1 t_us=300037
 # t=601 node=1 ligado
 # t=901 node=2 ligado

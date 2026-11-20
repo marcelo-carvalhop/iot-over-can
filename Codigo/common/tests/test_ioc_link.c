@@ -410,6 +410,8 @@ static void test_codecs(void) {
     CHECK(strcmp(ioc_wd_event_name(200), "UNKNOWN") == 0);
     CHECK(strcmp(ioc_wd_event_reason_name(IOC_WD_EVR_IDLE), "IDLE") == 0);
     CHECK(strcmp(ioc_wd_event_reason_name(IOC_WD_EVR_NONE), "NONE") == 0);
+    CHECK(strcmp(ioc_wd_event_reason_name(IOC_WD_EVR_ISOLATED), "ISOLATED") == 0);   /* o Node perdeu o barramento */
+    CHECK(IOC_WD_EVR_ISOLATED == 14 && strcmp(ioc_wd_event_reason_name(IOC_WD_EVR_ISOLATED + 1), "UNKNOWN") == 0);
     CHECK(strcmp(ioc_wd_event_reason_name(99), "UNKNOWN") == 0);
     CHECK(!ioc_wd_config_decode(buf, IOC_WD_CONFIG_LEN + 1, &cfg2));
 

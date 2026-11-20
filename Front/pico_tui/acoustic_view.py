@@ -355,7 +355,14 @@ def microphone_text(sensor: SensorNode) -> Text | str:
         return Text(f"{pres.symbol(pres.Level.ATTENTION)} Em sobrecarga", style=f"bold {palette.STATE_WARNING}")
     state = (health.microphone_state or "").upper()
     if state and state != "OK":
-        return Text(f"{pres.symbol(pres.Level.ATTENTION)} {state.title()}", style=f"bold {palette.STATE_WARNING}")
+        # Os motivos que o firmware informa em STATUS (MIC=...); outro valor aparece como veio.
+        reasons = {
+            "SILENT": "Sem sinal (SD aberto ou microfone desligado)",
+            "STUCK_HIGH": "SD preso em nível alto",
+            "NO_HARDWARE": "I2S não iniciou",
+        }
+        return Text(f"{pres.symbol(pres.Level.ATTENTION)} {reasons.get(state, state.title())}",
+                    style=f"bold {palette.STATE_WARNING}")
     if metrics is None and not state:
         return pres.MISSING
     return "Sinal presente" + (f", {channel_text}" if channel_text else "")

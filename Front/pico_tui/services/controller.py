@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import struct
 import time
+from collections.abc import Callable
+from typing import Any
 
 from pico_tui import data_channel
 from pico_tui.acoustics import event_label
@@ -67,6 +69,9 @@ class DomainController:
     def __init__(self, bus: EventBus, state: StateStore) -> None:
         self.bus = bus
         self.state = state
+        # Ouvinte de eventos sonoros detectados: (nó, sensor, métricas, evento). Usado
+        # pela coleta de exemplos rotulados (sound_examples.py).
+        self.on_acoustic_event: Callable[[int, int, Any, AcousticEvent], None] | None = None
         self.sequence = SequenceTracker()
         self.fragments = FragmentReassembler(timeout_seconds=5.0)
         self._fragment_meta: dict[tuple[object, ...], dict[str, object]] = {}
@@ -814,6 +819,13 @@ class DomainController:
                 centroid_hz=metrics.event_centroid_hz,
             )
             self.state.add_acoustic_event(parent_node_id, child_id, event)
+            if self.on_acoustic_event is not None:
+                try:
+                    self.on_acoustic_event(parent_node_id, child_id, metrics, event)
+                except Exception as exc:  # a coleta nunca pode atrapalhar a telemetria
+                    self.state.add_sensor_incident(
+                        parent_node_id, child_id, Severity.WARNING, "EVENTO",
+                        f"Falha ao gravar o exemplo sonoro: {exc}", key="acoustic:example-failed")
             details = []
             if event.peak_db is not None:
                 details.append(f"pico {event.peak_db:.1f} dB".replace(".", ","))

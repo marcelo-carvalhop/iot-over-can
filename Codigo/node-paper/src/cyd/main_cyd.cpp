@@ -551,7 +551,7 @@ void bootScreen() {
   lcd.drawString("iot-over-can", 8, 8);
   lcd.setFont(&fonts::efontJA_16);
   lcd.setTextColor(C_MUTED, C_BG);
-  lcd.drawString("Painel CYD fw " PANEL_FW_VERSION, 8, 40);
+  lcd.drawString("Painel CYD fw " PANEL_FW_VERSION " " PANEL_FW_COMMIT, 8, 40);
   const uint32_t colors[4] = {0xFF0000u, 0x00FF00u, 0x0000FFu, 0xFFFFFFu};
   const char* names[4] = {"vermelho", "verde", "azul", "branco"};
   for (int i = 0; i < 4; ++i) {
@@ -624,8 +624,8 @@ void handleHostLine(char* line) {
       usbLink = false;
       configureApp(Transport::Usb);
     }
-    Serial.printf("#IOC READY uuid=0x%016llX profile=PANEL fw=%s\n", static_cast<unsigned long long>(panelUuid),
-                  PANEL_FW_VERSION);
+    Serial.printf("#IOC READY uuid=0x%016llX profile=PANEL fw=%s commit=%s\n", static_cast<unsigned long long>(panelUuid),
+                  PANEL_FW_VERSION, PANEL_FW_COMMIT);
   } else if (strncmp(cmd, "TIME ", 5) == 0) {
     const int64_t epoch = atoll(cmd + 5);
     app.setClockFrom(epoch, IOC_TIME_SRC_TERMINAL);
@@ -708,8 +708,9 @@ void setup() {
   configureApp(Transport::Wifi);
   esp_task_wdt_init(60, true);
   esp_task_wdt_add(nullptr);
-  Serial.printf("#IOC HELLO uuid=0x%016llX profile=PANEL fw=%s keys=%s board=CYD\n",
-                static_cast<unsigned long long>(panelUuid), PANEL_FW_VERSION, haveNetworkKey ? "LINK" : "NONE");
+  Serial.printf("#IOC HELLO uuid=0x%016llX profile=PANEL fw=%s commit=%s keys=%s board=CYD\n",
+                static_cast<unsigned long long>(panelUuid), PANEL_FW_VERSION, PANEL_FW_COMMIT,
+                haveNetworkKey ? "LINK" : "NONE");
 }
 
 void loop() {
@@ -727,9 +728,9 @@ void loop() {
   static uint32_t lastHello = 0;
   if (millis() - lastHello > (transport == Transport::Usb ? 10000u : 2000u)) {
     lastHello = millis();
-    Serial.printf("#IOC HELLO uuid=0x%016llX profile=PANEL fw=%s mode=%s session=%u node=%u board=CYD\n",
-                  static_cast<unsigned long long>(panelUuid), PANEL_FW_VERSION, transport == Transport::Usb ? "USB" : "WIFI",
-                  app.sessionUp() ? 1u : 0u, app.parentNode());
+    Serial.printf("#IOC HELLO uuid=0x%016llX profile=PANEL fw=%s commit=%s mode=%s session=%u node=%u board=CYD\n",
+                  static_cast<unsigned long long>(panelUuid), PANEL_FW_VERSION, PANEL_FW_COMMIT,
+                  transport == Transport::Usb ? "USB" : "WIFI", app.sessionUp() ? 1u : 0u, app.parentNode());
   }
   delay(5);
 }

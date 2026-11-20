@@ -1,6 +1,7 @@
 /* Substitutos de hardware, incluídos dentro do namespace de cada instância. */
 #include "Arduino.h"
 #include "SPI.h"
+#include "Wire.h"
 #include "ACAN2515.h"
 #include "NimBLEDevice.h"
 #include "Preferences.h"

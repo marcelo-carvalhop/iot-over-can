@@ -134,7 +134,7 @@ A correção do janelamento é a mesma no numerador e no denominador e cancela. 
 
 A política de FFT depende do atraso do DMA: até 8 blocos de atraso todos os quadros pedidos passam pela FFT; de 9 a 12, só os quadros de evento; acima disso, nenhum. `COVERAGE_PCT` informa a fração analisada.
 
-Um microfone desligado ou com SD aberto produz palavras todas em zero; SD preso em nível alto, todas em um. Um segundo inteiro assim marca `MIC_FAULT` e gera o DTC `0x1003`.
+Um microfone desligado ou com SD aberto produz palavras todas em zero; SD preso em nível alto, todas em um. Um segundo inteiro assim marca `MIC_FAULT` e gera o DTC `0x1003`. No console, o campo `MIC=` do `STATUS` diz qual é o caso: `OK`, `SILENT` (só zeros), `STUCK_HIGH` (só uns) ou `NO_HARDWARE` (a captura I2S, em PIO, não iniciou; confira os pinos do build). Antes do primeiro relatório do DSP não há como saber, e vale `OK`.
 
 ## 6. Modos de operação
 
@@ -177,6 +177,8 @@ A FFT, neste modo, roda só durante eventos e uma vez por segundo (para manter a
 | `TRANSIENT` | duração ≥ 400 ms, banda larga | passagem de veículo, partida de máquina |
 
 Para cada evento o relatório traz a classe, o pico, a duração, o centroide e o SEL — a energia A acima do fundo durante o evento, referida a 1 s.
+
+**Coleta de exemplos para um classificador futuro.** As quatro classes são regras fixas (400 ms, 2,5 kHz, planura 0,1). Ajustá-las aos sons de uma instalação, ou treinar um classificador, pede exemplos reais, rotulados por quem estava lá. A estação só coleta: com `:rotulo bate-palma` ligado (o rótulo tem até 40 caracteres, sem espaços), cada evento detectado vira uma linha de `logs/exemplos_sonoros.csv`, com data e hora, sessão, sensor, rótulo, a classe que o firmware atribuiu, o total de eventos, pico, SEL, duração e centroide do evento, STA/LTA, fundo, os níveis (LAeq, LCeq, LZeq, LZpeak, LAFmax), centroide, planura e as bandas de oitava. Sem rótulo ativo nada é gravado, e `:rotulo off` encerra. O arquivo é aberto em modo de acréscimo, com um só cabeçalho, para que várias sessões alimentem o mesmo conjunto. O classificador do firmware não muda: treinar e embarcar um é trabalho futuro. Os eventos só existem no modo `EVENTS`: ligue-o antes (`SET MODE EVENTS`).
 
 ## 7. Configuração, calibração e console
 

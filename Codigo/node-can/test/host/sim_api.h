@@ -41,6 +41,12 @@ class SimInstance {
   virtual void canDeliver(const SimCanFrame& frame) = 0;
   virtual bool canListenOnly() const = 0;
   virtual void canSetErrorCounters(uint8_t rec, uint8_t tec) = 0;
+  /* Registrador EFLG do controlador e defeito injetado no laço interno (0 nenhum, 1 nada volta, 2 bit trocado,
+     3 não entra no modo laço), para exercitar o autoteste. */
+  virtual void canSetErrorFlags(uint8_t eflg) = 0;
+  virtual uint8_t canErrorFlags() const = 0;
+  virtual void canSetLoopbackFault(int fault) = 0;
+  virtual bool canLoopback() const = 0;
 
   /* Porta serial. */
   virtual std::string serialTake() = 0;

@@ -42,6 +42,9 @@ extern "C" {
 
 #define IOC_SECPDU_OVERHEAD(mac_len) ((size_t)IOC_SECPDU_FRESHNESS_LEN + (size_t)(mac_len))
 
+/** Bytes de atualidade truncada aceitos pelas variantes _ex (o perfil clássico usa 1; o de comando, 2). */
+#define IOC_SECPDU_FRESHNESS_MAX 4
+
 /**
  * Protege `payload`. Incrementa *tx_freshness e o usa nesta PDU. Retorna o
  * tamanho total escrito em `out`, ou 0 se não couber ou se o contador esgotou.
@@ -60,6 +63,22 @@ int ioc_secpdu_verify(const uint8_t key[IOC_LINK_KEY_LEN], uint16_t data_id,
                       const uint8_t *pdu, size_t pdu_len,
                       uint64_t *rx_freshness, uint8_t mac_len,
                       size_t *payload_len);
+
+/**
+ * Variantes com o tamanho da atualidade truncada à escolha (1 a IOC_SECPDU_FRESHNESS_MAX bytes, o mais
+ * significativo primeiro). Com n bytes o receptor tolera 2^(8n) - 1 valores à frente do último aceito:
+ * 255 com 1 byte (as funções acima), 65535 com 2. Os comandos do operador (ioc_canauth.h) usam 2 + 5, no
+ * quadro de etiqueta que segue o comando; o perfil clássico de 1 + 3 não deixa folga no mesmo quadro.
+ */
+size_t ioc_secpdu_protect_ex(const uint8_t key[IOC_LINK_KEY_LEN], uint16_t data_id,
+                             const uint8_t *payload, size_t payload_len,
+                             uint64_t *tx_freshness, uint8_t fresh_len, uint8_t mac_len,
+                             uint8_t *out, size_t out_cap);
+
+int ioc_secpdu_verify_ex(const uint8_t key[IOC_LINK_KEY_LEN], uint16_t data_id,
+                         const uint8_t *pdu, size_t pdu_len,
+                         uint64_t *rx_freshness, uint8_t fresh_len, uint8_t mac_len,
+                         size_t *payload_len);
 
 /** Chave do barramento: HMAC(K_master, "ioc-can-v1"). */
 void ioc_secpdu_derive_bus_key(const uint8_t master[IOC_LINK_KEY_LEN],
